@@ -182,7 +182,7 @@ def find_available_slots(service, date, duration_minutes=APPOINTMENT_DURATION):
         if check_calendar_availability(service, current_time, end_time):
             available_slots.append(current_time)
 
-        current_time += timedelta(minutes=30)  # Check every 30 minutes
+        current_time += timedelta(minutes=30)
 
     return available_slots
 
@@ -280,7 +280,7 @@ def main():
 
                 if available_slots:
                     formatted_slots = [slot.strftime('%I:%M %p') for slot in
-                                       available_slots[:3]]  # Show first 3 options
+                                       available_slots[:3]]
                     response = f"The requested time is not available. Here are some available slots on " \
                                f"{start_time.strftime('%A, %B %d')}: {', '.join(formatted_slots)}"
                 else:
