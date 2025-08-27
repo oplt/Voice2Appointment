@@ -10,7 +10,7 @@ import pytz
 from db.models import GoogleCalendarAuth
 import subprocess
 from typing import Dict, List, Tuple, Optional, Any
-from .config import AUDIO_CONFIG, CALENDAR_CONFIG, VOICE_CONFIG, WHISPER_CONFIG, TTS_CONFIG, LLM_CONFIG
+from .config import AUDIO_CONFIG, CALENDAR_CONFIG, VOICE_CONFIG, WHISPER_CONFIG, TTS_CONFIG, LLM_CONFIG, STT_LANGUAGE
 from .logging_config import ai_logger, calendar_logger, voice_logger, log_function_call, log_execution_time
 import json
 import re
@@ -48,14 +48,19 @@ class AudioProcessor:
     def transcribe_with_whisper(self, file_path: str) -> str:
         """Transcribe audio file using Whisper"""
         try:
+            # Convert input to 16kHz mono WAV to improve Whisper accuracy and compatibility
+            safe_wav_path = self._ensure_wav_16k_mono(file_path)
             import whisper
             model = whisper.load_model(WHISPER_CONFIG['MODEL_SIZE'])
             
-            result = model.transcribe(
-                file_path,
-                fp16=WHISPER_CONFIG['FP16'],
-                verbose=WHISPER_CONFIG['VERBOSE']
-            )
+            transcribe_kwargs = {
+                'fp16': WHISPER_CONFIG['FP16'],
+                'verbose': WHISPER_CONFIG['VERBOSE']
+            }
+            if STT_LANGUAGE:
+                transcribe_kwargs['language'] = STT_LANGUAGE
+
+            result = model.transcribe(safe_wav_path, **transcribe_kwargs)
             
             return result["text"].strip()
         except ImportError:
@@ -64,6 +69,44 @@ class AudioProcessor:
         except Exception as e:
             voice_logger.error(f"Transcription error: {str(e)}")
             raise Exception(f"Transcription error: {str(e)}")
+
+    def _ensure_wav_16k_mono(self, input_path: str) -> str:
+        """Ensure the audio is 16kHz mono WAV using ffmpeg; returns path to converted file."""
+        try:
+            import tempfile
+            import subprocess as sp
+            import os as _os
+
+            # If already a WAV, we still normalize sample rate and channels to be safe
+            temp_dir = tempfile.gettempdir()
+            base = _os.path.splitext(_os.path.basename(input_path))[0]
+            output_path = _os.path.join(temp_dir, f"{base}_16k_mono.wav")
+
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', input_path,
+                '-ac', '1',            # mono
+                '-ar', '16000',        # 16 kHz
+                '-vn',                 # no video
+                '-f', 'wav',
+                output_path
+            ]
+
+            try:
+                sp.run(cmd, check=True, stdout=sp.PIPE, stderr=sp.PIPE)
+                voice_logger.debug(f"Audio converted for STT: {output_path}")
+                return output_path
+            except FileNotFoundError:
+                # ffmpeg not installed; fall back to original file and warn
+                voice_logger.warning("ffmpeg not found. Using original audio file; transcription quality may suffer.")
+                return input_path
+            except sp.CalledProcessError as conv_err:
+                # Conversion failed; fall back to original file
+                voice_logger.warning(f"ffmpeg conversion failed: {conv_err}. Using original file.")
+                return input_path
+        except Exception as e:
+            voice_logger.warning(f"Audio normalization failed: {e}. Using original file.")
+            return input_path
 
 
 class LLMProcessor:

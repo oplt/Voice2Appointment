@@ -47,7 +47,19 @@ document.addEventListener('DOMContentLoaded', function () {
             setStatus('Requesting microphone access...', '#2980b9');
             addDebugInfo('Starting recording...');
             
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const constraints = {
+                audio: {
+                    channelCount: 1,
+                    // Some browsers ignore sampleRate, but it's a hint
+                    sampleRate: 48000,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                }
+            };
+            const stream = await navigator.mediaDevices.getUserMedia(constraints);
+
+            // Let the browser choose the optimal MIME; backend will decode/normalize
             mediaRecorder = new MediaRecorder(stream);
             audioChunks = [];
 
@@ -59,7 +71,9 @@ document.addEventListener('DOMContentLoaded', function () {
             };
 
             mediaRecorder.onstop = async () => {
-                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                // Include browser-detected MIME type to help backend; backend still decodes
+                const mime = mediaRecorder.mimeType || '';
+                const audioBlob = new Blob(audioChunks, mime ? { type: mime } : undefined);
                 setStatus('Processing recording...', '#2980b9');
                 addDebugInfo(`Recording stopped. Total chunks: ${audioChunks.length}, Blob size: ${audioBlob.size}`);
                 await processVoiceRecording(audioBlob);
@@ -117,7 +131,8 @@ document.addEventListener('DOMContentLoaded', function () {
 
             // First test with simple endpoint
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.wav');
+            // Don't force file extension; backend will infer from content-type
+            formData.append('audio', audioBlob, 'recording');
 
             addDebugInfo('Uploading to simple test endpoint...');
             
@@ -163,7 +178,7 @@ document.addEventListener('DOMContentLoaded', function () {
             setStatus('Testing full AI processing...', '#2980b9');
             
             const formData = new FormData();
-            formData.append('audio', audioBlob, 'recording.wav');
+            formData.append('audio', audioBlob, 'recording');
 
             const response = await fetch('{{ url_for('main.record_voice') }}', {
                 method: 'POST',

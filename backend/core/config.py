@@ -1,6 +1,4 @@
-"""
-Configuration settings for the AI Voice Assistant
-"""
+import os
 
 # Audio Processing Configuration
 AUDIO_CONFIG = {
@@ -30,7 +28,7 @@ VOICE_CONFIG = {
 
 # Whisper Configuration
 WHISPER_CONFIG = {
-    'MODEL_SIZE': 'base',  # 'tiny', 'base', 'small', 'medium', 'large'
+    'MODEL_SIZE': os.getenv('WHISPER_MODEL', 'base'),  # 'tiny', 'base', 'small', 'medium', 'large'
     'FP16': False,
     'VERBOSE': True
 }
@@ -41,3 +39,6 @@ TTS_CONFIG = {
     'SPEED': 150,
     'VOLUME': 1.0
 }
+
+# Speech-to-Text Language (optional): set to a BCP-47 code like 'en', 'tr', 'fr'
+STT_LANGUAGE = os.getenv('WHISPER_LANGUAGE', '').strip() or None

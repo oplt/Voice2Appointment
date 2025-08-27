@@ -45,47 +45,59 @@ def record_voice_simple():
     """Simple voice recording endpoint for testing"""
     try:
         logger.info("Simple voice recording endpoint called")
-        
+
         if 'audio' not in request.files:
             logger.warning("No audio file provided in request")
             return jsonify({'ok': False, 'message': 'No audio file provided'}), 400
-        
+
         audio_file = request.files['audio']
         if audio_file.filename == '':
             logger.warning("Empty filename provided")
             return jsonify({'ok': False, 'message': 'No audio file selected'}), 400
-        
+
         logger.info(f"Processing audio file: {audio_file.filename}")
-        
+
         # Save audio file temporarily for processing
         import tempfile
         import os
-        
-        # Create temporary file
+
+        # Create temporary file, preserve original extension for accurate decoding
         temp_dir = tempfile.gettempdir()
-        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+        original_ext = (audio_file.filename.rsplit('.', 1)[-1].lower() if '.' in audio_file.filename else '')
+        if not original_ext:
+            # Fallback from mimetype
+            mt = (audio_file.content_type or '').lower()
+            if 'ogg' in mt:
+                original_ext = 'ogg'
+            elif 'webm' in mt:
+                original_ext = 'webm'
+            elif 'wav' in mt or 'x-wav' in mt:
+                original_ext = 'wav'
+            else:
+                original_ext = 'webm'
+        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{original_ext}"
         temp_filepath = os.path.join(temp_dir, temp_filename)
-        
+
         logger.debug(f"Temporary file path: {temp_filepath}")
-        
+
         # Save the uploaded file temporarily
         audio_file.save(temp_filepath)
         logger.debug("Audio file saved temporarily")
-        
+
         try:
             # Process with AI (simple transcription only)
             from backend.core.ai_processor import AudioProcessor, LLMProcessor
 
             timezone = get_user_timezone(user_id=current_user.id if current_user.is_authenticated else None)
-            
+
             audio_processor = AudioProcessor()
             llm_processor = LLMProcessor(timezone)
-            
+
             # Transcribe audio
             logger.info("Starting audio transcription")
             transcript = audio_processor.transcribe_with_whisper(temp_filepath)
             logger.info(f"Transcription completed: {len(transcript) if transcript else 0} characters")
-            
+
             # Extract appointment details
             if transcript:
                 logger.info("Extracting appointment details with LLM")
@@ -95,17 +107,17 @@ def record_voice_simple():
             else:
                 ai_response = "Could not transcribe audio"
                 logger.warning("No transcript generated")
-            
+
             logger.info("Simple voice processing completed successfully")
             return jsonify({
-                'ok': True, 
+                'ok': True,
                 'message': 'Audio processed successfully (simple endpoint)',
                 'filename': audio_file.filename,
                 'transcript': transcript,
                 'appointment_details': appointment_details if transcript else None,
                 'ai_response': ai_response
             })
-            
+
         finally:
             # Clean up temporary file
             try:
@@ -113,7 +125,7 @@ def record_voice_simple():
                 logger.debug("Temporary file cleaned up")
             except Exception as cleanup_error:
                 logger.warning(f"Failed to cleanup temporary file: {cleanup_error}")
-        
+
     except Exception as e:
         logger.error(f"Error in simple voice recording: {str(e)}", exc_info=True)
         return jsonify({'ok': False, 'message': str(e)}), 500
@@ -140,9 +152,20 @@ def record_voice():
         import tempfile
         import os
         
-        # Create temporary file
+        # Create temporary file, preserve original extension for accurate decoding
         temp_dir = tempfile.gettempdir()
-        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.wav"
+        original_ext = (audio_file.filename.rsplit('.', 1)[-1].lower() if '.' in audio_file.filename else '')
+        if not original_ext:
+            mt = (audio_file.content_type or '').lower()
+            if 'ogg' in mt:
+                original_ext = 'ogg'
+            elif 'webm' in mt:
+                original_ext = 'webm'
+            elif 'wav' in mt or 'x-wav' in mt:
+                original_ext = 'wav'
+            else:
+                original_ext = 'webm'
+        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{original_ext}"
         temp_filepath = os.path.join(temp_dir, temp_filename)
         
         logger.debug(f"Temporary file path: {temp_filepath}")
