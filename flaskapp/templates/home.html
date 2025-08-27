@@ -1,0 +1,256 @@
+{% extends "layout.html" %}
+{% block content %}
+<div class="container" style="text-align: center; margin-top: 2rem;">
+    <button id="micBtn" class="btn btn-primary" style="font-size: 1.5rem; padding: 0.75rem 1.25rem;">
+        🎤 Start Recording
+    </button>
+    
+    <div style="margin-top: 1rem;">
+        <button id="debugAuthBtn" class="btn btn-info" style="margin: 0 0.5rem;">
+            🔍 Debug Calendar Auth
+        </button>
+        <button id="clearDebugBtn" class="btn btn-secondary" style="margin: 0 0.5rem;">
+            🗑️ Clear Debug
+        </button>
+    </div>
+    
+    <div id="statusMsg" style="margin-top: 1rem; color: #555;"></div>
+    <audio id="playback" controls style="display:none; margin-top: 1rem; width: 100%;"></audio>
+    
+    <!-- Debug info -->
+    <div id="debugInfo" style="margin-top: 1rem; font-size: 0.9em; color: #666; text-align: left; max-width: 600px; margin-left: auto; margin-right: auto; display: none;"></div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const micBtn = document.getElementById('micBtn');
+    const statusMsg = document.getElementById('statusMsg');
+    const playback = document.getElementById('playback');
+    const debugInfo = document.getElementById('debugInfo');
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+
+    function setStatus(text, color) {
+        statusMsg.textContent = text || '';
+        if (color) statusMsg.style.color = color; else statusMsg.style.color = '#555';
+    }
+
+    function addDebugInfo(text) {
+        const timestamp = new Date().toLocaleTimeString();
+        debugInfo.innerHTML += `<div>[${timestamp}] ${text}</div>`;
+        debugInfo.scrollTop = debugInfo.scrollHeight;
+    }
+
+    async function startRecording() {
+        try {
+            setStatus('Requesting microphone access...', '#2980b9');
+            addDebugInfo('Starting recording...');
+            
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream);
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data && event.data.size > 0) {
+                    audioChunks.push(event.data);
+                    addDebugInfo(`Audio chunk: ${event.data.size} bytes, type: ${event.data.type}`);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                setStatus('Processing recording...', '#2980b9');
+                addDebugInfo(`Recording stopped. Total chunks: ${audioChunks.length}, Blob size: ${audioBlob.size}`);
+                await processVoiceRecording(audioBlob);
+            };
+
+            mediaRecorder.start();
+            isRecording = true;
+            micBtn.textContent = '⏹ Stop Recording';
+            micBtn.classList.remove('btn-primary');
+            micBtn.classList.add('btn-danger');
+            setStatus('Recording... speak now!', '#c0392b');
+            addDebugInfo('Recording started successfully');
+
+        } catch (error) {
+            console.error('Error starting recording:', error);
+            addDebugInfo(`Error: ${error.name}: ${error.message}`);
+            
+            if (error.name === 'NotAllowedError') {
+                setStatus('Microphone permission denied. Please allow microphone access and refresh the page.', '#c0392b');
+            } else if (error.name === 'NotFoundError') {
+                setStatus('No microphone found. Please connect a microphone and try again.', '#c0392b');
+            } else if (error.name === 'NotSupportedError') {
+                setStatus('Your browser does not support audio recording. Please try Chrome, Firefox, or Edge.', '#c0392b');
+            } else {
+                setStatus(`Microphone error: ${error.message}`, '#c0392b');
+            }
+            micBtn.textContent = '🎤 Start Recording';
+            isRecording = false;
+        }
+    }
+
+    function stopRecording() {
+        if (mediaRecorder && isRecording) {
+            addDebugInfo('Stopping recording...');
+            mediaRecorder.stop();
+            isRecording = false;
+            micBtn.textContent = '🎤 Start Recording';
+            micBtn.classList.remove('btn-danger');
+            micBtn.classList.add('btn-primary');
+            setStatus('Processing audio...', '#2980b9');
+
+            // Stop all tracks
+            mediaRecorder.stream.getTracks().forEach(track => track.stop());
+        }
+    }
+
+    async function processVoiceRecording(audioBlob) {
+        try {
+            setStatus('Uploading and processing audio...', '#2980b9');
+            addDebugInfo('Processing audio blob...');
+            
+            // Show the audio playback
+            playback.src = URL.createObjectURL(audioBlob);
+            playback.style.display = 'block';
+
+            // First test with simple endpoint
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.wav');
+
+            addDebugInfo('Uploading to simple test endpoint...');
+            
+            const response = await fetch('{{ url_for('main.record_voice_simple') }}', {
+                method: 'POST',
+                body: formData
+            });
+
+            addDebugInfo(`Response status: ${response.status}`);
+            addDebugInfo(`Response headers: ${JSON.stringify(Object.fromEntries(response.headers.entries()))}`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            addDebugInfo(`Response body: ${JSON.stringify(result)}`);
+
+            if (result.ok) {
+                setStatus(result.message, '#27ae60');
+                addDebugInfo('Simple endpoint test successful!');
+                addDebugInfo(`Transcript: ${result.transcript}`);
+                if (result.appointment_details) {
+                    addDebugInfo(`Appointment details: ${JSON.stringify(result.appointment_details)}`);
+                }
+                
+                // Now try the full endpoint
+                addDebugInfo('Now testing full AI processing endpoint...');
+                await testFullEndpoint(audioBlob);
+            } else {
+                throw new Error(result.message || 'Processing failed');
+            }
+
+        } catch (error) {
+            console.error('Error processing recording:', error);
+            addDebugInfo(`Error: ${error.message}`);
+            setStatus(`Error processing recording: ${error.message}`, '#c0392b');
+        }
+    }
+
+    async function testFullEndpoint(audioBlob) {
+        try {
+            setStatus('Testing full AI processing...', '#2980b9');
+            
+            const formData = new FormData();
+            formData.append('audio', audioBlob, 'recording.wav');
+
+            const response = await fetch('{{ url_for('main.record_voice') }}', {
+                method: 'POST',
+                body: formData
+            });
+
+            addDebugInfo(`Full endpoint response status: ${response.status}`);
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+
+            const result = await response.json();
+            addDebugInfo(`Full endpoint response: ${JSON.stringify(result)}`);
+
+            if (result.ok) {
+                // Handle different response types
+                let statusColor = '#27ae60'; // Default green
+                let statusMessage = result.message;
+                
+                if (result.response_type === 'success') {
+                    statusColor = '#27ae60'; // Green for success
+                    statusMessage = `✅ ${result.ai_response}`;
+                } else if (result.response_type === 'alternative_needed') {
+                    statusColor = '#f39c12'; // Orange for needs alternative
+                    statusMessage = `⚠️ ${result.ai_response}`;
+                } else {
+                    statusColor = '#2980b9'; // Blue for processed
+                    statusMessage = `ℹ️ ${result.ai_response}`;
+                }
+                
+                setStatus(statusMessage, statusColor);
+                addDebugInfo(`Response type: ${result.response_type}`);
+                addDebugInfo(`Status: ${result.status}`);
+                addDebugInfo(`Appointment ID: ${result.appointment_id}`);
+            } else {
+                setStatus(`AI Processing: ${result.message}`, '#e74c3c');
+            }
+
+        } catch (error) {
+            console.error('Error in full endpoint:', error);
+            addDebugInfo(`Full endpoint error: ${error.message}`);
+            setStatus(`AI Processing failed: ${error.message}`, '#e74c3c');
+        }
+    }
+
+    micBtn.addEventListener('click', () => {
+        if (!isRecording) {
+            // Show debug info on first recording attempt
+            debugInfo.style.display = 'block';
+            addDebugInfo('=== New Recording Session ===');
+            startRecording();
+        } else {
+            stopRecording();
+        }
+    });
+    
+    // Debug calendar authentication
+    document.getElementById('debugAuthBtn').addEventListener('click', async () => {
+        try {
+            setStatus('Checking calendar authentication...', '#2980b9');
+            addDebugInfo('=== Calendar Auth Debug ===');
+            
+            const response = await fetch('{{ url_for("main.debug_calendar_auth") }}');
+            const result = await response.json();
+            
+            if (result.ok) {
+                addDebugInfo('Calendar Auth Debug Info:');
+                addDebugInfo(JSON.stringify(result.debug_info, null, 2));
+                setStatus('Calendar auth debug info retrieved', '#27ae60');
+            } else {
+                addDebugInfo(`Debug failed: ${result.message}`);
+                setStatus('Calendar auth debug failed', '#e74c3c');
+            }
+        } catch (error) {
+            addDebugInfo(`Debug error: ${error.message}`);
+            setStatus('Calendar auth debug error', '#e74c3c');
+        }
+    });
+    
+    // Clear debug info
+    document.getElementById('clearDebugBtn').addEventListener('click', () => {
+        debugInfo.innerHTML = '';
+        debugInfo.style.display = 'none';
+        setStatus('Debug info cleared', '#27ae60');
+    });
+});
+</script>
+
+{% endblock content %}

@@ -1,0 +1,393 @@
+{% extends "layout.html" %}
+{% block content %}
+
+
+<div class="container mt-5">
+
+    <div class="row align-items-stretch">
+        <!-- Google Calendar Settings -->
+        <div class="col-lg-4 mb-4 ">
+            <div class="card flex-fill h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fab fa-google mr-2"></i>Google Calendar Integration
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {% if auth %}
+                    <div class="alert alert-success mb-3">
+                        Using calendar account: <strong>{{ auth.account_email or 'Unknown' }}</strong>
+                        {% if auth.status %}
+                        <span class="ms-2 badge bg-info">{{ auth.status }}</span>
+                        {% endif %}
+                    </div>
+                    {% endif %}
+                    <div class="settings-section">
+                        <h6>Connection Status</h6>
+                        <div class="config-item">
+                            <span class="status-indicator" id="calendarStatus"></span>
+                            <span id="calendarStatusText">Checking connection...</span>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
+                        <h6>Upload Google Calendar Credentials</h6>
+                        <form action="/api/settings/upload-file" method="POST" enctype="multipart/form-data"
+                              class="mb-3">
+                            <div class="mb-3">
+                                <label class="form-label">Credentials File (credentials.json)</label>
+                                <input type="file" class="form-control" name="file" accept=".json" required>
+                                <input type="hidden" name="type" value="credentials">
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-upload mr-1"></i>Upload Credentials
+                            </button>
+                        </form>
+                    </div>
+
+                    <div class="settings-section">
+                        <h6>Upload Google Calendar Token</h6>
+                        <form action="/api/settings/upload-file" method="POST" enctype="multipart/form-data"
+                              class="mb-3">
+                            <div class="mb-3">
+                                <label class="form-label">Token File (token.json)</label>
+                                <input type="file" class="form-control" name="file" accept=".json" required>
+                                <input type="hidden" name="type" value="token">
+                            </div>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-upload mr-1"></i>Upload Token
+                            </button>
+                        </form>
+                    </div>
+
+
+                    <div class="settings-section">
+                        <h6>Google Calendar Settings</h6>
+                        <form action="/api/settings/google-auth" method="POST">
+                            <div class="mb-3">
+                                <label class="form-label">Account Email</label>
+                                <input type="email" class="form-control" name="account_email"
+                                       value="{{ auth.account_email if auth else '' }}" placeholder="name@example.com">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Calendar ID</label>
+                                <input type="text" class="form-control" name="calendar_id"
+                                       value="{{ auth.calendar_id if auth else '' }}"
+                                       placeholder="primary or custom@group.calendar.google.com">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Scopes (comma separated)</label>
+                                <input type="text" class="form-control" name="scopes"
+                                       value="{{ auth.scopes if auth else '' }}"
+                                       placeholder="https://www.googleapis.com/auth/calendar">
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Timezone</label>
+                                <select class="form-control" name="time_zone">
+                                    <option value="">Select timezone...</option>
+                                    <option value="Europe/Brussels" {% if auth and auth.time_zone==
+                                    'Europe/Brussels' %}selected{% endif %}>Europe/Brussels</option>
+                                    <option value="UTC" {% if auth and auth.time_zone==
+                                    'UTC' %}selected{% endif %}>UTC</option>
+                                    <option value="Europe/London" {% if auth and auth.time_zone==
+                                    'Europe/London' %}selected{% endif %}>Europe/London (GMT/BST)</option>
+                                    <option value="Europe/Paris" {% if auth and auth.time_zone==
+                                    'Europe/Paris' %}selected{% endif %}>Europe/Paris (CET/CEST)</option>
+                                    <option value="Europe/Berlin" {% if auth and auth.time_zone==
+                                    'Europe/Berlin' %}selected{% endif %}>Europe/Berlin (CET/CEST)</option>
+                                    <option value="Europe/Rome" {% if auth and auth.time_zone==
+                                    'Europe/Rome' %}selected{% endif %}>Europe/Rome (CET/CEST)</option>
+                                    <option value="Europe/Madrid" {% if auth and auth.time_zone==
+                                    'Europe/Madrid' %}selected{% endif %}>Europe/Madrid (CET/CEST)</option>
+                                    <option value="America/New_York" {% if auth and auth.time_zone==
+                                    'America/New_York' %}selected{% endif %}>America/New_York (EST/EDT)</option>
+                                    <option value="America/Chicago" {% if auth and auth.time_zone==
+                                    'America/Chicago' %}selected{% endif %}>America/Chicago (CST/CDT)</option>
+                                    <option value="America/Denver" {% if auth and auth.time_zone==
+                                    'America/Denver' %}selected{% endif %}>America/Denver (MST/MDT)</option>
+                                    <option value="America/Los_Angeles" {% if auth and auth.time_zone==
+                                    'America/Los_Angeles' %}selected{% endif %}>America/Los_Angeles (PST/PDT)</option>
+                                    <option value="America/Toronto" {% if auth and auth.time_zone==
+                                    'America/Toronto' %}selected{% endif %}>America/Toronto (EST/EDT)</option>
+                                    <option value="Asia/Tokyo" {% if auth and auth.time_zone==
+                                    'Asia/Tokyo' %}selected{% endif %}>Asia/Tokyo (JST)</option>
+                                    <option value="Asia/Shanghai" {% if auth and auth.time_zone==
+                                    'Asia/Shanghai' %}selected{% endif %}>Asia/Shanghai (CST)</option>
+                                    <option value="Asia/Singapore" {% if auth and auth.time_zone==
+                                    'Asia/Singapore' %}selected{% endif %}>Asia/Singapore (SGT)</option>
+                                    <option value="Asia/Dubai" {% if auth and auth.time_zone==
+                                    'Asia/Dubai' %}selected{% endif %}>Asia/Dubai (GST)</option>
+                                    <option value="Australia/Sydney" {% if auth and auth.time_zone==
+                                    'Australia/Sydney' %}selected{% endif %}>Australia/Sydney (AEST/AEDT)</option>
+                                    <option value="Australia/Melbourne" {% if auth and auth.time_zone==
+                                    'Australia/Melbourne' %}selected{% endif %}>Australia/Melbourne (AEST/AEDT)</option>
+                                    <option value="Pacific/Auckland" {% if auth and auth.time_zone==
+                                    'Pacific/Auckland' %}selected{% endif %}>Pacific/Auckland (NZST/NZDT)</option>
+                                </select>
+                            </div>
+
+
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-save mr-1"></i>Save Google Settings
+                            </button>
+                        </form>
+                        <div class="settings-section mt-3">
+                            <form action="/api/calendar/test-connection" method="POST" class="d-inline">
+                                <button type="submit" class="btn btn-primary">
+                                    <i class="fas fa-plug mr-1"></i>Test Google Calendar Connection
+                                </button>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Phone Integration Settings -->
+        <div class="col-lg-8 mb-4">
+            <div class="card flex-fill h-100">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-phone mr-2"></i>Phone Integration
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <!-- Twilio Settings -->
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="settings-section">
+                                <h6><i class="fab fa-twilio mr-2"></i>Twilio Configuration</h6>
+                                <form action="/api/settings/twilio-config" method="POST">
+                                    <div class="mb-3">
+                                        <label class="form-label">Account SID</label>
+                                        <input type="text" class="form-control" name="twilio_account_sid"
+                                               value="{{ twilio_config.account_sid if twilio_config else '' }}"
+                                               placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                        <small class="form-text text-muted">Find this in your Twilio Console under
+                                            Account Info</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Auth Token</label>
+                                        <input type="password" class="form-control" name="twilio_auth_token"
+                                               value="{{ twilio_config.auth_token if twilio_config else '' }}"
+                                               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                        <small class="form-text text-muted">Find this in your Twilio Console under
+                                            Account Info</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Phone Number</label>
+                                        <input type="tel" class="form-control" name="twilio_phone_number"
+                                               value="{{ twilio_config.phone_number if twilio_config else '' }}"
+                                               placeholder="+1234567890">
+                                        <small class="form-text text-muted">Your Twilio phone number in E.164
+                                            format</small>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-save mr-1"></i>Save Twilio Settings
+                                    </button>
+                                </form>
+                                <div class="settings-section mt-3">
+                                    <form action="/api/phone/test-connection" method="POST" class="d-inline">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="fas fa-plug mr-1"></i>Test Twilio Connection
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="settings-section">
+                                <h6><i class="fas fa-phone-alt mr-2"></i>Plivo Configuration</h6>
+                                <form action="/api/settings/plivo-config" method="POST">
+                                    <div class="mb-3">
+                                        <label class="form-label">Auth ID</label>
+                                        <input type="text" class="form-control" name="plivo_auth_id"
+                                               value="{{ plivo_config.auth_id if plivo_config else '' }}"
+                                               placeholder="MAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                        <small class="form-text text-muted">Find this in your Plivo Console under
+                                            Account → Auth ID</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Auth Token</label>
+                                        <input type="password" class="form-control" name="plivo_auth_token"
+                                               value="{{ plivo_config.auth_token if plivo_config else '' }}"
+                                               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                        <small class="form-text text-muted">Find this in your Plivo Console under
+                                            Account → Auth Token</small>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label">Phone Number</label>
+                                        <input type="tel" class="form-control" name="plivo_phone_number"
+                                               value="{{ plivo_config.phone_number if plivo_config else '' }}"
+                                               placeholder="+1234567890">
+                                        <small class="form-text text-muted">Your Plivo phone number in E.164
+                                            format</small>
+                                    </div>
+
+                                    <button type="submit" class="btn btn-success">
+                                        <i class="fas fa-save mr-1"></i>Save Plivo Settings
+                                    </button>
+                                </form>
+                                <div class="settings-section mt-3">
+                                    <form action="/api/phone/test-plivo-connection" method="POST" class="d-inline">
+                                        <button type="submit" class="btn btn-success">
+                                            <i class="fas fa-plug mr-1"></i>Test Plivo Connection
+                                        </button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="settings-section">
+                                <h6><i class="fas fa-ethernet mr-2"></i>Telnyx Configuration</h6>
+                                <form action="/api/settings/telnyx-config" method="POST">
+
+                                    <div class="mb-3">
+                                        <label class="form-label">API Key</label>
+                                        <input type="password" class="form-control" name="telnyx_api_key"
+                                               value="{{ telnyx_config.api_key if telnyx_config else '' }}"
+                                               placeholder="TELNYX_API_KEY_xxxxxxxxxxxxxxxxxxxx">
+                                        <small class="form-text text-muted">From Telnyx Console → Auth → API
+                                            Keys</small>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">Connection ID</label>
+                                        <input type="text" class="form-control" name="telnyx_connection_id"
+                                               value="{{ telnyx_config.connection_id if telnyx_config else '' }}"
+                                               placeholder="uuid-like-connection-id">
+                                        <small class="form-text text-muted">From Call Control or TeXML App
+                                            configuration</small>
+                                    </div>
+
+
+                                    <div class="mb-3">
+                                        <label class="form-label">Webhook Secret</label>
+                                        <input type="password" class="form-control" name="telnyx_webhook_secret"
+                                               value="{{ telnyx_config.webhook_secret if telnyx_config else '' }}"
+                                               placeholder="whsec_...">
+                                        <small class="form-text text-muted">For validating Telnyx webhook
+                                            signatures</small>
+                                    </div>
+
+                                    <div class="mb-3">
+                                        <label class="form-label">Phone Number</label>
+                                        <input type="tel" class="form-control" name="telnyx_phone_number"
+                                               value="{{ telnyx_config.phone_number if telnyx_config else '' }}"
+                                               placeholder="+1234567890">
+                                        <small class="form-text text-muted">Your Telnyx phone number in E.164
+                                            format</small>
+                                    </div>
+                                    <button type="submit" class="btn btn-dark">
+                                        <i class="fas fa-save mr-1"></i>Save Telnyx Settings
+                                    </button>
+                                    <div class="settings-section mt-3">
+                                        <form action="/api/phone/test-telnyx-connection" method="POST" class="d-inline">
+                                            <button type="submit" class="btn btn-dark">
+                                                <i class="fas fa-plug mr-1"></i>Test Telnyx Connection
+                                            </button>
+                                        </form>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+
+
+
+
+                    </div>
+                </div>
+            </div>
+
+
+        </div>
+
+        <div class="settings-section">
+            <h6>Phone Integration Info</h6>
+            <div class="alert alert-info">
+                <strong>Webhook URL:</strong><br>
+                <code id="webhookUrl">https://your-domain.com/phone/incoming-call</code>
+                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyWebhookUrl()">
+                    <i class="fas fa-copy"></i> Copy
+                </button>
+            </div>
+            <small class="text-muted">
+                Use this URL in your phone provider console under Voice Configuration → Webhook URL
+            </small>
+        </div>
+    </div>
+</div>
+</div>
+
+</div>
+
+</div>
+
+<script>
+    function copyWebhookUrl() {
+        const webhookUrl = document.getElementById('webhookUrl').textContent;
+        navigator.clipboard.writeText(webhookUrl).then(function() {
+            // Show a temporary success message
+            const button = event.target.closest('button');
+            const originalText = button.innerHTML;
+            button.innerHTML = '<i class="fas fa-check"></i> Copied!';
+            button.classList.remove('btn-outline-secondary');
+            button.classList.add('btn-success');
+
+            setTimeout(function() {
+                button.innerHTML = originalText;
+                button.classList.remove('btn-success');
+                button.classList.add('btn-outline-secondary');
+            }, 2000);
+        }).catch(function(err) {
+            console.error('Could not copy text: ', err);
+            alert('Failed to copy webhook URL');
+        });
+    }
+
+    // Update webhook URL based on current domain
+    document.addEventListener('DOMContentLoaded', function() {
+        const webhookUrlElement = document.getElementById('webhookUrl');
+        const currentDomain = window.location.origin;
+        webhookUrlElement.textContent = currentDomain + '/phone/incoming-call';
+
+        // Check Twilio connection status
+        checkTwilioStatus();
+    });
+
+    // Function to check Twilio connection status
+    function checkTwilioStatus() {
+        const twilioStatusElement = document.getElementById('twilioStatus');
+        const twilioStatusTextElement = document.getElementById('twilioStatusText');
+
+        if (!twilioStatusElement || !twilioStatusTextElement) return;
+
+        // Get Twilio config from the form fields
+        const accountSid = document.querySelector('input[name="twilio_account_sid"]').value;
+        const authToken = document.querySelector('input[name="twilio_auth_token"]').value;
+        const phoneNumber = document.querySelector('input[name="twilio_phone_number"]').value;
+
+        if (accountSid && authToken && phoneNumber) {
+            twilioStatusElement.className = 'status-indicator connected';
+            twilioStatusTextElement.textContent = 'Configured - Ready to test';
+        } else {
+            twilioStatusElement.className = 'status-indicator disconnected';
+            twilioStatusTextElement.textContent = 'Not configured';
+        }
+    }
+
+    // Update status when form fields change
+    document.addEventListener('DOMContentLoaded', function() {
+        const twilioForm = document.querySelector('form[action="/api/settings/twilio-config"]');
+        if (twilioForm) {
+            const inputs = twilioForm.querySelectorAll('input');
+            inputs.forEach(input => {
+                input.addEventListener('input', checkTwilioStatus);
+            });
+        }
+    });
+</script>
+
+{% endblock content %}
