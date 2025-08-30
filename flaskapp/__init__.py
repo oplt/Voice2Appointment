@@ -1,12 +1,13 @@
+# __init__.py
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
 from flask_mail import Mail
-from flaskapp.config import Config
 import logging
+from config import settings as Config
 
-
+# Initialize extensions
 db = SQLAlchemy()
 bcrypt = Bcrypt()
 login_manager = LoginManager()
@@ -14,34 +15,41 @@ login_manager.login_view = 'users.login'
 login_manager.login_message_category = 'info'
 mail = Mail()
 
-
 def create_app(config_class=Config):
-	app = Flask(__name__)
-	app.config.from_object(Config)
+    app = Flask(__name__)
+    app.config.from_object(Config)
 
-	# Setup logging
-	from backend.core.logging_config import setup_logger
-	flask_logger = setup_logger('flask_app')
-	
-	# Configure Flask's built-in logger
-	app.logger.handlers = flask_logger.handlers
-	app.logger.setLevel(flask_logger.level)
+    # Initialize extensions with app
+    db.init_app(app)
+    bcrypt.init_app(app)
+    login_manager.init_app(app)
+    mail.init_app(app)
 
-	db.init_app(app)
-	bcrypt.init_app(app)
-	login_manager.init_app(app)
-	mail.init_app(app)
+    # Import models here to avoid circular imports
+    with app.app_context():
+        from flaskapp.database.models import User
 
-	from flaskapp.users.routes import users
-	from flaskapp.main.routes import main
-	from flaskapp.errors.handlers import errors
-	from flaskapp.calendar.calendar import google_bp
-	from flaskapp.phone.routes import phone
-	app.register_blueprint(users)
-	app.register_blueprint(main)
-	app.register_blueprint(errors)
-	app.register_blueprint(google_bp)
-	app.register_blueprint(phone, url_prefix='/phone')
+        @login_manager.user_loader
+        def load_user(user_id):
+            try:
+                user_id_int = int(user_id)
+                return User.query.get(user_id_int)
+            except (ValueError, TypeError):
+                return None
+            except Exception as e:
+                logging.error(f"Error loading user: {e}")
+                return None
 
-	flask_logger.info("Flask application created successfully")
-	return app
+    # Import and register blueprints
+    from flaskapp.users.routes import users
+    from flaskapp.main.routes import main
+    from flaskapp.errors.handlers import errors
+    from flaskapp.phone.routes import phone_bp
+
+    app.register_blueprint(users)
+    app.register_blueprint(main)
+    app.register_blueprint(errors)
+    app.register_blueprint(phone_bp, url_prefix='/phone')
+
+    logging.info("Flask application created successfully")
+    return app

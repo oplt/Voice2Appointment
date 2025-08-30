@@ -1,15 +1,14 @@
-from flask import render_template, request, Blueprint, redirect, url_for, flash, jsonify
+from flask import render_template, request, Blueprint, jsonify
 from flask_login import current_user, login_required
 from numba.cuda.cudadrv.devicearray import lru_cache
-from db.models import GoogleCalendarAuth
-from flaskapp.utils.google_auth import  authenticate_google_calendar
+from flaskapp.database.models import GoogleCalendarAuth
+from flaskapp.utils.calendar import  authenticate_google_calendar
 from datetime import datetime, timedelta
 import pytz
 from flaskapp import db
 import logging
 
-# Setup logger for this module
-logger = logging.getLogger(__name__)
+
 
 @lru_cache
 def get_user_timezone(user_id):
@@ -40,240 +39,13 @@ def dashboard():
     return render_template('dashboard.html')
 
 
-@main.route('/voice/record-simple', methods=['POST'])
-def record_voice_simple():
-    """Simple voice recording endpoint for testing"""
-    try:
-        logger.info("Simple voice recording endpoint called")
-
-        if 'audio' not in request.files:
-            logger.warning("No audio file provided in request")
-            return jsonify({'ok': False, 'message': 'No audio file provided'}), 400
-
-        audio_file = request.files['audio']
-        if audio_file.filename == '':
-            logger.warning("Empty filename provided")
-            return jsonify({'ok': False, 'message': 'No audio file selected'}), 400
-
-        logger.info(f"Processing audio file: {audio_file.filename}")
-
-        # Save audio file temporarily for processing
-        import tempfile
-        import os
-
-        # Create temporary file, preserve original extension for accurate decoding
-        temp_dir = tempfile.gettempdir()
-        original_ext = (audio_file.filename.rsplit('.', 1)[-1].lower() if '.' in audio_file.filename else '')
-        if not original_ext:
-            # Fallback from mimetype
-            mt = (audio_file.content_type or '').lower()
-            if 'ogg' in mt:
-                original_ext = 'ogg'
-            elif 'webm' in mt:
-                original_ext = 'webm'
-            elif 'wav' in mt or 'x-wav' in mt:
-                original_ext = 'wav'
-            else:
-                original_ext = 'webm'
-        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{original_ext}"
-        temp_filepath = os.path.join(temp_dir, temp_filename)
-
-        logger.debug(f"Temporary file path: {temp_filepath}")
-
-        # Save the uploaded file temporarily
-        audio_file.save(temp_filepath)
-        logger.debug("Audio file saved temporarily")
-
-        try:
-            # Process with AI (simple transcription only)
-            from backend.core.ai_processor import AudioProcessor, LLMProcessor
-
-            timezone = get_user_timezone(user_id=current_user.id if current_user.is_authenticated else None)
-
-            audio_processor = AudioProcessor()
-            llm_processor = LLMProcessor(timezone)
-
-            # Transcribe audio
-            logger.info("Starting audio transcription")
-            transcript = audio_processor.transcribe_with_whisper(temp_filepath)
-            logger.info(f"Transcription completed: {len(transcript) if transcript else 0} characters")
-
-            # Extract appointment details
-            if transcript:
-                logger.info("Extracting appointment details with LLM")
-                appointment_details = llm_processor.extract_appointment_details(transcript)
-                ai_response = f"Transcribed: {transcript}\nExtracted details: {appointment_details}"
-                logger.info("Appointment details extracted successfully")
-            else:
-                ai_response = "Could not transcribe audio"
-                logger.warning("No transcript generated")
-
-            logger.info("Simple voice processing completed successfully")
-            return jsonify({
-                'ok': True,
-                'message': 'Audio processed successfully (simple endpoint)',
-                'filename': audio_file.filename,
-                'transcript': transcript,
-                'appointment_details': appointment_details if transcript else None,
-                'ai_response': ai_response
-            })
-
-        finally:
-            # Clean up temporary file
-            try:
-                os.remove(temp_filepath)
-                logger.debug("Temporary file cleaned up")
-            except Exception as cleanup_error:
-                logger.warning(f"Failed to cleanup temporary file: {cleanup_error}")
-
-    except Exception as e:
-        logger.error(f"Error in simple voice recording: {str(e)}", exc_info=True)
-        return jsonify({'ok': False, 'message': str(e)}), 500
-
-
-@main.route('/voice/record', methods=['POST'])
-def record_voice():
-    """Full voice recording endpoint with AI processing"""
-    try:
-        logger.info("Full voice recording endpoint called")
-        
-        if 'audio' not in request.files:
-            logger.warning("No audio file provided in request")
-            return jsonify({'ok': False, 'message': 'No audio file provided'}), 400
-
-        audio_file = request.files['audio']
-        if audio_file.filename == '':
-            logger.warning("Empty filename provided")
-            return jsonify({'ok': False, 'message': 'No audio file selected'}), 400
-
-        logger.info(f"Processing audio file: {audio_file.filename}")
-
-        # Save audio file temporarily for processing
-        import tempfile
-        import os
-        
-        # Create temporary file, preserve original extension for accurate decoding
-        temp_dir = tempfile.gettempdir()
-        original_ext = (audio_file.filename.rsplit('.', 1)[-1].lower() if '.' in audio_file.filename else '')
-        if not original_ext:
-            mt = (audio_file.content_type or '').lower()
-            if 'ogg' in mt:
-                original_ext = 'ogg'
-            elif 'webm' in mt:
-                original_ext = 'webm'
-            elif 'wav' in mt or 'x-wav' in mt:
-                original_ext = 'wav'
-            else:
-                original_ext = 'webm'
-        temp_filename = f"voice_recording_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{original_ext}"
-        temp_filepath = os.path.join(temp_dir, temp_filename)
-        
-        logger.debug(f"Temporary file path: {temp_filepath}")
-        
-        # Save the uploaded file temporarily
-        audio_file.save(temp_filepath)
-        logger.debug("Audio file saved temporarily")
-        
-        try:
-            # Process with AI
-            from backend.core.ai_processor import VoiceAssistant
-            from flask_login import current_user
-            
-            logger.info("Initializing VoiceAssistant")
-            voice_assistant = VoiceAssistant(voice_response=False)  # No TTS in web context
-            
-            logger.info("Processing voice input with AI")
-            ai_response = voice_assistant.process_voice_input(temp_filepath, 
-                                                           user_id=current_user.id if current_user.is_authenticated else None)
-            logger.info(f"AI processing completed: {len(ai_response)} characters")
-            
-            # Read the audio data for database storage
-            with open(temp_filepath, 'rb') as f:
-                audio_data = f.read()
-            
-            # Determine status based on AI response
-            if "successfully scheduled" in ai_response.lower():
-                status = 'scheduled'
-            elif "not available" in ai_response.lower() or "alternative" in ai_response.lower():
-                status = 'needs_alternative'
-            else:
-                status = 'processed'
-            
-            logger.info(f"Appointment status determined: {status}")
-            
-            # Create new appointment record
-            from db.models import Appointment
-            
-            appointment = Appointment(
-                user_id=current_user.id if current_user.is_authenticated else None,
-                stored_filename=audio_file.filename,
-                mime_type=audio_file.content_type,
-                audio_data=audio_data,
-                transcript=ai_response,  # Store the AI response as transcript
-                status=status
-            )
-            
-            db.session.add(appointment)
-            db.session.commit()
-            logger.info(f"Appointment saved to database with ID: {appointment.id}")
-            
-            # Determine response type for frontend
-            response_type = 'success' if status == 'scheduled' else 'alternative_needed' if status == 'needs_alternative' else 'processed'
-            
-            logger.info("Full voice processing completed successfully")
-            return jsonify({
-                'ok': True,
-                'message': f'Audio processed successfully. ID: {appointment.id}',
-                'ai_response': ai_response,
-                'response_type': response_type,
-                'status': status,
-                'filename': audio_file.filename,
-                'size': len(audio_data),
-                'appointment_id': appointment.id
-            })
-            
-        finally:
-            # Clean up temporary file
-            logger.debug("Cleaning up temporary file")
-            voice_assistant.cleanup_temp_file(temp_filepath)
-
-    except Exception as e:
-        logger.error(f"Error in full voice recording: {str(e)}", exc_info=True)
-        return jsonify({'ok': False, 'message': str(e)}), 500
-
-
-@main.route('/voice/debug-auth', methods=['GET'])
-def debug_calendar_auth():
-    """Debug endpoint to check calendar authentication status"""
-    try:
-        logger.info("Calendar authentication debug endpoint called")
-        
-        from flask_login import current_user
-        from backend.core.ai_processor import CalendarManager
-        
-        user_id = current_user.id if current_user.is_authenticated else None
-        logger.info(f"Debugging calendar auth for user: {user_id}")
-        
-        calendar_manager = CalendarManager()
-        debug_info = calendar_manager.debug_authentication(user_id=user_id)
-        
-        logger.info("Calendar authentication debug completed successfully")
-        return jsonify({
-            'ok': True,
-            'debug_info': debug_info
-        })
-        
-    except Exception as e:
-        logger.error(f"Error in calendar auth debug: {str(e)}", exc_info=True)
-        return jsonify({'ok': False, 'message': str(e)}), 500
-
 
 @main.route('/dashboard/stats')
 @login_required
 def get_dashboard_stats():
     """Get comprehensive dashboard statistics"""
     try:
-        from db.models import User
+        from flaskapp.database.models import User
         total_users = User.query.count()
 
         try:

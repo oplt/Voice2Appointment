@@ -3,15 +3,11 @@ import json
 from datetime import datetime
 from flask_login import login_user, current_user, logout_user, login_required
 from flaskapp import db, bcrypt
-from db.models import User
 from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm,
-                                   RequestResetForm, ResetPasswordForm)
+                                   RequestResetForm, ResetPasswordForm, SettingsForm)
 from flaskapp.users.utils import save_picture, send_reset_email
-from db.models import GoogleCalendarAuth
-from backend.core.logging_config import app_logger
-
-# Setup logger for this module
-logger = app_logger
+from flaskapp.database.models import GoogleCalendarAuth, User
+import logging
 
 users = Blueprint('users', __name__)
 
@@ -79,14 +75,14 @@ def account():
 def dashboard():
     return render_template('dashboard.html')
 
-@users.route("/settings")
+@users.route("/settings", methods=['GET', 'POST'])
 @login_required
 def settings():
-    logger.info(f"Settings page accessed by user {current_user.id}")
+    logging.info(f"Settings page accessed by user {current_user.id}")
+    form = SettingsForm()
     auth = None
     twilio_config = None
-    plivo_config = None
-    telnyx_config = None
+
     if current_user.is_authenticated:
         auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
         # Create a simple object with Twilio config for the template
@@ -95,22 +91,39 @@ def settings():
             'auth_token': current_user.twilio_auth_token,
             'phone_number': current_user.twilio_phone_number
         }
-        # Create a simple object with Plivo config for the template
-        plivo_config = {
-            'auth_id': current_user.plivo_auth_id,
-            'auth_token': current_user.plivo_auth_token,
-            'phone_number': current_user.plivo_phone_number
-        }
-        telnyx_config = {
-            'api_key': current_user.telnyx_api_key,
-            'connection_id': current_user.telnyx_connection_id,
-            'webhook_secret': current_user.telnyx_webhook_secret,
-            'phone_number': current_user.telnyx_phone_number
-        }
-        logger.debug(f"User {current_user.id} has Twilio config: Account SID: {current_user.twilio_account_sid[:8] if current_user.twilio_account_sid else 'None'}..., Phone: {current_user.twilio_phone_number}")
-        logger.debug(f"User {current_user.id} has Plivo config: Auth ID: {current_user.plivo_auth_id[:8] if current_user.plivo_auth_id else 'None'}..., Phone: {current_user.plivo_phone_number}")
-        logger.debug(f"User {current_user.id} has Telnyx config: API: {'set' if current_user.telnyx_api_key else 'unset'}, Phone: {current_user.telnyx_phone_number}")
-    return render_template('settings.html', auth=auth, twilio_config=twilio_config, plivo_config=plivo_config, telnyx_config=telnyx_config)
+
+        logging.debug(f"User {current_user.id} has Twilio config: Account SID: {current_user.twilio_account_sid[:8] if current_user.twilio_account_sid else 'None'}..., Phone: {current_user.twilio_phone_number}")
+    
+    if form.validate_on_submit():
+        logging.info(f"Updating settings for user {current_user.id}")
+        
+        # Update Twilio settings
+        current_user.twilio_account_sid = form.twilio_account_sid.data
+        current_user.twilio_auth_token = form.twilio_auth_token.data
+        current_user.twilio_phone_number = form.twilio_phone_number.data
+        
+        # Update Deepgram settings
+        current_user.deepgram_api_key = form.deepgram_api_key.data
+        
+        try:
+            db.session.commit()
+            flash('Settings updated successfully!', 'success')
+            logging.info(f"Settings updated successfully for user {current_user.id}")
+        except Exception as e:
+            db.session.rollback()
+            flash('Error updating settings. Please try again.', 'danger')
+            logging.error(f"Error updating settings for user {current_user.id}: {e}")
+        
+        return redirect(url_for('users.settings'))
+    
+    elif request.method == 'GET':
+        # Pre-populate form with current values
+        form.twilio_account_sid.data = current_user.twilio_account_sid
+        form.twilio_auth_token.data = current_user.twilio_auth_token
+        form.twilio_phone_number.data = current_user.twilio_phone_number
+        form.deepgram_api_key.data = current_user.deepgram_api_key
+    
+    return render_template('settings.html', auth=auth, twilio_config=twilio_config, form=form)
 
 
 @users.route("/reset_password", methods=['GET', 'POST'])
@@ -192,56 +205,9 @@ def upload_google_settings_file():
     return redirect(url_for('users.settings'))
 
 
-@users.route('/api/settings/telnyx-config', methods=['POST'])
-@login_required
-def save_telnyx_config():
-    """Save Telnyx configuration settings for the current user"""
-    try:
-        telnyx_api_key = request.form.get('telnyx_api_key', '').strip()
-        telnyx_connection_id = request.form.get('telnyx_connection_id', '').strip()
-        telnyx_webhook_secret = request.form.get('telnyx_webhook_secret', '').strip()
-        telnyx_phone_number = request.form.get('telnyx_phone_number', '').strip()
-
-        # Minimal validation; API key optional for TeXML
-        if not telnyx_phone_number:
-            flash('Telnyx Phone Number is required', 'danger')
-            return redirect(url_for('users.settings'))
-
-        if not telnyx_phone_number.startswith('+') or len(telnyx_phone_number) < 10:
-            flash('Phone number must be in E.164 format (e.g., +1234567890)', 'danger')
-            return redirect(url_for('users.settings'))
-
-        current_user.telnyx_api_key = telnyx_api_key or None
-        current_user.telnyx_connection_id = telnyx_connection_id or None
-        current_user.telnyx_webhook_secret = telnyx_webhook_secret or None
-        current_user.telnyx_phone_number = telnyx_phone_number or None
-
-        db.session.commit()
-        logger.info(f"Telnyx settings saved for user {current_user.id}, Phone: {telnyx_phone_number}")
-        flash('Telnyx settings saved successfully', 'success')
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error saving Telnyx settings: {str(e)}', 'danger')
-        logger.error(f'Error saving Telnyx settings for user {current_user.id}: {str(e)}')
-    return redirect(url_for('users.settings'))
 
 
-@users.route('/api/phone/test-telnyx-connection', methods=['POST'])
-@login_required
-def test_telnyx_connection():
-    try:
-        if not current_user.telnyx_phone_number:
-            flash('Telnyx phone number is not set', 'warning')
-            return redirect(url_for('users.settings'))
 
-        # For TeXML we can only validate format and presence
-        if current_user.telnyx_api_key:
-            logger.info(f"Telnyx API key present for user {current_user.id}")
-        flash('Telnyx configuration looks valid. Note: TeXML does not require API calls.', 'success')
-    except Exception as e:
-        flash(f'Unexpected error testing Telnyx connection: {str(e)}', 'danger')
-        logger.error(f'Unexpected error testing Telnyx connection for user {current_user.id}: {str(e)}', exc_info=True)
-    return redirect(url_for('users.settings'))
 @users.route('/api/settings/google-auth', methods=['POST'])
 @login_required
 def save_google_auth_metadata():
@@ -304,60 +270,16 @@ def save_twilio_config():
         current_user.twilio_phone_number = twilio_phone_number
         
         db.session.commit()
-        logger.info(f"Twilio settings saved successfully for user {current_user.id}, Phone: {twilio_phone_number}")
+        logging.info(f"Twilio settings saved successfully for user {current_user.id}, Phone: {twilio_phone_number}")
         flash('Twilio settings saved successfully', 'success')
         
     except Exception as e:
         db.session.rollback()
         flash(f'Error saving Twilio settings: {str(e)}', 'danger')
-        logger.error(f'Error saving Twilio settings for user {current_user.id}: {str(e)}')
+        logging.error(f'Error saving Twilio settings for user {current_user.id}: {str(e)}')
     
     return redirect(url_for('users.settings'))
 
-
-@users.route('/api/settings/plivo-config', methods=['POST'])
-@login_required
-def save_plivo_config():
-    """Save Plivo configuration settings for the current user"""
-    try:
-        # Get form data
-        plivo_auth_id = request.form.get('plivo_auth_id', '').strip()
-        plivo_auth_token = request.form.get('plivo_auth_token', '').strip()
-        plivo_phone_number = request.form.get('plivo_phone_number', '').strip()
-        
-        # Validate required fields
-        if not plivo_auth_id:
-            flash('Plivo Auth ID is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        if not plivo_auth_token:
-            flash('Plivo Auth Token is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        if not plivo_phone_number:
-            flash('Plivo Phone Number is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        # Validate phone number format (basic E.164 validation)
-        if not plivo_phone_number.startswith('+') or len(plivo_phone_number) < 10:
-            flash('Phone number must be in E.164 format (e.g., +1234567890)', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        # Update user's Plivo configuration
-        current_user.plivo_auth_id = plivo_auth_id
-        current_user.plivo_auth_token = plivo_auth_token
-        current_user.plivo_phone_number = plivo_phone_number
-        
-        db.session.commit()
-        logger.info(f"Plivo settings saved successfully for user {current_user.id}, Phone: {plivo_phone_number}")
-        flash('Plivo settings saved successfully', 'success')
-        
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error saving Plivo settings: {str(e)}', 'danger')
-        logger.error(f'Error saving Plivo settings for user {current_user.id}: {str(e)}')
-    
-    return redirect(url_for('users.settings'))
 
 
 @users.route('/api/calendar/test-connection', methods=['POST'])
@@ -446,76 +368,30 @@ def test_twilio_connection():
         try:
             phone_numbers = client.incoming_phone_numbers.list(limit=1)
             flash('Twilio connection successful! Credentials are valid.', 'success')
-            logger.info(f'Twilio connection test passed for user {current_user.id}')
+            logging.info(f'Twilio connection test passed for user {current_user.id}')
         except Exception as list_error:
             # If listing fails, try a simple validation
             if current_user.twilio_account_sid.startswith('AC') and len(current_user.twilio_auth_token) == 32:
                 flash('Twilio credentials format appears valid. Note: Some operations may be limited with trial accounts.', 'info')
-                logger.info(f'Twilio credentials format validated for user {current_user.id} (trial account limitations may apply)')
+                logging.info(f'Twilio credentials format validated for user {current_user.id} (trial account limitations may apply)')
             else:
                 flash('Twilio connection failed. Please check your credentials format.', 'danger')
-                logger.error(f'Twilio credentials format invalid for user {current_user.id}')
+                logging.error(f'Twilio credentials format invalid for user {current_user.id}')
             
     except TwilioException as e:
         error_msg = str(e)
         if "Test Account Credentials" in error_msg:
             flash('Twilio connection test limited due to trial account restrictions. Your credentials are valid, but some operations are not available with trial accounts.', 'warning')
-            logger.warning(f'Twilio trial account limitation for user {current_user.id}: {error_msg}')
+            logging.warning(f'Twilio trial account limitation for user {current_user.id}: {error_msg}')
         elif "403" in error_msg:
             flash('Twilio access denied. Please check your Account SID and Auth Token.', 'danger')
-            logger.error(f'Twilio access denied for user {current_user.id}: {error_msg}')
+            logging.error(f'Twilio access denied for user {current_user.id}: {error_msg}')
         else:
             flash(f'Twilio connection failed: {error_msg}', 'danger')
-            logger.error(f'Twilio connection error for user {current_user.id}: {error_msg}')
+            logging.error(f'Twilio connection error for user {current_user.id}: {error_msg}')
     except Exception as e:
         flash(f'Unexpected error testing Twilio connection: {str(e)}', 'danger')
-        logger.error(f'Unexpected error testing Twilio connection for user {current_user.id}: {str(e)}', exc_info=True)
-    
-    return redirect(url_for('users.settings'))
-
-
-@users.route('/api/phone/test-plivo-connection', methods=['POST'])
-@login_required
-def test_plivo_connection():
-    """Test Plivo connection using stored credentials"""
-    try:
-        # Check if user has Plivo configuration
-        if not current_user.plivo_auth_id or not current_user.plivo_auth_token or not current_user.plivo_phone_number:
-            flash('Plivo configuration incomplete. Please fill in all required fields.', 'warning')
-            return redirect(url_for('users.settings'))
-        
-        # Test Plivo connection
-        from plivo import plivoxml
-        from plivo.exceptions import PlivoException
-        
-        # Try to create a simple Plivo XML response to test credentials
-        try:
-            response = plivoxml.ResponseElement()
-            response.add(plivoxml.SpeechElement("Test response"))
-            
-            flash('Plivo connection successful! Credentials are valid.', 'success')
-            logger.info(f'Plivo connection test passed for user {current_user.id}')
-            
-        except Exception as xml_error:
-            # If XML creation fails, try a simple validation
-            if current_user.plivo_auth_id.startswith('MA') and len(current_user.plivo_auth_token) == 32:
-                flash('Plivo credentials format appears valid. Note: Some operations may be limited with trial accounts.', 'info')
-                logger.info(f'Plivo credentials format validated for user {current_user.id} (trial account limitations may apply)')
-            else:
-                flash('Plivo connection failed. Please check your credentials format.', 'danger')
-                logger.error(f'Plivo credentials format invalid for user {current_user.id}')
-            
-    except PlivoException as e:
-        error_msg = str(e)
-        if "trial" in error_msg.lower() or "limit" in error_msg.lower():
-            flash('Plivo connection test limited due to trial account restrictions. Your credentials are valid, but some operations are not available with trial accounts.', 'warning')
-            logger.warning(f'Plivo trial account limitation for user {current_user.id}: {error_msg}')
-        else:
-            flash(f'Plivo connection failed: {error_msg}', 'danger')
-            logger.error(f'Plivo connection error for user {current_user.id}: {error_msg}')
-    except Exception as e:
-        flash(f'Unexpected error testing Plivo connection: {str(e)}', 'danger')
-        logger.error(f'Unexpected error testing Plivo connection for user {current_user.id}: {str(e)}', exc_info=True)
+        logging.error(f'Unexpected error testing Twilio connection for user {current_user.id}: {str(e)}', exc_info=True)
     
     return redirect(url_for('users.settings'))
 

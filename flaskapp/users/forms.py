@@ -3,7 +3,7 @@ from flask_wtf.file import FileField, FileAllowed
 from wtforms import StringField, PasswordField, SubmitField, BooleanField
 from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationError
 from flask_login import current_user
-from db.models import User
+from flaskapp.database.models import User
 
 
 class RegistrationForm(FlaskForm):
@@ -72,3 +72,15 @@ class ResetPasswordForm(FlaskForm):
     confirm_password = PasswordField('Confirm Password',
                                      validators=[DataRequired(), EqualTo('password')])
     submit = SubmitField('Reset Password')
+
+
+class SettingsForm(FlaskForm):
+    # Twilio Configuration
+    twilio_account_sid = StringField('Twilio Account SID')
+    twilio_auth_token = StringField('Twilio Auth Token')
+    twilio_phone_number = StringField('Twilio Phone Number')
+    
+    # Deepgram Configuration
+    deepgram_api_key = StringField('Deepgram API Key')
+    
+    submit = SubmitField('Save Settings')

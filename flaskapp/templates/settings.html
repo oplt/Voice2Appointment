@@ -6,7 +6,7 @@
 
     <div class="row align-items-stretch">
         <!-- Google Calendar Settings -->
-        <div class="col-lg-4 mb-4 ">
+        <div class="col-lg-6 mb-4 ">
             <div class="card flex-fill h-100">
                 <div class="card-header">
                     <h5 class="mb-0">
@@ -144,7 +144,7 @@
         </div>
 
         <!-- Phone Integration Settings -->
-        <div class="col-lg-8 mb-4">
+        <div class="col-lg-6 mb-4">
             <div class="card flex-fill h-100">
                 <div class="card-header">
                     <h5 class="mb-0">
@@ -152,151 +152,69 @@
                     </h5>
                 </div>
                 <div class="card-body">
-                    <!-- Twilio Settings -->
-                    <div class="row">
-                        <div class="col-md-4">
-                            <div class="settings-section">
-                                <h6><i class="fab fa-twilio mr-2"></i>Twilio Configuration</h6>
-                                <form action="/api/settings/twilio-config" method="POST">
-                                    <div class="mb-3">
-                                        <label class="form-label">Account SID</label>
-                                        <input type="text" class="form-control" name="twilio_account_sid"
-                                               value="{{ twilio_config.account_sid if twilio_config else '' }}"
-                                               placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                                        <small class="form-text text-muted">Find this in your Twilio Console under
-                                            Account Info</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Auth Token</label>
-                                        <input type="password" class="form-control" name="twilio_auth_token"
-                                               value="{{ twilio_config.auth_token if twilio_config else '' }}"
-                                               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                                        <small class="form-text text-muted">Find this in your Twilio Console under
-                                            Account Info</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Phone Number</label>
-                                        <input type="tel" class="form-control" name="twilio_phone_number"
-                                               value="{{ twilio_config.phone_number if twilio_config else '' }}"
-                                               placeholder="+1234567890">
-                                        <small class="form-text text-muted">Your Twilio phone number in E.164
-                                            format</small>
-                                    </div>
-
-                                    <button type="submit" class="btn btn-primary">
-                                        <i class="fas fa-save mr-1"></i>Save Twilio Settings
-                                    </button>
-                                </form>
-                                <div class="settings-section mt-3">
-                                    <form action="/api/phone/test-connection" method="POST" class="d-inline">
-                                        <button type="submit" class="btn btn-primary">
-                                            <i class="fas fa-plug mr-1"></i>Test Twilio Connection
-                                        </button>
-                                    </form>
-                                </div>
+                    <!-- Settings Form -->
+                    <form method="POST" action="{{ url_for('users.settings') }}">
+                        {{ form.hidden_tag() }}
+                        
+                        <!-- Twilio Settings -->
+                        <div class="settings-section">
+                            <h6><i class="fab fa-twilio mr-2"></i>Twilio Configuration</h6>
+                            <div class="mb-3">
+                                <label class="form-label">Account SID</label>
+                                {{ form.twilio_account_sid(class="form-control", placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
+                                <small class="form-text text-muted">Find this in your Twilio Console under Account Info</small>
                             </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="settings-section">
-                                <h6><i class="fas fa-phone-alt mr-2"></i>Plivo Configuration</h6>
-                                <form action="/api/settings/plivo-config" method="POST">
-                                    <div class="mb-3">
-                                        <label class="form-label">Auth ID</label>
-                                        <input type="text" class="form-control" name="plivo_auth_id"
-                                               value="{{ plivo_config.auth_id if plivo_config else '' }}"
-                                               placeholder="MAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                                        <small class="form-text text-muted">Find this in your Plivo Console under
-                                            Account → Auth ID</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Auth Token</label>
-                                        <input type="password" class="form-control" name="plivo_auth_token"
-                                               value="{{ plivo_config.auth_token if plivo_config else '' }}"
-                                               placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx">
-                                        <small class="form-text text-muted">Find this in your Plivo Console under
-                                            Account → Auth Token</small>
-                                    </div>
-                                    <div class="mb-3">
-                                        <label class="form-label">Phone Number</label>
-                                        <input type="tel" class="form-control" name="plivo_phone_number"
-                                               value="{{ plivo_config.phone_number if plivo_config else '' }}"
-                                               placeholder="+1234567890">
-                                        <small class="form-text text-muted">Your Plivo phone number in E.164
-                                            format</small>
-                                    </div>
-
-                                    <button type="submit" class="btn btn-success">
-                                        <i class="fas fa-save mr-1"></i>Save Plivo Settings
-                                    </button>
-                                </form>
-                                <div class="settings-section mt-3">
-                                    <form action="/api/phone/test-plivo-connection" method="POST" class="d-inline">
-                                        <button type="submit" class="btn btn-success">
-                                            <i class="fas fa-plug mr-1"></i>Test Plivo Connection
-                                        </button>
-                                    </form>
-                                </div>
+                            <div class="mb-3">
+                                <label class="form-label">Auth Token</label>
+                                {{ form.twilio_auth_token(class="form-control", placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
+                                <small class="form-text text-muted">Find this in your Twilio Console under Account Info</small>
                             </div>
-                        </div>
-                        <div class="col-md-4">
-                            <div class="settings-section">
-                                <h6><i class="fas fa-ethernet mr-2"></i>Telnyx Configuration</h6>
-                                <form action="/api/settings/telnyx-config" method="POST">
-
-                                    <div class="mb-3">
-                                        <label class="form-label">API Key</label>
-                                        <input type="password" class="form-control" name="telnyx_api_key"
-                                               value="{{ telnyx_config.api_key if telnyx_config else '' }}"
-                                               placeholder="TELNYX_API_KEY_xxxxxxxxxxxxxxxxxxxx">
-                                        <small class="form-text text-muted">From Telnyx Console → Auth → API
-                                            Keys</small>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label class="form-label">Connection ID</label>
-                                        <input type="text" class="form-control" name="telnyx_connection_id"
-                                               value="{{ telnyx_config.connection_id if telnyx_config else '' }}"
-                                               placeholder="uuid-like-connection-id">
-                                        <small class="form-text text-muted">From Call Control or TeXML App
-                                            configuration</small>
-                                    </div>
-
-
-                                    <div class="mb-3">
-                                        <label class="form-label">Webhook Secret</label>
-                                        <input type="password" class="form-control" name="telnyx_webhook_secret"
-                                               value="{{ telnyx_config.webhook_secret if telnyx_config else '' }}"
-                                               placeholder="whsec_...">
-                                        <small class="form-text text-muted">For validating Telnyx webhook
-                                            signatures</small>
-                                    </div>
-
-                                    <div class="mb-3">
-                                        <label class="form-label">Phone Number</label>
-                                        <input type="tel" class="form-control" name="telnyx_phone_number"
-                                               value="{{ telnyx_config.phone_number if telnyx_config else '' }}"
-                                               placeholder="+1234567890">
-                                        <small class="form-text text-muted">Your Telnyx phone number in E.164
-                                            format</small>
-                                    </div>
-                                    <button type="submit" class="btn btn-dark">
-                                        <i class="fas fa-save mr-1"></i>Save Telnyx Settings
-                                    </button>
-                                    <div class="settings-section mt-3">
-                                        <form action="/api/phone/test-telnyx-connection" method="POST" class="d-inline">
-                                            <button type="submit" class="btn btn-dark">
-                                                <i class="fas fa-plug mr-1"></i>Test Telnyx Connection
-                                            </button>
-                                        </form>
-                                    </div>
-                                </form>
+                            <div class="mb-3">
+                                <label class="form-label">Phone Number</label>
+                                {{ form.twilio_phone_number(class="form-control", placeholder="+1234567890") }}
+                                <small class="form-text text-muted">Your Twilio phone number in E.164 format</small>
                             </div>
                         </div>
 
+                        <!-- Deepgram Settings -->
+                        <div class="settings-section">
+                            <h6><i class="fas fa-microphone mr-2"></i>Deepgram Configuration</h6>
+                            <div class="mb-3">
+                                <label class="form-label">API Key</label>
+                                {{ form.deepgram_api_key(class="form-control", placeholder="dg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
+                                <small class="form-text text-muted">Your Deepgram API key for speech-to-text functionality</small>
+                            </div>
+                        </div>
 
+                        <!-- Save Button -->
+                        <div class="settings-section">
+                            {{ form.submit(class="btn btn-primary") }}
+                            <i class="fas fa-save mr-1"></i>Save All Settings
+                        </div>
+                    </form>
 
+                    <!-- Test Connection Section -->
+                    <div class="settings-section mt-3">
+                        <form action="/api/phone/test-connection" method="POST" class="d-inline">
+                            <button type="submit" class="btn btn-primary">
+                                <i class="fas fa-plug mr-1"></i>Test Twilio Connection
+                            </button>
+                        </form>
+                    </div>
 
-
+                    <!-- Phone Integration Info -->
+                    <div class="settings-section">
+                        <h6>Phone Integration Info</h6>
+                        <div class="alert alert-info">
+                            <strong>Webhook URL:</strong><br>
+                            <code id="webhookUrl">https://your-domain.com/phone/incoming-call</code>
+                            <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyWebhookUrl()">
+                                <i class="fas fa-copy"></i> Copy
+                            </button>
+                        </div>
+                        <small class="text-muted">
+                            Use this URL in your phone provider console under Voice Configuration → Webhook URL
+                        </small>
                     </div>
                 </div>
             </div>
@@ -304,19 +222,7 @@
 
         </div>
 
-        <div class="settings-section">
-            <h6>Phone Integration Info</h6>
-            <div class="alert alert-info">
-                <strong>Webhook URL:</strong><br>
-                <code id="webhookUrl">https://your-domain.com/phone/incoming-call</code>
-                <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyWebhookUrl()">
-                    <i class="fas fa-copy"></i> Copy
-                </button>
-            </div>
-            <small class="text-muted">
-                Use this URL in your phone provider console under Voice Configuration → Webhook URL
-            </small>
-        </div>
+
     </div>
 </div>
 </div>
