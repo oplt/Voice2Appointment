@@ -6,33 +6,13 @@ from flaskapp import create_app, db
 from flaskapp.utils.websocket_handler import twilio_handler
 import logging
 from config import settings, setup_logging
-import re
 
 app = create_app()
-
-async def websocket_handler(websocket, path):
-    """Handle WebSocket connections with user authentication"""
-    try:
-        # Extract user_id from path (e.g., /ws/123)
-        user_id_match = re.match(r'/ws/(\d+)', path)
-        if user_id_match:
-            user_id = int(user_id_match.group(1))
-            logging.info(f"WebSocket connection established for user {user_id}")
-            
-            # Handle the WebSocket connection with user_id
-            await twilio_handler(websocket, user_id)
-        else:
-            logging.warning(f"Invalid WebSocket path: {path}")
-            await websocket.close(1008, "Invalid path")
-            
-    except Exception as e:
-        logging.error(f"WebSocket error: {e}")
-        await websocket.close(1011, "Internal error")
 
 def run_websocket_server():
     """Run WebSocket server in a separate thread"""
     async def main():
-        server = await websockets.serve(websocket_handler, "localhost", 5001)
+        server = await websockets.serve(twilio_handler, "localhost", 5001)
         logging.info("WebSocket server started on localhost:5001")
         await asyncio.Future()
 
