@@ -6,9 +6,18 @@ import os
 from dotenv import load_dotenv
 from pathlib import Path
 from .functions_map import FUNCTION_MAP
+from flaskapp import create_app
+from flask import current_app
 
 
 load_dotenv()
+
+_app = None
+def get_app():
+    global _app
+    if _app is None:
+        _app = create_app()
+    return _app
 
 
 def sts_connect():
@@ -42,7 +51,10 @@ async def handle_barge_in(decoded, twilio_ws, streamsid):
 
 def execute_function_call(func_name, arguments):
     if func_name in FUNCTION_MAP:
-        result = FUNCTION_MAP[func_name](**arguments)
+        flask_app = get_app()
+        # ensure we’re inside an app context
+        with flask_app.app_context():
+            result = FUNCTION_MAP[func_name](**arguments)
         print(f"Function call result: {result}")
         return result
     else:

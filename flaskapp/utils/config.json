@@ -55,10 +55,7 @@
                 "description": "The end date and time of the proposed appointment in ISO format (e.g., 2024-01-15T11:00:00Z)"
               }
             },
-            "required": [
-              "datetime_start",
-              "datetime_end"
-            ]
+            "required": ["user_id", "datetime_start", "datetime_end"]
           }
         },
         {
@@ -94,6 +91,7 @@
               }
             },
             "required": [
+              "user_id",
               "summary",
               "datetime_start",
               "datetime_end"
@@ -127,6 +125,7 @@
               }
             },
             "required": [
+              "user_id",
               "original_datetime",
               "new_datetime_start",
               "new_datetime_end"
@@ -150,6 +149,7 @@
               }
             },
             "required": [
+              "user_id",
               "datetime_start"
             ]
           }

@@ -6,20 +6,21 @@ from flaskapp import create_app, db
 from flaskapp.utils.websocket_handler import twilio_handler
 import logging
 from config import settings, setup_logging
-import re
+
 
 app = create_app()
-
 
 
 def run_websocket_server():
     """Run WebSocket server in a separate thread"""
     async def main():
-        server = await websockets.serve(twilio_handler, "0.0.0.0", 5001)
-        logging.info("WebSocket server started on localhost:5001")
-        await asyncio.Future()
+        with app.app_context():
+            server = await websockets.serve(twilio_handler, "0.0.0.0", 5001)
+            logging.info("WebSocket server started on localhost:5001")
+            await asyncio.Future()
 
     asyncio.run(main())
+
 
 if __name__ == '__main__':
     setup_logging()

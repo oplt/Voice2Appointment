@@ -6,12 +6,14 @@ from flask import has_request_context
 from flask_login import current_user
 
 
+DEFAULT_USER_ID = 1
 
-
-def check_calendar_availability(user_id, datetime_start, datetime_end):
+def check_calendar_availability(user_id=current_user, datetime_start=None, datetime_end=None):
     """
     Check if a specific time slot is available on Google Calendar
     """
+    user_id = user_id or DEFAULT_USER_ID
+
     try:
         # Convert to proper datetime format if needed
         if isinstance(datetime_start, str):
@@ -55,10 +57,12 @@ def check_calendar_availability(user_id, datetime_start, datetime_end):
             "available": False
         }
 
-def create_calendar_event(user_id, summary, datetime_start, datetime_end, description=None, attendees=None):
+def create_calendar_event(user_id=None, summary=None, datetime_start=None, datetime_end=None, description=None, attendees=None):
     """
     Create a new calendar event for an appointment on Google Calendar
     """
+    user_id = user_id or DEFAULT_USER_ID
+
     try:
         # Convert to proper datetime format if needed
         if isinstance(datetime_start, str):
@@ -101,10 +105,12 @@ def create_calendar_event(user_id, summary, datetime_start, datetime_end, descri
             "success": False
         }
 
-def reschedule_appointment(user_id, original_datetime, new_datetime_start, new_datetime_end, reason=None):
+def reschedule_appointment(user_id=None, original_datetime=None, new_datetime_start=None, new_datetime_end=None, reason=None):
     """
     Reschedule an existing appointment on Google Calendar
     """
+    user_id = user_id or DEFAULT_USER_ID
+
     try:
         # Convert to proper datetime format
         if isinstance(original_datetime, str):
@@ -173,10 +179,12 @@ def reschedule_appointment(user_id, original_datetime, new_datetime_start, new_d
             "success": False
         }
 
-def cancel_appointment(user_id, datetime_start, reason=None):
+def cancel_appointment(user_id=None, datetime_start=None, reason=None):
     """
     Cancel an existing appointment on Google Calendar by finding and deleting the event
     """
+    user_id = user_id or DEFAULT_USER_ID
+
     try:
         # Convert to proper datetime format if needed
         if isinstance(datetime_start, str):
@@ -265,10 +273,12 @@ def cancel_appointment(user_id, datetime_start, reason=None):
             "success": False
         }
 
-def get_appointment_details(user_id, datetime_start, datetime_end, attendee=None):
+def get_appointment_details(user_id=None, datetime_start=None, datetime_end=None, attendee=None):
     """
     Get details about appointments in a time range from Google Calendar
     """
+    user_id = user_id or DEFAULT_USER_ID
+
     try:
         if isinstance(datetime_start, str):
             datetime_start = datetime.fromisoformat(datetime_start.replace('Z', '+00:00'))
@@ -340,6 +350,7 @@ def generate_alternative_slots(original_start, original_end, calendar_service, n
     """
     Generate alternative time slots when the requested time is not available
     """
+
     try:
         duration = original_end - original_start
         alternatives = []
