@@ -5,11 +5,6 @@ document.addEventListener('DOMContentLoaded', function () {
   const monthBtn  = document.getElementById('monthView');
 
   const TIMEZONE = 'Europe/Brussels';
-  const CAL_ID   = 'polatozgur111@gmail.com';
-  const BASE     = 'https://calendar.google.com/calendar/embed';
-    const COMMON   = `src=${CAL_ID}&ctz=${encodeURIComponent(TIMEZONE)}&showTabs=1&showTitle=0&wkst=2`;
-
-  const frame = document.getElementById('gcalFrame');
 
   container.innerHTML = '<div id="fullcalendar"></div>';
   const calendarEl = document.getElementById('fullcalendar');
@@ -19,32 +14,62 @@ document.addEventListener('DOMContentLoaded', function () {
     timeZone: TIMEZONE,
     height: 'auto',
     expandRows: true,
-    headerToolbar: false,
+    headerToolbar: {
+      left: 'prev,next today',
+      center: 'title',
+      right: 'dayGridMonth,timeGridWeek,listWeek'
+    },
     nowIndicator: true,
     navLinks: true,
     selectable: false,
     eventTimeFormat: { hour: '2-digit', minute: '2-digit', meridiem: false },
+    eventDisplay: 'block',
+    dayMaxEvents: true,
+    moreLinkClick: 'popover',
 
     events: function(fetchInfo, successCallback, failureCallback) {
+      console.log('Fetching events for:', fetchInfo.startStr, 'to', fetchInfo.endStr);
+      
       const url = `/google/events?timeMin=${encodeURIComponent(fetchInfo.startStr)}&timeMax=${encodeURIComponent(fetchInfo.endStr)}&timezone=${encodeURIComponent(TIMEZONE)}`;
+      
       fetch(url)
         .then(async (res) => {
           if (res.status === 401) {
+            // User not authenticated with Google Calendar
             calendarEl.innerHTML = `
-              <div class="p-4">
+              <div class="p-4 text-center">
                 <h5>Google Calendar not connected</h5>
-                <p class="text-muted">Connect your Google account to see your calendar here.</p>
+                <p class="text-muted mb-3">Connect your Google account to see your calendar events here.</p>
                 <a class="btn btn-primary" href="/google/connect">
                   <i class="fab fa-google me-1"></i> Connect Google Calendar
                 </a>
               </div>`;
             return [];
           }
-          if (!res.ok) throw new Error(await res.text());
+          if (!res.ok) {
+            const errorText = await res.text();
+            console.error('Failed to fetch events:', res.status, errorText);
+            throw new Error(`HTTP ${res.status}: ${errorText}`);
+          }
           return res.json();
         })
-        .then((events) => successCallback(events))
-        .catch(failureCallback);
+        .then((events) => {
+          console.log('Events fetched successfully:', events.length, 'events');
+          successCallback(events);
+        })
+        .catch((error) => {
+          console.error('Error fetching events:', error);
+          // Show error message in calendar
+          calendarEl.innerHTML = `
+            <div class="p-4 text-center">
+              <h5>Failed to load calendar events</h5>
+              <p class="text-danger mb-3">${error.message}</p>
+              <button class="btn btn-outline-primary" onclick="location.reload()">
+                <i class="fas fa-redo me-1"></i> Retry
+              </button>
+            </div>`;
+          failureCallback(error);
+        });
     },
 
     eventClick: function(info) {
@@ -61,6 +86,11 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   calendar.render();
+  
+  // Set initial active button
+  setActive(monthBtn);
+  
+  console.log('Calendar initialized and rendered');
 
   // Button handlers
   agendaBtn.addEventListener('click', () => {
@@ -76,13 +106,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setActive(monthBtn);
   });
 
-  function setMode(mode){ frame.src = `${BASE}?${COMMON}&mode=${mode}`; }
-  setMode('MONTH');
 
-    // hook your buttons
-  document.getElementById('monthView').addEventListener('click', () => setMode('MONTH'));
-  document.getElementById('weekView').addEventListener('click',  () => setMode('WEEK'));
-  document.getElementById('agendaView').addEventListener('click',() => setMode('AGENDA'));
 
   function setActive(btn) {
     [agendaBtn, weekBtn, monthBtn].forEach(b => b.classList.remove('btn-primary'));
@@ -90,6 +114,65 @@ document.addEventListener('DOMContentLoaded', function () {
     btn.classList.remove('btn-outline-primary');
     btn.classList.add('btn-primary');
   }
+
+
+  
+  function updateWebSocketStatus(status) {
+    // You can add UI elements to show the connection status
+    console.log('WebSocket status:', status);
+    
+    // Example: Update a status indicator in your HTML
+    const statusElement = document.getElementById('websocket-status');
+    if (statusElement) {
+      statusElement.textContent = `Voice Assistant: ${status}`;
+      statusElement.className = `badge ${status === 'connected' ? 'bg-success' : status === 'error' ? 'bg-danger' : 'bg-warning'}`;
+    }
+  }
+  
+  function handleWebSocketMessage(data) {
+    try {
+      const message = JSON.parse(data);
+      
+      // Handle different types of messages from the voice assistant
+      if (message.type === 'FunctionCallResponse') {
+        console.log('Function call result:', message.content);
+        // You can display the result in the UI
+        displayVoiceAssistantResult(message.content);
+      }
+    } catch (error) {
+      console.error('Error parsing WebSocket message:', error);
+    }
+  }
+  
+  function displayVoiceAssistantResult(content) {
+    // Display voice assistant results in the UI
+    // You can customize this based on your needs
+    const resultContainer = document.getElementById('voice-assistant-results');
+    const resultsContainer = document.getElementById('voice-results-container');
+    
+    if (resultContainer && resultsContainer) {
+      // Show the results container
+      resultContainer.style.display = 'block';
+      
+      const resultElement = document.createElement('div');
+      resultElement.className = 'alert alert-info mb-2';
+      resultElement.textContent = content;
+      resultsContainer.appendChild(resultElement);
+      
+      // Remove the result after 5 seconds
+      setTimeout(() => {
+        resultElement.remove();
+        
+        // Hide the container if no more results
+        if (resultsContainer.children.length === 0) {
+          resultContainer.style.display = 'none';
+        }
+      }, 5000);
+    }
+  }
+  
+  // Initialize WebSocket connection when dashboard loads
+  connectWebSocket();
 
   function refreshCounts() {
     fetch('/google/counts')

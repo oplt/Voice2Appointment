@@ -18,8 +18,15 @@
         "type": "deepgram",
         "model": "nova-3",
         "keyterms": [
-          "hello",
-          "goodbye"
+          "appointment",
+          "schedule",
+          "cancel",
+          "reschedule",
+          "today",
+          "tomorrow",
+          "available",
+          "time",
+          "date"
         ]
       }
     },
@@ -29,7 +36,7 @@
         "model": "gpt-4o-mini",
         "temperature": 0.7
       },
-      "prompt": "You are a professional pharmacy assistant. You can: 1) Get drug info with get_drug_info, 2) Place orders with place_order, 3) Look up orders with lookup_order. IMPORTANT: Always ask users to spell out their full name clearly when placing orders. Confirm all order details before processing - including customer name, drug name, and quantity. Be thorough and professional in collecting information. If a user provides a name that's unclear, ask them to spell it out letter by letter. Always confirm the complete order details before finalizing any transaction.",
+      "prompt": "You are a professional appointment scheduling assistant. Your capabilities include: 1) Checking calendar availability with check_calendar_availability, 2) Creating new appointments with create_calendar_event, 3) Rescheduling existing appointments with reschedule_appointment. 4) Canceling existing appointments with cancel_appointment, IMPORTANT: Always confirm appointment details clearly - including the person's full name, appointment type, date, and time. Be thorough and professional in collecting information. If a name is unclear, ask the user to spell it out letter by letter. Always verify all details before finalizing any appointment. Be friendly, patient, and helpful. Ask clarifying questions when needed.",
       "functions": [
         {
           "name": "check_calendar_availability",
@@ -40,12 +47,12 @@
               "datetime_start": {
                 "type": "string",
                 "format": "date-time",
-                "description": "The start date and time of the proposed appointment in ISO format"
+                "description": "The start date and time of the proposed appointment in ISO format (e.g., 2024-01-15T10:00:00Z)"
               },
               "datetime_end": {
                 "type": "string",
                 "format": "date-time",
-                "description": "The end date and time of the proposed appointment in ISO format"
+                "description": "The end date and time of the proposed appointment in ISO format (e.g., 2024-01-15T11:00:00Z)"
               }
             },
             "required": [
@@ -62,7 +69,7 @@
             "properties": {
               "summary": {
                 "type": "string",
-                "description": "The title or summary of the appointment"
+                "description": "The title or summary of the appointment (e.g., 'Dr. Smith Appointment', 'Team Meeting', 'Client Consultation')"
               },
               "datetime_start": {
                 "type": "string",
@@ -76,7 +83,14 @@
               },
               "description": {
                 "type": "string",
-                "description": "Additional details about the appointment"
+                "description": "Additional details about the appointment, including attendee names, purpose, or special instructions"
+              },
+              "attendees": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "List of email addresses or names of people attending the appointment"
               }
             },
             "required": [
@@ -106,6 +120,10 @@
                 "type": "string",
                 "format": "date-time",
                 "description": "The new end date and time for the appointment in ISO format"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Reason for rescheduling the appointment"
               }
             },
             "required": [
@@ -114,7 +132,29 @@
               "new_datetime_end"
             ]
           }
+        },
+        {
+          "name": "cancel_appointment",
+          "description": "Cancel an existing appointment",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "datetime_start": {
+                "type": "string",
+                "format": "date-time",
+                "description": "The start date and time of the appointment to cancel in ISO format"
+              },
+              "reason": {
+                "type": "string",
+                "description": "Reason for canceling the appointment"
+              }
+            },
+            "required": [
+              "datetime_start"
+            ]
+          }
         }
+
       ]
     },
     "speak": {
@@ -123,6 +163,6 @@
         "model": "aura-2-thalia-en"
       }
     },
-    "greeting": "Hello! I'm your pharmacy assistant. I can help you with drug information, placing orders, and checking order status. When placing orders, I'll need your full name spelled out clearly and will confirm all details with you. How can I assist you today?"
+    "greeting": "Hello! I'm your appointment assistant. How can I help you with scheduling today?"
   }
 }

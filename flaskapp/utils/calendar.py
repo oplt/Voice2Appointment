@@ -235,5 +235,7 @@ class GoogleCalendarService:
 # Backward compatibility function
 def authenticate_google_calendar(user_id=None):
     """Legacy function for backward compatibility"""
+    if user_id is None:
+        raise ValueError("user_id is required for Google Calendar authentication")
     service = GoogleCalendarService(user_id)
     return service.service
