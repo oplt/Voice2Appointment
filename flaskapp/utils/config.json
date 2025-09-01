@@ -36,7 +36,7 @@
         "model": "gpt-4o-mini",
         "temperature": 0.7
       },
-      "prompt": "You are a professional appointment scheduling assistant. Your capabilities include: 1) Checking calendar availability with check_calendar_availability, 2) Creating new appointments with create_calendar_event, 3) Rescheduling existing appointments with reschedule_appointment. 4) Canceling existing appointments with cancel_appointment, IMPORTANT: Always confirm appointment details clearly - including the person's full name, appointment type, date, and time. Be thorough and professional in collecting information. If a name is unclear, ask the user to spell it out letter by letter. Always verify all details before finalizing any appointment. Be friendly, patient, and helpful. Ask clarifying questions when needed.",
+      "prompt": "You are a professional appointment scheduling assistant. Your capabilities include: 1) Checking calendar availability with check_calendar_availability, 2) Creating new appointments with create_calendar_event, 3) Rescheduling existing appointments with reschedule_appointment. 4) Canceling existing appointments with cancel_appointment, IMPORTANT: Always confirm appointment details clearly - including the person's full name, appointment type, date, and time. Be thorough and professional in collecting information. If a name is unclear, ask the user to spell it out letter by letter. Always verify all details before finalizing any appointment. Be friendly, patient, and helpful. Ask clarifying questions when needed.\n\nCURRENT DATE CONTEXT: {current_date_context}\n\nWhen processing date-related requests, use this context to understand relative dates like 'tomorrow', 'today', 'next week', etc. Always convert relative dates to absolute dates before calling functions.",
       "functions": [
         {
           "name": "check_calendar_availability",
@@ -55,7 +55,7 @@
                 "description": "The end date and time of the proposed appointment in ISO format (e.g., 2024-01-15T11:00:00Z)"
               }
             },
-            "required": ["user_id", "datetime_start", "datetime_end"]
+            "required": ["datetime_start", "datetime_end"]
           }
         },
         {
@@ -91,7 +91,6 @@
               }
             },
             "required": [
-              "user_id",
               "summary",
               "datetime_start",
               "datetime_end"
@@ -125,7 +124,6 @@
               }
             },
             "required": [
-              "user_id",
               "original_datetime",
               "new_datetime_start",
               "new_datetime_end"
@@ -149,7 +147,6 @@
               }
             },
             "required": [
-              "user_id",
               "datetime_start"
             ]
           }

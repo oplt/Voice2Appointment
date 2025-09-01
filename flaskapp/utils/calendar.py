@@ -20,11 +20,12 @@ class GoogleCalendarService:
     def authenticate(self):
         """Authenticate with Google Calendar"""
         try:
-            if self.user_id is None:
-                raise ValueError("No user ID provided")
+            # if self.user_id is None:
+            #     raise ValueError("No user ID provided")
 
             # Get credentials from database
-            auth_record = GoogleCalendarAuth.query.filter_by(user_id=self.user_id).first()
+            # auth_record = GoogleCalendarAuth.query.filter_by(user_id=self.user_id).first()
+            auth_record = GoogleCalendarAuth.query.first()
             if not auth_record:
                 raise ValueError(f"No Google Calendar authentication found for user {self.user_id}")
 
@@ -233,9 +234,9 @@ class GoogleCalendarService:
 
 
 # Backward compatibility function
-def authenticate_google_calendar(user_id=None):
+def authenticate_google_calendar():
     """Legacy function for backward compatibility"""
-    if user_id is None:
-        raise ValueError("user_id is required for Google Calendar authentication")
-    service = GoogleCalendarService(user_id)
+    # if user_id is None:
+    #     raise ValueError("user_id is required for Google Calendar authentication")
+    service = GoogleCalendarService()
     return service.service

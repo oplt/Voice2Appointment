@@ -8,11 +8,11 @@ from flask_login import current_user
 
 DEFAULT_USER_ID = 1
 
-def check_calendar_availability(user_id=current_user, datetime_start=None, datetime_end=None):
+def check_calendar_availability(datetime_start=None, datetime_end=None):
     """
     Check if a specific time slot is available on Google Calendar
     """
-    user_id = user_id or DEFAULT_USER_ID
+    # user_id = user_id or DEFAULT_USER_ID
 
     try:
         # Convert to proper datetime format if needed
@@ -28,7 +28,8 @@ def check_calendar_availability(user_id=current_user, datetime_start=None, datet
         logging.info(f"Checking calendar availability from {start_iso} to {end_iso}")
 
         # Initialize calendar service with user_id
-        calendar_service = GoogleCalendarService(user_id)
+        # calendar_service = GoogleCalendarService(user_id)
+        calendar_service = GoogleCalendarService()
 
         # Check availability
         is_available, conflicting_events = calendar_service.check_availability(start_iso, end_iso)
@@ -57,11 +58,11 @@ def check_calendar_availability(user_id=current_user, datetime_start=None, datet
             "available": False
         }
 
-def create_calendar_event(user_id=None, summary=None, datetime_start=None, datetime_end=None, description=None, attendees=None):
+def create_calendar_event(summary=None, datetime_start=None, datetime_end=None, description=None, attendees=None):
     """
     Create a new calendar event for an appointment on Google Calendar
     """
-    user_id = user_id or DEFAULT_USER_ID
+    # user_id = user_id or DEFAULT_USER_ID
 
     try:
         # Convert to proper datetime format if needed
@@ -77,7 +78,8 @@ def create_calendar_event(user_id=None, summary=None, datetime_start=None, datet
         logging.info(f"Creating calendar event: {summary} from {start_iso} to {end_iso}")
 
         # Initialize calendar service with user_id
-        calendar_service = GoogleCalendarService(user_id)
+        # calendar_service = GoogleCalendarService(user_id)
+        calendar_service = GoogleCalendarService()
 
         # Create the event
         event = calendar_service.create_event(
@@ -105,11 +107,11 @@ def create_calendar_event(user_id=None, summary=None, datetime_start=None, datet
             "success": False
         }
 
-def reschedule_appointment(user_id=None, original_datetime=None, new_datetime_start=None, new_datetime_end=None, reason=None):
+def reschedule_appointment(original_datetime=None, new_datetime_start=None, new_datetime_end=None, reason=None):
     """
     Reschedule an existing appointment on Google Calendar
     """
-    user_id = user_id or DEFAULT_USER_ID
+    # user_id = user_id or DEFAULT_USER_ID
 
     try:
         # Convert to proper datetime format
@@ -121,7 +123,8 @@ def reschedule_appointment(user_id=None, original_datetime=None, new_datetime_st
             new_datetime_end = datetime.fromisoformat(new_datetime_end.replace('Z', '+00:00'))
 
         # Initialize calendar service with user_id
-        calendar_service = GoogleCalendarService(user_id)
+        # calendar_service = GoogleCalendarService(user_id)
+        calendar_service = GoogleCalendarService()
 
         # Find the event at the original time
         original_start_iso = original_datetime.isoformat()
@@ -179,11 +182,11 @@ def reschedule_appointment(user_id=None, original_datetime=None, new_datetime_st
             "success": False
         }
 
-def cancel_appointment(user_id=None, datetime_start=None, reason=None):
+def cancel_appointment(datetime_start=None, reason=None):
     """
     Cancel an existing appointment on Google Calendar by finding and deleting the event
     """
-    user_id = user_id or DEFAULT_USER_ID
+    # user_id = user_id or DEFAULT_USER_ID
 
     try:
         # Convert to proper datetime format if needed
@@ -193,7 +196,8 @@ def cancel_appointment(user_id=None, datetime_start=None, reason=None):
         logging.info(f"Cancelling appointment at {datetime_start.isoformat()}")
 
         # Initialize calendar service with user_id
-        calendar_service = GoogleCalendarService(user_id)
+        # calendar_service = GoogleCalendarService(user_id)
+        calendar_service = GoogleCalendarService()
 
         # Create a time window to search for the appointment (30 minutes before and after)
         search_start = (datetime_start - timedelta(minutes=30)).isoformat()
@@ -273,11 +277,11 @@ def cancel_appointment(user_id=None, datetime_start=None, reason=None):
             "success": False
         }
 
-def get_appointment_details(user_id=None, datetime_start=None, datetime_end=None, attendee=None):
+def get_appointment_details(datetime_start=None, datetime_end=None, attendee=None):
     """
     Get details about appointments in a time range from Google Calendar
     """
-    user_id = user_id or DEFAULT_USER_ID
+    # user_id = user_id or DEFAULT_USER_ID
 
     try:
         if isinstance(datetime_start, str):
@@ -286,7 +290,8 @@ def get_appointment_details(user_id=None, datetime_start=None, datetime_end=None
             datetime_end = datetime.fromisoformat(datetime_end.replace('Z', '+00:00'))
 
         # Initialize calendar service with user_id
-        calendar_service = GoogleCalendarService(user_id)
+        # calendar_service = GoogleCalendarService(user_id)
+        calendar_service = GoogleCalendarService()
 
         start_iso = datetime_start.isoformat()
         end_iso = datetime_end.isoformat()

@@ -77,7 +77,9 @@ class Settings:
         'CALENDAR_ID': 'primary',
         'TIMEZONE': 'Europe/Brussels',
         'WORKING_HOURS': (9, 17),  # 9 AM to 5 PM
-        'APPOINTMENT_DURATION': 30  # minutes
+        'APPOINTMENT_DURATION': 30,  # minutes
+        'TIMEZONE_SUPPORT': True,  # Enable timezone handling
+        'DEFAULT_TIMEZONE': 'Europe/Brussels'  # Fallback timezone
     }
     # Other Configurations
 

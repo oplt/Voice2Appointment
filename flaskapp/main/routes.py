@@ -58,7 +58,7 @@ def get_dashboard_stats():
             # Only try to authenticate if user is logged in
             if current_user.is_authenticated:
                 try:
-                    service = authenticate_google_calendar(user_id=current_user.id)
+                    service = authenticate_google_calendar()
                     
                     # Today's events
                     today_events = service.events().list(

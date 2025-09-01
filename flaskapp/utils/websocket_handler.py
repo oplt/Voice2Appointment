@@ -8,6 +8,8 @@ from pathlib import Path
 from .functions_map import FUNCTION_MAP
 from flaskapp import create_app
 from flask import current_app
+from datetime import datetime, timedelta
+import pytz
 
 
 load_dotenv()
@@ -37,7 +39,76 @@ def load_config():
     config_path = current_dir / "config.json"
 
     with open(config_path, "r") as f:
-        return json.load(f)
+        config = json.load(f)
+    
+    # Get current date context
+    current_date_context = get_current_date_context()
+    
+    # Inject current date context into the prompt
+    if "agent" in config and "think" in config["agent"] and "prompt" in config["agent"]["think"]:
+        config["agent"]["think"]["prompt"] = config["agent"]["think"]["prompt"].format(
+            current_date_context=current_date_context
+        )
+    
+    return config
+
+
+def get_current_date_context():
+    """Generate comprehensive date context for the AI assistant"""
+    try:
+        # Get current time in UTC
+        now_utc = datetime.now(pytz.UTC)
+        
+        # Get timezone from config (default to Europe/Brussels)
+        config = get_app().config
+        timezone_name = config.get('CALENDAR', {}).get('TIMEZONE', 'Europe/Brussels')
+        
+        try:
+            user_tz = pytz.timezone(timezone_name)
+            now_local = now_utc.astimezone(user_tz)
+        except pytz.exceptions.UnknownTimeZoneError:
+            user_tz = pytz.UTC
+            now_local = now_utc
+        
+        # Generate comprehensive date context
+        date_context = f"""
+Current Date and Time Context:
+- Current UTC time: {now_utc.strftime('%Y-%m-%d %H:%M:%S')} UTC
+- Current local time ({timezone_name}): {now_local.strftime('%Y-%m-%d %H:%M:%S')} {timezone_name}
+- Today: {now_local.strftime('%A, %B %d, %Y')}
+- Tomorrow: {(now_local + timedelta(days=1)).strftime('%A, %B %d, %Y')}
+- Next week: {(now_local + timedelta(days=7)).strftime('%A, %B %d, %Y')}
+- Current working hours: 9:00 AM - 5:00 PM {timezone_name}
+- Current day of week: {now_local.strftime('%A')}
+- Current month: {now_local.strftime('%B')}
+- Current year: {now_local.year}
+
+Date Reference Guide:
+- "today" = {now_local.strftime('%Y-%m-%d')}
+- "tomorrow" = {(now_local + timedelta(days=1)).strftime('%Y-%m-%d')}
+- "next week" = {(now_local + timedelta(days=7)).strftime('%Y-%m-%d')}
+- "this afternoon" = {now_local.strftime('%Y-%m-%d')} (after 12:00 PM)
+- "this evening" = {now_local.strftime('%Y-%m-%d')} (after 5:00 PM)
+- "next Monday" = {(now_local + timedelta(days=(7 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Tuesday" = {(now_local + timedelta(days=(8 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Wednesday" = {(now_local + timedelta(days=(9 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Thursday" = {(now_local + timedelta(days=(10 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Friday" = {(now_local + timedelta(days=(11 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Saturday" = {(now_local + timedelta(days=(12 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+- "next Sunday" = {(now_local + timedelta(days=(13 - now_local.weekday()) % 7)).strftime('%Y-%m-%d')}
+"""
+        return date_context.strip()
+        
+    except Exception as e:
+        # Fallback to basic date context if there's an error
+        now = datetime.now()
+        return f"""
+Current Date Context (Fallback):
+- Current date: {now.strftime('%Y-%m-%d')}
+- Current time: {now.strftime('%H:%M:%S')}
+- Today: {now.strftime('%A, %B %d, %Y')}
+- Tomorrow: {(now + timedelta(days=1)).strftime('%Y-%m-%d')}
+"""
 
 
 async def handle_barge_in(decoded, twilio_ws, streamsid):
@@ -182,7 +253,3 @@ async def twilio_handler(twilio_ws):
         )
 
         await twilio_ws.close()
-
-
-
-
