@@ -1,0 +1,288 @@
+body{
+    background: #f5f5f5;
+    margin-top:20px;
+}
+
+.ui-w-80 {
+    width: 80px !important;
+    height: auto;
+}
+
+.btn-default {
+    border-color: rgba(24,28,33,0.1);
+    background: rgba(0,0,0,0);
+    color: #4E5155;
+}
+
+label.btn {
+    margin-bottom: 0;
+}
+
+.btn-outline-primary {
+    border-color: #26B4FF;
+    background: transparent;
+    color: #26B4FF;
+}
+
+.btn {
+    cursor: pointer;
+}
+
+.text-light {
+    color: #babbbc !important;
+}
+
+.btn-facebook {
+    border-color: rgba(0,0,0,0);
+    background: #3B5998;
+    color: #fff;
+}
+
+.btn-instagram {
+    border-color: rgba(0,0,0,0);
+    background: #000;
+    color: #fff;
+}
+
+.btn-twitter {
+    border-color: rgba(0,0,0,0);
+    background: #1DA1F2;
+    color: #fff;
+}
+
+.card {
+    background-clip: padding-box;
+    box-shadow: 0 1px 4px rgba(24,28,33,0.012);
+}
+
+.row-bordered {
+    overflow: hidden;
+}
+
+.account-settings-fileinput {
+    position: absolute;
+    visibility: hidden;
+    width: 1px;
+    height: 1px;
+    opacity: 0;
+}
+
+.account-settings-links .list-group-item.active {
+    font-weight: bold !important;
+}
+
+html:not(.dark-style) .account-settings-links .list-group-item.active {
+    background: transparent !important;
+}
+
+.account-settings-multiselect ~ .select2-container {
+    width: 100% !important;
+}
+
+.light-style .account-settings-links .list-group-item {
+    padding: 0.85rem 1.5rem;
+    border-color: rgba(24, 28, 33, 0.03) !important;
+}
+
+.light-style .account-settings-links .list-group-item.active {
+    color: #4e5155 !important;
+}
+
+.material-style .account-settings-links .list-group-item {
+    padding: 0.85rem 1.5rem;
+    border-color: rgba(24, 28, 33, 0.03) !important;
+}
+
+.material-style .account-settings-links .list-group-item.active {
+    color: #4e5155 !important;
+}
+
+.dark-style .account-settings-links .list-group-item {
+    padding: 0.85rem 1.5rem;
+    border-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.dark-style .account-settings-links .list-group-item.active {
+    color: #fff !important;
+}
+
+.light-style .account-settings-links .list-group-item.active {
+    color: #4E5155 !important;
+}
+
+.light-style .account-settings-links .list-group-item {
+    padding: 0.85rem 1.5rem;
+    border-color: rgba(24,28,33,0.03) !important;
+}
+
+/* Additional styles for better dashboard appearance */
+.account-settings-links .list-group-item {
+    padding: 0.85rem 1.5rem;
+    border-color: rgba(24,28,33,0.03) !important;
+    transition: all 0.2s ease;
+}
+
+.account-settings-links .list-group-item:hover {
+    background-color: rgba(24,28,33,0.05) !important;
+    border-color: rgba(24,28,33,0.1) !important;
+}
+
+.account-settings-links .list-group-item.active {
+    background-color: rgba(24,28,33,0.1) !important;
+    border-color: rgba(24,28,33,0.2) !important;
+    color: #4E5155 !important;
+}
+
+.tab-content {
+    min-height: 400px;
+}
+
+.tab-pane {
+    padding: 20px 0;
+}
+
+.form-group {
+    margin-bottom: 1.5rem;
+}
+
+.form-label {
+    font-weight: 600;
+    color: #4E5155;
+    margin-bottom: 0.5rem;
+}
+
+.media {
+    display: flex;
+    align-items: center;
+}
+
+.media-body {
+    margin-left: 1rem;
+}
+
+.switcher {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+}
+
+.switcher-input {
+    margin-right: 0.5rem;
+}
+
+.switcher-indicator {
+    width: 40px;
+    height: 20px;
+    background-color: #ccc;
+    border-radius: 10px;
+    position: relative;
+    margin-right: 0.5rem;
+    transition: background-color 0.3s ease;
+}
+
+.switcher-input:checked + .switcher-indicator {
+    background-color: #007bff;
+}
+
+.switcher-yes, .switcher-no {
+    position: absolute;
+    top: 2px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background-color: white;
+    transition: transform 0.3s ease;
+}
+
+.switcher-input:checked + .switcher-indicator .switcher-yes {
+    transform: translateX(20px);
+}
+
+.switcher-input:not(:checked) + .switcher-indicator .switcher-no {
+    transform: translateX(0);
+}
+
+.text-google {
+    color: #DB4437;
+}
+
+.text-tiny {
+    font-size: 0.75rem;
+}
+
+.float-right {
+    float: right;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+    .col-md-3 {
+        margin-bottom: 1rem;
+    }
+    
+    .media {
+        flex-direction: column;
+        text-align: center;
+    }
+    
+    .media-body {
+        margin-left: 0;
+        margin-top: 1rem;
+    }
+}
+
+#config-json-textarea::placeholder {
+    color: #a0aec0;
+    opacity: 1;
+}
+
+#config-json-textarea:focus {
+    background-color: #2d3748;
+    color: #ffffff;
+    border-color: #63b3ed;
+    box-shadow: 0 0 0 0.2rem rgba(99, 179, 237, 0.25);
+}
+
+/* Custom scrollbar for dark theme */
+#config-json-textarea::-webkit-scrollbar {
+    width: 8px;
+}
+
+#config-json-textarea::-webkit-scrollbar-track {
+    background: #1a202c;
+}
+
+#config-json-textarea::-webkit-scrollbar-thumb {
+    background: #4a5568;
+    border-radius: 4px;
+}
+
+#config-json-textarea::-webkit-scrollbar-thumb:hover {
+    background: #718096;
+}
+
+.json-container textarea,
+.json-container pre {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+  padding: 0.75rem;
+  margin: 0;
+  white-space: pre;      /* prevent wrapping */
+  tab-size: 2;
+}
+
+.json-container textarea {
+  color: transparent;                /* hide text */
+  -webkit-text-fill-color: transparent; /* Safari fix */
+  background: transparent;
+  caret-color: #fff;                 /* visible cursor */
+  border: none;
+  resize: none;
+}
+.account-img {
+    width: 150px;
+    height: 150px;
+    object-fit: cover;      /* crop instead of stretch */
+    object-position: center;
+  }

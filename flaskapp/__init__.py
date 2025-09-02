@@ -40,16 +40,13 @@ def create_app(config_class=Config):
                 logging.error(f"Error loading user: {e}")
                 return None
 
-    # Import and register blueprints
     from flaskapp.users.routes import users
     from flaskapp.main.routes import main
     from flaskapp.errors.handlers import errors
-    from flaskapp.phone.routes import phone_bp
 
     app.register_blueprint(users)
     app.register_blueprint(main)
     app.register_blueprint(errors)
-    app.register_blueprint(phone_bp, url_prefix='/phone')
 
     logging.info("Flask application created successfully")
     return app

@@ -39,7 +39,6 @@ def dashboard():
     return render_template('dashboard.html')
 
 
-
 @main.route('/dashboard/stats')
 @login_required
 def get_dashboard_stats():

@@ -1,298 +1,478 @@
 {% extends "layout.html" %}
+
 {% block content %}
+<link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
 
 
 <div class="container mt-5">
+    <h4 class="font-weight-bold py-3 mb-4">
+        Settings
+    </h4>
 
-    <div class="row align-items-stretch">
-        <!-- Google Calendar Settings -->
-        <div class="col-lg-6 mb-4 ">
-            <div class="card flex-fill h-100">
-                <div class="card-header">
-                    <h5 class="mb-0">
-                        <i class="fab fa-google mr-2"></i>Google Calendar Integration
-                    </h5>
+    <div class="card overflow-hidden">
+        <div class="row no-gutters row-bordered row-border-light">
+            <div class="col-md-3 pt-0">
+                <div class="list-group list-group-flush account-settings-links">
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'google-calendar' %}active{% endif %}"
+                       data-bs-toggle="list" href="#google-calendar">Google Calendar</a>
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'twilio-info' %}active{% endif %}"
+                       data-bs-toggle="list" href="#twilio-info">Twilio account</a>
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'deepgram-info' %}active{% endif %}"
+                       data-bs-toggle="list" href="#deepgram-info">Deepgram account</a>
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'config-json' %}active{% endif %}"
+                       data-bs-toggle="list" href="#config-json">ConfigJSON</a>
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'account_setting' %}active{% endif %}"
+                       data-bs-toggle="list" href="#account-setting">Account</a>
                 </div>
-                <div class="card-body">
-                    {% if auth %}
-                    <div class="alert alert-success mb-3">
-                        Using calendar account: <strong>{{ auth.account_email or 'Unknown' }}</strong>
-                        {% if auth.status %}
-                        <span class="ms-2 badge bg-info">{{ auth.status }}</span>
-                        {% endif %}
-                    </div>
-                    {% endif %}
-                    <div class="settings-section">
-                        <h6>Connection Status</h6>
-                        <div class="config-item">
-                            <span class="status-indicator" id="calendarStatus"></span>
-                            <span id="calendarStatusText">Checking connection...</span>
+            </div>
+            <div class="col-md-9">
+                <div class="tab-content">
+                    <!-- Google Calendar Tab -->
+                    <div class="tab-pane fade {% if active_tab == 'google-calendar' %}active show{% endif %}"
+                         id="google-calendar">
+                        <div class="card-body">
+                            {% if auth %}
+                            <div class="alert alert-success mb-3">
+                                Using calendar account: <strong>{{ auth.account_email or 'Unknown' }}</strong>
+                                {% if auth.status %}
+                                <span class="ms-2 badge bg-info">{{ auth.status }}</span>
+                                {% endif %}
+                            </div>
+                            {% endif %}
+                            <form method="POST" action="" enctype="multipart/form-data">
+                                {{ google_form.hidden_tag() }}
+
+                                <fieldset class="form-group">
+                                    <div class="row d-flex justify-content-between">
+                                        <div class="form-group">
+                                            {{ google_form.credentials_json.label(class="form-control-label") }}
+                                            {{ google_form.credentials_json(class="form-control-file") }}
+                                            {% if google_settings and google_settings.credentials_json %}
+                                            <small class="form-text text-success">
+                                                Uploaded on {{ google_settings.updated_at.strftime('%Y-%m-%d %H:%M:%S')
+                                                }}
+                                            </small>
+                                            {% else %}
+                                            <small class="form-text text-muted">No file uploaded yet</small>
+                                            {% endif %}
+                                        </div>
+
+                                        <div class="form-group">
+                                            {{ google_form.token_json.label(class="form-control-label") }}
+                                            {{ google_form.token_json(class="form-control-file") }}
+                                            {% if google_settings and google_settings.token_json %}
+                                            <small class="form-text text-success">
+                                                Uploaded on {{ google_settings.updated_at.strftime('%Y-%m-%d %H:%M:%S')
+                                                }}
+                                            </small>
+                                            {% else %}
+                                            <small class="form-text text-muted">No file uploaded yet</small>
+                                            {% endif %}
+                                        </div>
+
+                                    </div>
+
+                                    <div class="form-group">
+                                        {{ google_form.account_email.label(class="form-control-label") }}
+                                        {% if google_form.account_email.errors %}
+                                        {{ google_form.account_email(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in google_form.account_email.errors %}
+                                            <span>{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ google_form.account_email(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="form-group">
+                                        {{ google_form.calendar_id.label(class="form-control-label") }}
+                                        {% if google_form.calendar_id.errors %}
+                                        {{ google_form.calendar_id(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in google_form.calendar_id.errors %}
+                                            <span>{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ google_form.calendar_id(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="form-group">
+                                        {{ google_form.scopes.label(class="form-control-label") }}
+                                        {% if google_form.scopes.errors %}
+                                        {{ google_form.scopes(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in google_form.scopes.errors %}
+                                            <span>{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ google_form.scopes(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="form-group">
+                                        {{ google_form.time_zone.label(class="form-control-label") }}
+                                        {% if google_form.time_zone.errors %}
+                                        {{ google_form.time_zone(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in google_form.time_zone.errors %}
+                                            <span>{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ google_form.time_zone(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="form-group">
+                                        <button type="submit" name="submit_google" class="btn btn-outline-info">Save
+                                            Google Calendar Settings
+                                        </button>
+                                    </div>
+                                </fieldset>
+                            </form>
+                            <div class="settings-section mt-3">
+                                <form action="/check-google-calendar-conn" method="POST" class="d-inline">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-plug mr-1"></i>Test Google Calendar Connection
+                                    </button>
+                                </form>
+                            </div>
+
                         </div>
                     </div>
 
-                    <div class="settings-section">
-                        <h6>Upload Google Calendar Credentials</h6>
-                        <form action="/api/settings/upload-file" method="POST" enctype="multipart/form-data"
-                              class="mb-3">
-                            <div class="mb-3">
-                                <label class="form-label">Credentials File (credentials.json)</label>
-                                <input type="file" class="form-control" name="file" accept=".json" required>
-                                <input type="hidden" name="type" value="credentials">
+                    <!-- Twilio Tab -->
+                    <div class="tab-pane fade {% if active_tab == 'twilio-info' %}active show{% endif %}"
+                         id="twilio-info">
+                        <div class="card-body pb-2">
+                            <form method="POST" action="">
+                                {{ twilio_form.hidden_tag() }}
+                                <fieldset class="form-group">
+                                    <!-- Twilio Settings -->
+                                    <div class="settings-section">
+                                        <div class="form-group">
+                                            {{ twilio_form.twilio_account_sid.label(class="form-control-label") }}
+                                            {% if twilio_form.twilio_account_sid.errors %}
+                                            {{ twilio_form.twilio_account_sid(class="form-control form-control-lg
+                                            is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in twilio_form.twilio_account_sid.errors %}
+                                                <span>{{ error }}</span>
+                                                {% endfor %}
+                                            </div>
+                                            {% else %}
+                                            {{ twilio_form.twilio_account_sid(class="form-control form-control-lg") }}
+                                            {% endif %}
+                                            <small class="form-text text-muted">Find this in your Twilio Console under
+                                                Account Info</small>
+                                        </div>
+                                        <div class="form-group">
+                                            {{ twilio_form.twilio_auth_token.label(class="form-control-label") }}
+                                            {% if twilio_form.twilio_auth_token.errors %}
+                                            {{ twilio_form.twilio_auth_token(class="form-control form-control-lg
+                                            is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in twilio_form.twilio_auth_token.errors %}
+                                                <span>{{ error }}</span>
+                                                {% endfor %}
+                                            </div>
+                                            {% else %}
+                                            {{ twilio_form.twilio_auth_token(class="form-control form-control-lg") }}
+                                            {% endif %}
+                                            <small class="form-text text-muted">Find this in your Twilio Console under
+                                                Account Info</small>
+                                        </div>
+                                        <div class="form-group">
+                                            {{ twilio_form.twilio_phone_number.label(class="form-control-label") }}
+                                            {% if twilio_form.twilio_phone_number.errors %}
+                                            {{ twilio_form.twilio_phone_number(class="form-control form-control-lg
+                                            is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in twilio_form.twilio_phone_number.errors %}
+                                                <span>{{ error }}</span>
+                                                {% endfor %}
+                                            </div>
+                                            {% else %}
+                                            {{ twilio_form.twilio_phone_number(class="form-control form-control-lg") }}
+                                            {% endif %}
+                                            <small class="form-text text-muted">Find this in your Twilio Console under
+                                                Account Info</small>
+                                        </div>
+                                        <!-- Save Button -->
+                                        <div class="form-group">
+                                            <button type="submit" name="submit_twilio" class="btn btn-outline-info">Save
+                                                Twilio Settings
+                                            </button>
+                                        </div>
+                                    </div>
+                                </fieldset>
+                            </form>
+                            <!-- Test twilio creentials -->
+                            <div class="settings-section mt-3">
+                                <form action="/check-twilio-conn" method="POST" class="d-inline">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-plug mr-1"></i>Test Twilio Connection
+                                    </button>
+                                </form>
                             </div>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-upload mr-1"></i>Upload Credentials
-                            </button>
-                        </form>
+                        </div>
                     </div>
 
-                    <div class="settings-section">
-                        <h6>Upload Google Calendar Token</h6>
-                        <form action="/api/settings/upload-file" method="POST" enctype="multipart/form-data"
-                              class="mb-3">
-                            <div class="mb-3">
-                                <label class="form-label">Token File (token.json)</label>
-                                <input type="file" class="form-control" name="file" accept=".json" required>
-                                <input type="hidden" name="type" value="token">
+                    <!-- Deepgram Tab -->
+                    <div class="tab-pane fade {% if active_tab == 'deepgram-info' %}active show{% endif %}"
+                         id="deepgram-info">
+                        <div class="card-body pb-2">
+                            <form method="POST" action="">
+                                {{ deepgram_form.hidden_tag() }}
+                                <fieldset class="form-group">
+                                    <!-- Deepgram Settings -->
+                                    <div class="settings-section">
+                                        <div class="form-group">
+                                            {{ deepgram_form.deepgram_api_key.label(class="form-control-label") }}
+                                            {% if deepgram_form.deepgram_api_key.errors %}
+                                            {{ deepgram_form.deepgram_api_key(class="form-control form-control-lg
+                                            is-invalid") }}
+                                            <div class="invalid-feedback">
+                                                {% for error in deepgram_form.deepgram_api_key.errors %}
+                                                <span>{{ error }}</span>
+                                                {% endfor %}
+                                            </div>
+                                            {% else %}
+                                            {{ deepgram_form.deepgram_api_key(class="form-control form-control-lg") }}
+                                            {% endif %}
+                                            <small class="form-text text-muted">Your Deepgram API key for speech-to-text
+                                                functionality</small>
+                                        </div>
+                                        <!-- Save Button -->
+                                        <div class="form-group">
+                                            <button type="submit" name="submit_deepgram" class="btn btn-outline-info">
+                                                Save Deepgram Settings
+                                            </button>
+                                        </div>
+                                    </div>
+                                </fieldset>
+                            </form>
+                            <!-- Test deepgram api key -->
+                            <div class="settings-section mt-3">
+                                <form action="/check-deepgram-apikey" method="POST" class="d-inline">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="fas fa-plug mr-1"></i>Test API key
+                                    </button>
+                                </form>
                             </div>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-upload mr-1"></i>Upload Token
-                            </button>
-                        </form>
+                        </div>
                     </div>
 
+                    <!-- Config JSON Tab (unchanged) -->
+                    <div class="tab-pane fade {% if active_tab == 'config-json' %}active show{% endif %}"
+                         id="config-json">
+                        <div class="card-body pb-2">
+                            <form method="POST" action="">
+                                {{ config_form.hidden_tag() }}
+                                <fieldset class="form-group">
+                                    <div class="settings-section">
+                                        <div class="json-container position-relative" style="height:50vh;">
+                                              <pre class="language-json"
+                                                   id="json-highlight"
+                                                   style="margin:0; padding:0.75rem;
+                                                          background:#2d3748; color:#fff;
+                                                          overflow:auto; height:100%;
+                                                          border:1px solid #4a5568;
+                                                          font-family: 'Monaco','Menlo','Ubuntu Mono',monospace;
+                                                          font-size:14px; line-height:1.5;
+                                                          border-radius:0.25rem;">
 
-                    <div class="settings-section">
-                        <h6>Google Calendar Settings</h6>
-                        <form action="/api/settings/google-auth" method="POST">
-                            <div class="mb-3">
-                                <label class="form-label">Account Email</label>
-                                <input type="email" class="form-control" name="account_email"
-                                       value="{{ auth.account_email if auth else '' }}" placeholder="name@example.com">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Calendar ID</label>
-                                <input type="text" class="form-control" name="calendar_id"
-                                       value="{{ auth.calendar_id if auth else '' }}"
-                                       placeholder="primary or custom@group.calendar.google.com">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Scopes (comma separated)</label>
-                                <input type="text" class="form-control" name="scopes"
-                                       value="{{ auth.scopes if auth else '' }}"
-                                       placeholder="https://www.googleapis.com/auth/calendar">
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Timezone</label>
-                                <select class="form-control" name="time_zone">
-                                    <option value="">Select timezone...</option>
-                                    <option value="Europe/Brussels" {% if auth and auth.time_zone==
-                                    'Europe/Brussels' %}selected{% endif %}>Europe/Brussels</option>
-                                    <option value="UTC" {% if auth and auth.time_zone==
-                                    'UTC' %}selected{% endif %}>UTC</option>
-                                    <option value="Europe/London" {% if auth and auth.time_zone==
-                                    'Europe/London' %}selected{% endif %}>Europe/London (GMT/BST)</option>
-                                    <option value="Europe/Paris" {% if auth and auth.time_zone==
-                                    'Europe/Paris' %}selected{% endif %}>Europe/Paris (CET/CEST)</option>
-                                    <option value="Europe/Berlin" {% if auth and auth.time_zone==
-                                    'Europe/Berlin' %}selected{% endif %}>Europe/Berlin (CET/CEST)</option>
-                                    <option value="Europe/Rome" {% if auth and auth.time_zone==
-                                    'Europe/Rome' %}selected{% endif %}>Europe/Rome (CET/CEST)</option>
-                                    <option value="Europe/Madrid" {% if auth and auth.time_zone==
-                                    'Europe/Madrid' %}selected{% endif %}>Europe/Madrid (CET/CEST)</option>
-                                    <option value="America/New_York" {% if auth and auth.time_zone==
-                                    'America/New_York' %}selected{% endif %}>America/New_York (EST/EDT)</option>
-                                    <option value="America/Chicago" {% if auth and auth.time_zone==
-                                    'America/Chicago' %}selected{% endif %}>America/Chicago (CST/CDT)</option>
-                                    <option value="America/Denver" {% if auth and auth.time_zone==
-                                    'America/Denver' %}selected{% endif %}>America/Denver (MST/MDT)</option>
-                                    <option value="America/Los_Angeles" {% if auth and auth.time_zone==
-                                    'America/Los_Angeles' %}selected{% endif %}>America/Los_Angeles (PST/PDT)</option>
-                                    <option value="America/Toronto" {% if auth and auth.time_zone==
-                                    'America/Toronto' %}selected{% endif %}>America/Toronto (EST/EDT)</option>
-                                    <option value="Asia/Tokyo" {% if auth and auth.time_zone==
-                                    'Asia/Tokyo' %}selected{% endif %}>Asia/Tokyo (JST)</option>
-                                    <option value="Asia/Shanghai" {% if auth and auth.time_zone==
-                                    'Asia/Shanghai' %}selected{% endif %}>Asia/Shanghai (CST)</option>
-                                    <option value="Asia/Singapore" {% if auth and auth.time_zone==
-                                    'Asia/Singapore' %}selected{% endif %}>Asia/Singapore (SGT)</option>
-                                    <option value="Asia/Dubai" {% if auth and auth.time_zone==
-                                    'Asia/Dubai' %}selected{% endif %}>Asia/Dubai (GST)</option>
-                                    <option value="Australia/Sydney" {% if auth and auth.time_zone==
-                                    'Australia/Sydney' %}selected{% endif %}>Australia/Sydney (AEST/AEDT)</option>
-                                    <option value="Australia/Melbourne" {% if auth and auth.time_zone==
-                                    'Australia/Melbourne' %}selected{% endif %}>Australia/Melbourne (AEST/AEDT)</option>
-                                    <option value="Pacific/Auckland" {% if auth and auth.time_zone==
-                                    'Pacific/Auckland' %}selected{% endif %}>Pacific/Auckland (NZST/NZDT)</option>
-                                </select>
-                            </div>
+                                              </pre>
+
+                                            {{ config_form.config_json(
+                                            id="config-json-textarea",
+                                            class="form-control font-monospace",
+                                            style="position:absolute; top:0; left:0; width:100%; height:100%;
+                                            background:transparent; color:transparent; caret-color:#fff;
+                                            border:none; resize:none; font-family:'Monaco','Menlo','Ubuntu
+                                            Mono',monospace;
+                                            font-size:14px; line-height:1.5; padding:0.75rem; overflow:auto;",
+                                            placeholder='{\n "key": "value"\n}',
+                                            spellcheck="false",
+                                            wrap="off"
+                                            ) }}
+                                        </div>
+                                        <small class="form-text text-muted p-2 mt-2 rounded">
+                                            Paste or edit JSON. Click <em>Jsonify</em> to format. Empty value will clear
+                                            the saved config.
+                                        </small>
+                                    </div>
+                                </fieldset>
+
+                                <!-- Submit button inside the form -->
+                                <div class="d-flex gap-2 mt-3">
+                                    <button type="button" id="jsonify-btn" class="btn btn-outline-info">
+                                        <i class="fas fa-code me-1"></i>Jsonify
+                                    </button>
+                                    {{ config_form.submit_config(
+                                    class="btn btn-primary ml-2",
+                                    id="save-config-btn"
+                                    ) }}
+                                </div>
+                            </form>
 
 
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-save mr-1"></i>Save Google Settings
-                            </button>
-                        </form>
-                        <div class="settings-section mt-3">
-                            <form action="/api/calendar/test-connection" method="POST" class="d-inline">
-                                <button type="submit" class="btn btn-primary">
-                                    <i class="fas fa-plug mr-1"></i>Test Google Calendar Connection
-                                </button>
+                        </div>
+                    </div>
+                    <!-- Account Tab -->
+                    <div class="tab-pane fade {% if active_tab == 'account_setting' %}active show{% endif %}"
+                         id="account-setting">
+                        <div class="card-body pb-2">
+                            <div class="media mb-3">
+                                <img
+                                    class="rounded-circle account-img"
+                                    alt="Profile picture"
+                                    src="{{ url_for('static', filename='profile_pics/' ~ (current_user.image_file or 'default.jpg')) }}"
+                                >
+                                <div class="media-body ms-3">
+                                    <h2 class="account-heading">{{ current_user.username }}</h2>
+                                    <p class="text-secondary">{{ current_user.email }}</p>
+                                </div>
+                            </div>
+
+                            <form method="POST" action="" enctype="multipart/form-data">
+                                {{ account_form.hidden_tag() }}
+                                <fieldset class="form-group">
+                                    <legend class="border-bottom mb-3">Account Info</legend>
+
+                                    <!-- Username -->
+                                    <div class="form-group mb-3">
+                                        {{ account_form.username.label(class="form-control-label") }}
+                                        {% if account_form.username.errors %}
+                                        {{ account_form.username(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in account_form.username.errors %}<span>{{ error }}</span>{%
+                                            endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ account_form.username(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Email -->
+                                    <div class="form-group mb-3">
+                                        {{ account_form.email.label(class="form-control-label") }}
+                                        {% if account_form.email.errors %}
+                                        {{ account_form.email(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in account_form.email.errors %}<span>{{ error }}</span>{%
+                                            endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ account_form.email(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Picture -->
+                                    <div class="form-group mb-3">
+                                        {{ account_form.picture.label() }}
+                                        {{ account_form.picture(class="form-control-file") }}
+                                        {% if account_form.picture.errors %}
+                                        {% for error in account_form.picture.errors %}
+                                        <span class="text-danger">{{ error }}</span><br>
+                                        {% endfor %}
+                                        {% endif %}
+                                    </div>
+                                </fieldset>
+
+                                <div class="form-group">
+                                    <button type="submit" name="submit_account" class="btn btn-outline-info">Save
+                                        Account
+                                    </button>
+                                </div>
                             </form>
                         </div>
                     </div>
+
                 </div>
             </div>
         </div>
-
-        <!-- Phone Integration Settings -->
-        <div class="col-lg-6 mb-4">
-            <div class="card flex-fill h-100">
-                <div class="card-header">
-                    <h5 class="mb-0">
-                        <i class="fas fa-phone mr-2"></i>Phone Integration
-                    </h5>
-                </div>
-                <div class="card-body">
-                    <!-- Settings Form -->
-                    <form method="POST" action="{{ url_for('users.settings') }}">
-                        {{ form.hidden_tag() }}
-                        
-                        <!-- Twilio Settings -->
-                        <div class="settings-section">
-                            <h6><i class="fab fa-twilio mr-2"></i>Twilio Configuration</h6>
-                            <div class="mb-3">
-                                <label class="form-label">Account SID</label>
-                                {{ form.twilio_account_sid(class="form-control", placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
-                                <small class="form-text text-muted">Find this in your Twilio Console under Account Info</small>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Auth Token</label>
-                                {{ form.twilio_auth_token(class="form-control", placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
-                                <small class="form-text text-muted">Find this in your Twilio Console under Account Info</small>
-                            </div>
-                            <div class="mb-3">
-                                <label class="form-label">Phone Number</label>
-                                {{ form.twilio_phone_number(class="form-control", placeholder="+1234567890") }}
-                                <small class="form-text text-muted">Your Twilio phone number in E.164 format</small>
-                            </div>
-                        </div>
-
-                        <!-- Deepgram Settings -->
-                        <div class="settings-section">
-                            <h6><i class="fas fa-microphone mr-2"></i>Deepgram Configuration</h6>
-                            <div class="mb-3">
-                                <label class="form-label">API Key</label>
-                                {{ form.deepgram_api_key(class="form-control", placeholder="dg_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx") }}
-                                <small class="form-text text-muted">Your Deepgram API key for speech-to-text functionality</small>
-                            </div>
-                        </div>
-
-                        <!-- Save Button -->
-                        <div class="settings-section">
-                            {{ form.submit(class="btn btn-primary") }}
-                            <i class="fas fa-save mr-1"></i>Save All Settings
-                        </div>
-                    </form>
-
-                    <!-- Test Connection Section -->
-                    <div class="settings-section mt-3">
-                        <form action="/api/phone/test-connection" method="POST" class="d-inline">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-plug mr-1"></i>Test Twilio Connection
-                            </button>
-                        </form>
-                    </div>
-
-                    <!-- Phone Integration Info -->
-                    <div class="settings-section">
-                        <h6>Phone Integration Info</h6>
-                        <div class="alert alert-info">
-                            <strong>Webhook URL:</strong><br>
-                            <code id="webhookUrl">https://your-domain.com/phone/incoming-call</code>
-                            <button class="btn btn-sm btn-outline-secondary ms-2" onclick="copyWebhookUrl()">
-                                <i class="fas fa-copy"></i> Copy
-                            </button>
-                        </div>
-                        <small class="text-muted">
-                            Use this URL in your phone provider console under Voice Configuration → Webhook URL
-                        </small>
-                    </div>
-                </div>
-            </div>
-
-
-        </div>
-
-
     </div>
-</div>
-</div>
-
-</div>
-
 </div>
 
 <script>
-    function copyWebhookUrl() {
-        const webhookUrl = document.getElementById('webhookUrl').textContent;
-        navigator.clipboard.writeText(webhookUrl).then(function() {
-            // Show a temporary success message
-            const button = event.target.closest('button');
-            const originalText = button.innerHTML;
-            button.innerHTML = '<i class="fas fa-check"></i> Copied!';
-            button.classList.remove('btn-outline-secondary');
-            button.classList.add('btn-success');
+    document.addEventListener('DOMContentLoaded', () => {
+      const urlParams = new URLSearchParams(window.location.search);
+      const activeTab = urlParams.get('tab');
+      const ta  = document.getElementById('config-json-textarea');
+      const btn = document.getElementById('jsonify-btn');
+      const pre = document.getElementById('json-highlight');
 
-            setTimeout(function() {
-                button.innerHTML = originalText;
-                button.classList.remove('btn-success');
-                button.classList.add('btn-outline-secondary');
-            }, 2000);
-        }).catch(function(err) {
-            console.error('Could not copy text: ', err);
-            alert('Failed to copy webhook URL');
-        });
-    }
-
-    // Update webhook URL based on current domain
-    document.addEventListener('DOMContentLoaded', function() {
-        const webhookUrlElement = document.getElementById('webhookUrl');
-        const currentDomain = window.location.origin;
-        webhookUrlElement.textContent = currentDomain + '/phone/incoming-call';
-
-        // Check Twilio connection status
-        checkTwilioStatus();
-    });
-
-    // Function to check Twilio connection status
-    function checkTwilioStatus() {
-        const twilioStatusElement = document.getElementById('twilioStatus');
-        const twilioStatusTextElement = document.getElementById('twilioStatusText');
-
-        if (!twilioStatusElement || !twilioStatusTextElement) return;
-
-        // Get Twilio config from the form fields
-        const accountSid = document.querySelector('input[name="twilio_account_sid"]').value;
-        const authToken = document.querySelector('input[name="twilio_auth_token"]').value;
-        const phoneNumber = document.querySelector('input[name="twilio_phone_number"]').value;
-
-        if (accountSid && authToken && phoneNumber) {
-            twilioStatusElement.className = 'status-indicator connected';
-            twilioStatusTextElement.textContent = 'Configured - Ready to test';
-        } else {
-            twilioStatusElement.className = 'status-indicator disconnected';
-            twilioStatusTextElement.textContent = 'Not configured';
+      // --- Always enable sticky-tab behavior, even if JSON elements are missing ---
+      if (activeTab) {
+        const tabLink = document.querySelector(`[href="#${activeTab}"]`);
+        if (tabLink) {
+          setTimeout(() => new bootstrap.Tab(tabLink).show(), 100);
         }
-    }
+      }
 
-    // Update status when form fields change
-    document.addEventListener('DOMContentLoaded', function() {
-        const twilioForm = document.querySelector('form[action="/api/settings/twilio-config"]');
-        if (twilioForm) {
-            const inputs = twilioForm.querySelectorAll('input');
-            inputs.forEach(input => {
-                input.addEventListener('input', checkTwilioStatus);
+      document.body.addEventListener('shown.bs.tab', function (e) {
+        const target = e.target;
+        const tabName = target.getAttribute('href').substring(1);
+        const url = new URL(window.location);
+        url.searchParams.set('tab', tabName);
+        window.history.replaceState({}, '', url);
+        console.log('Tab changed to:', tabName);
+      });
+
+      // --- If JSON UI isn't present, we're done (but after the tab setup above) ---
+      if (!ta || !btn || !pre) return;  // added pre check
+
+      function jsonify() {
+        try {
+          const parsed = JSON.parse(ta.value);
+          ta.value = JSON.stringify(parsed, null, 2);
+          updateHighlight(); // ensure highlight refreshes after programmatic change
+        } catch (e) {
+          alert('Invalid JSON: ' + e.message);
+        }
+      }
+
+      function updateHighlight() {
+        let code = ta.value || '';
+        // Escape HTML for Prism
+        code = code.replace(/&/g, '&amp;')
+                   .replace(/</g, '&lt;')
+                   .replace(/>/g, '&gt;');
+        pre.innerHTML = code;
+        if (window.Prism && Prism.highlightElement) {
+          Prism.highlightElement(pre);
+        }
+        // Sync scroll
+        pre.scrollTop  = ta.scrollTop;
+        pre.scrollLeft = ta.scrollLeft;
+      }
+
+      ta.addEventListener('input', updateHighlight);
+      ta.addEventListener('scroll', () => {
+        pre.scrollTop  = ta.scrollTop;
+        pre.scrollLeft = ta.scrollLeft;
+      });
+
+      // Init with existing content
+      updateHighlight();
+
+      btn.addEventListener('click', jsonify);
+
+      ta.addEventListener("scroll", () => {
+              pre.scrollTop  = ta.scrollTop;
+              pre.scrollLeft = ta.scrollLeft;
             });
+
+      ta.addEventListener('keydown', (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'j') {
+          e.preventDefault();
+          jsonify();
         }
+      });
     });
 </script>
 

@@ -1,22 +1,9 @@
 {
-  "type": "Settings",
-  "audio": {
-    "input": {
-      "encoding": "mulaw",
-      "sample_rate": 8000
-    },
-    "output": {
-      "encoding": "mulaw",
-      "sample_rate": 8000,
-      "container": "none"
-    }
-  },
   "agent": {
+    "greeting": "Hello! I'm your appointment assistant. How can I help you with scheduling today?",
     "language": "en",
     "listen": {
       "provider": {
-        "type": "deepgram",
-        "model": "nova-3",
         "keyterms": [
           "appointment",
           "schedule",
@@ -27,139 +14,154 @@
           "available",
           "time",
           "date"
-        ]
+        ],
+        "model": "nova-3",
+        "type": "deepgram"
+      }
+    },
+    "speak": {
+      "provider": {
+        "model": "aura-2-thalia-en",
+        "type": "deepgram"
       }
     },
     "think": {
-      "provider": {
-        "type": "open_ai",
-        "model": "gpt-4o-mini",
-        "temperature": 0.7
-      },
-      "prompt": "You are a professional appointment scheduling assistant. Your capabilities include: 1) Checking calendar availability with check_calendar_availability, 2) Creating new appointments with create_calendar_event, 3) Rescheduling existing appointments with reschedule_appointment. 4) Canceling existing appointments with cancel_appointment, IMPORTANT: Always confirm appointment details clearly - including the person's full name, appointment type, date, and time. Be thorough and professional in collecting information. If a name is unclear, ask the user to spell it out letter by letter. Always verify all details before finalizing any appointment. Be friendly, patient, and helpful. Ask clarifying questions when needed.\n\nCURRENT DATE CONTEXT: {current_date_context}\n\nWhen processing date-related requests, use this context to understand relative dates like 'tomorrow', 'today', 'next week', etc. Always convert relative dates to absolute dates before calling functions.",
       "functions": [
         {
-          "name": "check_calendar_availability",
           "description": "Check if a specific time slot is available on the calendar",
+          "name": "check_calendar_availability",
           "parameters": {
-            "type": "object",
             "properties": {
-              "datetime_start": {
-                "type": "string",
-                "format": "date-time",
-                "description": "The start date and time of the proposed appointment in ISO format (e.g., 2024-01-15T10:00:00Z)"
-              },
               "datetime_end": {
-                "type": "string",
+                "description": "The end date and time of the proposed appointment in ISO format (e.g., 2024-01-15T11:00:00Z)",
                 "format": "date-time",
-                "description": "The end date and time of the proposed appointment in ISO format (e.g., 2024-01-15T11:00:00Z)"
+                "type": "string"
+              },
+              "datetime_start": {
+                "description": "The start date and time of the proposed appointment in ISO format (e.g., 2024-01-15T10:00:00Z)",
+                "format": "date-time",
+                "type": "string"
               }
             },
-            "required": ["datetime_start", "datetime_end"]
+            "required": [
+              "datetime_start",
+              "datetime_end"
+            ],
+            "type": "object"
           }
         },
         {
-          "name": "create_calendar_event",
           "description": "Create a new calendar event for an appointment",
+          "name": "create_calendar_event",
           "parameters": {
-            "type": "object",
             "properties": {
-              "summary": {
-                "type": "string",
-                "description": "The title or summary of the appointment (e.g., 'Dr. Smith Appointment', 'Team Meeting', 'Client Consultation')"
-              },
-              "datetime_start": {
-                "type": "string",
-                "format": "date-time",
-                "description": "The start date and time of the appointment in ISO format"
-              },
-              "datetime_end": {
-                "type": "string",
-                "format": "date-time",
-                "description": "The end date and time of the appointment in ISO format"
-              },
-              "description": {
-                "type": "string",
-                "description": "Additional details about the appointment, including attendee names, purpose, or special instructions"
-              },
               "attendees": {
-                "type": "array",
+                "description": "List of email addresses or names of people attending the appointment",
                 "items": {
                   "type": "string"
                 },
-                "description": "List of email addresses or names of people attending the appointment"
+                "type": "array"
+              },
+              "datetime_end": {
+                "description": "The end date and time of the appointment in ISO format",
+                "format": "date-time",
+                "type": "string"
+              },
+              "datetime_start": {
+                "description": "The start date and time of the appointment in ISO format",
+                "format": "date-time",
+                "type": "string"
+              },
+              "description": {
+                "description": "Additional details about the appointment, including attendee names, purpose, or special instructions",
+                "type": "string"
+              },
+              "summary": {
+                "description": "The title or summary of the appointment (e.g., 'Dr. Smith Appointment', 'Team Meeting', 'Client Consultation')",
+                "type": "string"
               }
             },
             "required": [
               "summary",
               "datetime_start",
               "datetime_end"
-            ]
+            ],
+            "type": "object"
           }
         },
         {
-          "name": "reschedule_appointment",
           "description": "Reschedule an existing appointment to a new time",
+          "name": "reschedule_appointment",
           "parameters": {
-            "type": "object",
             "properties": {
-              "original_datetime": {
-                "type": "string",
+              "new_datetime_end": {
+                "description": "The new end date and time for the appointment in ISO format",
                 "format": "date-time",
-                "description": "The original date and time of the appointment in ISO format"
+                "type": "string"
               },
               "new_datetime_start": {
-                "type": "string",
+                "description": "The new start date and time for the appointment in ISO format",
                 "format": "date-time",
-                "description": "The new start date and time for the appointment in ISO format"
+                "type": "string"
               },
-              "new_datetime_end": {
-                "type": "string",
+              "original_datetime": {
+                "description": "The original date and time of the appointment in ISO format",
                 "format": "date-time",
-                "description": "The new end date and time for the appointment in ISO format"
+                "type": "string"
               },
               "reason": {
-                "type": "string",
-                "description": "Reason for rescheduling the appointment"
+                "description": "Reason for rescheduling the appointment",
+                "type": "string"
               }
             },
             "required": [
               "original_datetime",
               "new_datetime_start",
               "new_datetime_end"
-            ]
+            ],
+            "type": "object"
           }
         },
         {
-          "name": "cancel_appointment",
           "description": "Cancel an existing appointment",
+          "name": "cancel_appointment",
           "parameters": {
-            "type": "object",
             "properties": {
               "datetime_start": {
-                "type": "string",
+                "description": "The start date and time of the appointment to cancel in ISO format",
                 "format": "date-time",
-                "description": "The start date and time of the appointment to cancel in ISO format"
+                "type": "string"
               },
               "reason": {
-                "type": "string",
-                "description": "Reason for canceling the appointment"
+                "description": "Reason for canceling the appointment",
+                "type": "string"
               }
             },
             "required": [
               "datetime_start"
-            ]
+            ],
+            "type": "object"
           }
         }
-
-      ]
-    },
-    "speak": {
+      ],
+      "prompt": "You are a professional appointment scheduling assistant. Your capabilities include: 1) Checking calendar availability with check_calendar_availability, 2) Creating new appointments with create_calendar_event, 3) Rescheduling existing appointments with reschedule_appointment. 4) Canceling existing appointments with cancel_appointment, IMPORTANT: Always confirm appointment details clearly - including the person's full name, appointment type, date, and time. Be thorough and professional in collecting information. If a name is unclear, ask the user to spell it out letter by letter. Always verify all details before finalizing any appointment. Be friendly, patient, and helpful. Ask clarifying questions when needed.\n\nCURRENT DATE CONTEXT: {current_date_context}\n\nWhen processing date-related requests, use this context to understand relative dates like 'tomorrow', 'today', 'next week', etc. Always convert relative dates to absolute dates before calling functions.",
       "provider": {
-        "type": "deepgram",
-        "model": "aura-2-thalia-en"
+        "model": "gpt-4o-mini",
+        "temperature": 0.7,
+        "type": "open_ai"
       }
+    }
+  },
+  "audio": {
+    "input": {
+      "encoding": "mulaw",
+      "sample_rate": 8000
     },
-    "greeting": "Hello! I'm your appointment assistant. How can I help you with scheduling today?"
-  }
+    "output": {
+      "container": "none",
+      "encoding": "mulaw",
+      "sample_rate": 8000
+    }
+  },
+  "type": "Settings"
 }

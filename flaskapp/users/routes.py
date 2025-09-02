@@ -1,13 +1,14 @@
-from flask import render_template, url_for, flash, redirect, request, Blueprint, jsonify
-import json
+from flask import render_template, url_for, redirect, request, Blueprint, flash
+import json, os, logging, requests
 from datetime import datetime
 from flask_login import login_user, current_user, logout_user, login_required
 from flaskapp import db, bcrypt
 from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm,
-                                   RequestResetForm, ResetPasswordForm, SettingsForm)
+                                   RequestResetForm, ResetPasswordForm, GoogleCalendarForm, TwilioForm, DeepgramForm, ConfigForm)
 from flaskapp.users.utils import save_picture, send_reset_email
 from flaskapp.database.models import GoogleCalendarAuth, User
-import logging
+from flask import current_app
+
 
 users = Blueprint('users', __name__)
 
@@ -49,27 +50,6 @@ def logout():
     return redirect(url_for('main.home'))
 
 
-@users.route("/account", methods=['GET', 'POST'])
-@login_required
-def account():
-    form = UpdateAccountForm()
-    if form.validate_on_submit():
-        if form.picture.data:
-            picture_file = save_picture(form.picture.data)
-            current_user.image_file = picture_file
-        current_user.username = form.username.data
-        current_user.email = form.email.data
-        db.session.commit()
-        flash('Your account has been updated!', 'success')
-        return redirect(url_for('users.account'))
-    elif request.method == 'GET':
-        form.username.data = current_user.username
-        form.email.data = current_user.email
-    image_file = url_for('static', filename='profile_pics/' + current_user.image_file)
-    return render_template('account.html', title='Account',
-                           image_file=image_file, form=form)
-
-
 @users.route("/dashboard")
 @login_required
 def dashboard():
@@ -79,52 +59,206 @@ def dashboard():
 @login_required
 def settings():
     logging.info(f"Settings page accessed by user {current_user.id}")
-    form = SettingsForm()
-    auth = None
-    twilio_config = None
+    active_tab = request.args.get('tab', 'google-calendar')
+    google_form = GoogleCalendarForm()
+    twilio_form = TwilioForm()
+    deepgram_form = DeepgramForm()
+    config_form = ConfigForm()
+    account_form = UpdateAccountForm()
 
-    if current_user.is_authenticated:
-        auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-        # Create a simple object with Twilio config for the template
-        twilio_config = {
-            'account_sid': current_user.twilio_account_sid,
-            'auth_token': current_user.twilio_auth_token,
-            'phone_number': current_user.twilio_phone_number
-        }
+    google_settings = (GoogleCalendarAuth.query
+                       .filter_by(user_id=current_user.id, revoked=False)
+                       .order_by(GoogleCalendarAuth.id.desc())
+                       .first())
 
-        logging.debug(f"User {current_user.id} has Twilio config: Account SID: {current_user.twilio_account_sid[:8] if current_user.twilio_account_sid else 'None'}..., Phone: {current_user.twilio_phone_number}")
-    
-    if form.validate_on_submit():
-        logging.info(f"Updating settings for user {current_user.id}")
-        
-        # Update Twilio settings
-        current_user.twilio_account_sid = form.twilio_account_sid.data
-        current_user.twilio_auth_token = form.twilio_auth_token.data
-        current_user.twilio_phone_number = form.twilio_phone_number.data
-        
-        # Update Deepgram settings
-        current_user.deepgram_api_key = form.deepgram_api_key.data
-        
+    if request.method == 'POST':
+        if 'submit_google' in request.form:
+            active_tab = 'google-calendar'
+        elif 'submit_twilio' in request.form:
+            active_tab = 'twilio-info'
+        elif 'submit_deepgram' in request.form:
+            active_tab = 'deepgram-info'
+        elif 'submit_config' in request.form:
+            active_tab = 'config-json'
+
+        if "submit_google" in request.form and google_form.validate_on_submit():
+            save_google_settings(google_form)
+            flash('Google Calendar settings saved!', 'success')
+            return redirect(url_for('users.settings', tab='google-calendar'))
+
+        elif 'submit_twilio' in request.form:
+            if twilio_form.validate_on_submit():
+                save_twilio_settings(twilio_form)
+                flash('Twilio settings saved!', 'success')
+                return redirect(url_for('users.settings', tab='twilio-info'))
+
+        elif 'submit_deepgram' in request.form:
+            if deepgram_form.validate_on_submit():
+                save_deepgram_settings(deepgram_form)
+                flash('Deepgram settings saved!', 'success')
+                return redirect(url_for('users.settings', tab='deepgram-info'))
+
+        elif 'submit_config' in request.form:
+            if config_form.validate_on_submit():
+                save_config_settings(config_form)
+                return redirect(url_for('users.settings', tab='config-json'))
+        elif 'submit_account' in request.form:
+            if account_form.validate_on_submit():
+                save_account_settings(account_form)
+                flash('Account information updated!', 'success')
+                return redirect(url_for('users.settings', tab='account_setting'))
+
+        if current_user.config_json and not config_form.config_json.data:
+            config_form.config_json.data = current_user.config_json
+
+    # Pre-populate forms with existing data
+    populate_forms(google_form, twilio_form, deepgram_form, config_form, account_form)
+
+    return render_template('settings.html',
+                           google_form=google_form,
+                           twilio_form=twilio_form,
+                           deepgram_form=deepgram_form,
+                           active_tab=active_tab,
+                           google_settings=google_settings,
+                            account_form=account_form,
+                           config_form=config_form)
+
+
+def save_google_settings(form):
+    # get latest non-revoked record for this user, or create one
+    settings = (GoogleCalendarAuth.query
+                .filter_by(user_id=current_user.id, revoked=False)
+                .order_by(GoogleCalendarAuth.id.desc())
+                .first())
+    if not settings:
+        settings = GoogleCalendarAuth(user_id=current_user.id, provider='google')
+        db.session.add(settings)
+
+    # plain text fields
+    settings.account_email = (form.account_email.data or '').strip() or None
+    settings.calendar_id   = (form.calendar_id.data or '').strip() or None
+    settings.scopes        = (form.scopes.data or '').strip() or None
+    settings.time_zone     = (form.time_zone.data or '').strip() or None
+
+    # file fields -> read() -> decode() -> assign TEXT
+    if form.credentials_json.data:
+        f = form.credentials_json.data
+        settings.credentials_json = f.read().decode('utf-8')
+        f.seek(0)
+
+    if form.token_json.data:
+        f = form.token_json.data
+        settings.token_json = f.read().decode('utf-8')   # <-- fixed (no FileStorage on the left)
+        f.seek(0)
+
+    settings.updated_at = datetime.utcnow()
+    db.session.commit()
+
+def save_twilio_settings(form):
+    current_user.twilio_account_sid = form.twilio_account_sid.data
+    current_user.twilio_auth_token = form.twilio_auth_token.data
+    current_user.twilio_phone_number = form.twilio_phone_number.data
+    db.session.commit()
+
+def save_deepgram_settings(form):
+    current_user.deepgram_api_key = form.deepgram_api_key.data
+    db.session.commit()
+
+def _write_project_config_file(payload: str | None):
+    try:
+        target = os.path.join(current_app.root_path, "utils", "config.json")
+        if not payload:
+            if os.path.exists(target):
+                os.remove(target)
+            return
+
+        # Atomic write: write to temp, then replace
+        tmp = f"{target}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, target)
+    except Exception as e:
+        logging.exception("Failed to sync config.json to project folder: %s", e)
+
+
+def save_config_settings(form):
+    raw = (form.config_json.data or "").strip()
+    uploaded_file = getattr(form, "config_file", None)
+    if uploaded_file and uploaded_file.data:
         try:
-            db.session.commit()
-            flash('Settings updated successfully!', 'success')
-            logging.info(f"Settings updated successfully for user {current_user.id}")
+            raw = uploaded_file.data.read().decode("utf-8").strip()
+            uploaded_file.data.seek(0)
         except Exception as e:
-            db.session.rollback()
-            flash('Error updating settings. Please try again.', 'danger')
-            logging.error(f"Error updating settings for user {current_user.id}: {e}")
-        
-        return redirect(url_for('users.settings'))
-    
-    elif request.method == 'GET':
-        # Pre-populate form with current values
-        form.twilio_account_sid.data = current_user.twilio_account_sid
-        form.twilio_auth_token.data = current_user.twilio_auth_token
-        form.twilio_phone_number.data = current_user.twilio_phone_number
-        form.deepgram_api_key.data = current_user.deepgram_api_key
-    
-    return render_template('settings.html', auth=auth, twilio_config=twilio_config, form=form)
+            flash(f"Could not read uploaded config file: {e}", "danger")
+            return
 
+    if not raw:
+        current_user.config_json = None
+        db.session.commit()
+        _write_project_config_file(None)
+        flash("Configuration cleared.", "success")
+        return
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as e:
+        flash(f"Invalid JSON: {e}", "danger")
+        return
+
+    pretty = json.dumps(parsed, indent=2, sort_keys=True, ensure_ascii=False)
+    current_user.config_json = pretty
+    db.session.commit()
+    _write_project_config_file(pretty)
+    flash("Configuration saved.", "success")
+
+def save_account_settings(form):
+    if form.picture.data:
+        picture_file = save_picture(form.picture.data)
+        current_user.image_file = picture_file
+    current_user.username = form.username.data
+    current_user.email = form.email.data
+    db.session.commit()
+
+def _masked(length: int) -> str:
+    return "*" * max(1, length)
+
+def populate_forms(google_form, twilio_form, deepgram_form, config_form=None, account_form=None):
+    sid = (current_user.twilio_account_sid or "")
+    tok = (current_user.twilio_auth_token  or "")
+    dg  = (current_user.deepgram_api_key   or "")
+
+    twilio_form.twilio_account_sid.data = sid
+    if tok:
+        twilio_form.twilio_auth_token.render_kw = {"placeholder": _masked(len(tok)), "autocomplete": "new-password"}
+    if dg:
+        deepgram_form.deepgram_api_key.render_kw = {"placeholder": _masked(len(dg)), "autocomplete": "new-password"}
+
+    google_settings = (GoogleCalendarAuth.query
+                       .filter_by(user_id=current_user.id, revoked=False)
+                       .order_by(GoogleCalendarAuth.id.desc())
+                       .first())
+    if google_settings:
+        google_form.account_email.data = google_settings.account_email
+        google_form.calendar_id.data = google_settings.calendar_id
+        google_form.scopes.data = google_settings.scopes
+        google_form.time_zone.data = google_settings.time_zone
+
+    twilio_form.twilio_account_sid.data = current_user.twilio_account_sid
+    twilio_form.twilio_auth_token.data = current_user.twilio_auth_token
+    twilio_form.twilio_phone_number.data = current_user.twilio_phone_number
+
+    deepgram_form.deepgram_api_key.data = current_user.deepgram_api_key
+
+    if config_form is not None:
+        saved_cfg = (current_user.config_json or "").strip()
+        if saved_cfg:
+            config_form.config_json.data = saved_cfg
+
+    if account_form is not None:
+        account_form.username.data = current_user.username
+        account_form.email.data = current_user.email
 
 @users.route("/reset_password", methods=['GET', 'POST'])
 def reset_request():
@@ -157,138 +291,13 @@ def reset_token(token):
     return render_template('reset_token.html', title='Reset Password', form=form)
 
 
-@users.route('/api/settings/upload-file', methods=['POST'])
+@users.route('/check-google-calendar-conn', methods=['GET', 'POST'])
 @login_required
-def upload_google_settings_file():
-    if 'file' not in request.files:
-        flash('No file part in the request', 'danger')
-        return redirect(url_for('users.settings'))
-
-    uploaded_file = request.files['file']
-    file_type = request.form.get('type')
-
-    if uploaded_file.filename == '':
-        flash('No file selected', 'warning')
-        return redirect(url_for('users.settings'))
-
-    if file_type not in ['credentials', 'token']:
-        flash('Invalid file type', 'danger')
-        return redirect(url_for('users.settings'))
-
-    if not uploaded_file.filename.lower().endswith('.json'):
-        flash('File must be a .json file', 'danger')
-        return redirect(url_for('users.settings'))
-
-    try:
-        file_text = uploaded_file.read().decode('utf-8')
-        # Validate JSON content before saving
-        json.loads(file_text)
-
-        auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-        if not auth:
-            auth = GoogleCalendarAuth(user_id=current_user.id, provider='google', created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-            db.session.add(auth)
-
-        if file_type == 'credentials':
-            auth.credentials_json = file_text
-        else:
-            auth.token_json = file_text
-        auth.updated_at = datetime.utcnow()
-
-        db.session.commit()
-        flash(f'{file_type.capitalize()} file uploaded successfully', 'success')
-    except json.JSONDecodeError:
-        flash('Invalid JSON file', 'danger')
-    except Exception:
-        flash('An unexpected error occurred while uploading the file', 'danger')
-
-    return redirect(url_for('users.settings'))
-
-
-
-
-
-@users.route('/api/settings/google-auth', methods=['POST'])
-@login_required
-def save_google_auth_metadata():
-    auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-    if not auth:
-        auth = GoogleCalendarAuth(user_id=current_user.id, provider='google', created_at=datetime.utcnow(), updated_at=datetime.utcnow())
-        db.session.add(auth)
-
-    account_email = request.form.get('account_email')
-    calendar_id = request.form.get('calendar_id')
-    scopes = request.form.get('scopes')
-    time_zone = request.form.get('time_zone')
-
-    if account_email is not None:
-        auth.account_email = account_email.strip() or None
-    if calendar_id is not None:
-        auth.calendar_id = calendar_id.strip() or None
-    if scopes is not None:
-        auth.scopes = scopes.strip() or None
-    if time_zone is not None:
-        auth.time_zone = time_zone.strip() or None
-
-    auth.updated_at = datetime.utcnow()
-    db.session.commit()
-    flash('Google Calendar settings saved', 'success')
-    return redirect(url_for('users.settings'))
-
-
-@users.route('/api/settings/twilio-config', methods=['POST'])
-@login_required
-def save_twilio_config():
-    """Save Twilio configuration settings for the current user"""
-    try:
-        # Get form data
-        twilio_account_sid = request.form.get('twilio_account_sid', '').strip()
-        twilio_auth_token = request.form.get('twilio_auth_token', '').strip()
-        twilio_phone_number = request.form.get('twilio_phone_number', '').strip()
-        
-        # Validate required fields
-        if not twilio_account_sid:
-            flash('Twilio Account SID is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        if not twilio_auth_token:
-            flash('Twilio Auth Token is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        if not twilio_phone_number:
-            flash('Twilio Phone Number is required', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        # Validate phone number format (basic E.164 validation)
-        if not twilio_phone_number.startswith('+') or len(twilio_phone_number) < 10:
-            flash('Phone number must be in E.164 format (e.g., +1234567890)', 'danger')
-            return redirect(url_for('users.settings'))
-        
-        # Update user's Twilio configuration
-        current_user.twilio_account_sid = twilio_account_sid
-        current_user.twilio_auth_token = twilio_auth_token
-        current_user.twilio_phone_number = twilio_phone_number
-        
-        db.session.commit()
-        logging.info(f"Twilio settings saved successfully for user {current_user.id}, Phone: {twilio_phone_number}")
-        flash('Twilio settings saved successfully', 'success')
-        
-    except Exception as e:
-        db.session.rollback()
-        flash(f'Error saving Twilio settings: {str(e)}', 'danger')
-        logging.error(f'Error saving Twilio settings for user {current_user.id}: {str(e)}')
-    
-    return redirect(url_for('users.settings'))
-
-
-
-@users.route('/api/calendar/test-connection', methods=['POST'])
-@login_required
-def test_google_calendar_connection():
+def check_google_calendar_connection():
     auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
     if not auth:
         flash('No Google Calendar configuration found. Please upload credentials.', 'warning')
-        return redirect(url_for('users.settings'))
+        return redirect(url_for('users.settings', tab='google-calendar'))
 
     # Attempt to use Google API client if available
     try:
@@ -301,7 +310,7 @@ def test_google_calendar_connection():
         auth.last_error = f'Import error: {import_err}'
         db.session.commit()
         flash(f'Google API import failed: {import_err}. Ensure packages are installed in the running environment.', 'danger')
-        return redirect(url_for('users.settings'))
+        return redirect(url_for('users.settings', tab='google-calendar'))
 
     try:
         creds = None
@@ -344,426 +353,105 @@ def test_google_calendar_connection():
         db.session.commit()
         flash(f'Connection failed: {str(e)}', 'danger')
 
-    return redirect(url_for('users.settings'))
+    return redirect(url_for('users.settings', tab='google-calendar'))
 
 
-@users.route('/api/phone/test-connection', methods=['POST'])
+@users.route("/check-twilio-conn", methods=["POST"])
 @login_required
-def test_twilio_connection():
-    """Test Twilio connection using stored credentials"""
-    try:
-        # Check if user has Twilio configuration
-        if not current_user.twilio_account_sid or not current_user.twilio_auth_token or not current_user.twilio_phone_number:
-            flash('Twilio configuration incomplete. Please fill in all required fields.', 'warning')
-            return redirect(url_for('users.settings'))
-        
-        # Test Twilio connection
-        from twilio.rest import Client
-        from twilio.base.exceptions import TwilioException
-        
-        client = Client(current_user.twilio_account_sid, current_user.twilio_auth_token)
-        
-        # For trial accounts, try to list phone numbers instead of fetching account
-        # This is a safer operation that works with trial accounts
+def check_twilio_credentials():
+
+    def pick(v, fb):
+        v = (v or "").strip()
+        return v if v else (fb or "").strip()
+
+    form = request.form
+
+    form_sid     = form.get("twilio_account_sid")
+    form_token   = form.get("twilio_auth_token")
+    form_api_key = form.get("twilio_api_key")
+    form_api_sec = form.get("twilio_api_secret")
+
+    account_sid = pick(form_sid,     getattr(current_user, "twilio_account_sid", None))
+    auth_token  = pick(form_token,   getattr(current_user, "twilio_auth_token", None))
+    api_key     = pick(form_api_key, getattr(current_user, "twilio_api_key", None))
+    api_secret  = pick(form_api_sec, getattr(current_user, "twilio_api_secret", None))
+
+    # Require at least one credential pair
+    if not ((account_sid and auth_token) or (api_key and api_secret)):
+        flash("Enter Account SID + Auth Token, or API Key + Secret to check.", "warning")
+        return redirect(url_for('users.settings', tab='twilio-info'))
+
+    auth_pairs = []
+    if api_key and api_secret:
+        auth_pairs.append((api_key, api_secret, "API Key/Secret"))
+    if account_sid and auth_token:
+        auth_pairs.append((account_sid, auth_token, "Account SID/Auth Token"))
+
+    TWILIO_API = "https://api.twilio.com/2010-04-01"
+    url = f"{TWILIO_API}/Accounts/{account_sid}/Usage/Records.json?PageSize=1"
+
+    #  try each auth pair until one succeeds
+    for user, pwd, label in auth_pairs:
         try:
-            phone_numbers = client.incoming_phone_numbers.list(limit=1)
-            flash('Twilio connection successful! Credentials are valid.', 'success')
-            logging.info(f'Twilio connection test passed for user {current_user.id}')
-        except Exception as list_error:
-            # If listing fails, try a simple validation
-            if current_user.twilio_account_sid.startswith('AC') and len(current_user.twilio_auth_token) == 32:
-                flash('Twilio credentials format appears valid. Note: Some operations may be limited with trial accounts.', 'info')
-                logging.info(f'Twilio credentials format validated for user {current_user.id} (trial account limitations may apply)')
-            else:
-                flash('Twilio connection failed. Please check your credentials format.', 'danger')
-                logging.error(f'Twilio credentials format invalid for user {current_user.id}')
-            
-    except TwilioException as e:
-        error_msg = str(e)
-        if "Test Account Credentials" in error_msg:
-            flash('Twilio connection test limited due to trial account restrictions. Your credentials are valid, but some operations are not available with trial accounts.', 'warning')
-            logging.warning(f'Twilio trial account limitation for user {current_user.id}: {error_msg}')
-        elif "403" in error_msg:
-            flash('Twilio access denied. Please check your Account SID and Auth Token.', 'danger')
-            logging.error(f'Twilio access denied for user {current_user.id}: {error_msg}')
-        else:
-            flash(f'Twilio connection failed: {error_msg}', 'danger')
-            logging.error(f'Twilio connection error for user {current_user.id}: {error_msg}')
-    except Exception as e:
-        flash(f'Unexpected error testing Twilio connection: {str(e)}', 'danger')
-        logging.error(f'Unexpected error testing Twilio connection for user {current_user.id}: {str(e)}', exc_info=True)
-    
-    return redirect(url_for('users.settings'))
+            r = requests.get(url, auth=(user, pwd), timeout=6)
+        except requests.Timeout:
+            flash("Twilio request timed out. Please try again.", "warning")
+            return redirect(url_for('users.settings', tab='twilio-info'))
+        except requests.RequestException as e:
+            flash(f"Network error contacting Twilio: {e}", "danger")
+            return redirect(url_for('users.settings', tab='twilio-info'))
+
+        if r.status_code == 200:
+            flash(f"✅ Twilio credentials are valid ({label}).", "success")
+            return redirect(url_for('users.settings', tab='twilio-info'))
+        if r.status_code in (401, 403):
+            # Try next auth pair (if any). If this was the last, fall through to error below.
+            continue
+        if r.status_code == 404:
+            flash("Twilio says the Account SID was not found or doesn’t match these credentials.", "danger")
+            return redirect(url_for('users.settings', tab='twilio-info'))
+        # Other statuses: show brief snippet for debugging, but never echo secrets
+        snippet = (r.text or "")[:200]
+        flash(f"Twilio error {r.status_code}: {snippet}", "danger")
+        return redirect(url_for('users.settings', tab='twilio-info'))
+
+    flash("❌ Invalid Twilio credentials (unauthorized). Check your values and try again.", "danger")
+    return redirect(url_for('users.settings', tab='twilio-info'))
 
 
-@users.route('/api/calendar/status', methods=['GET'])
+@users.route('/check-deepgram-apikey', methods=['POST'])
 @login_required
-def get_calendar_auth_status():
-    """Get the current user's Google Calendar authentication status"""
-    print(f"=== Calendar Status Request ===")
-    print(f"User ID: {current_user.id}")
-    print(f"User authenticated: {current_user.is_authenticated}")
+def check_deepgram_apikey():
+    candidate = (request.form.get('deepgram_api_key') or current_user.deepgram_api_key or '').strip()
+
+    if not candidate:
+        flash('Enter your Deepgram API key (or save one) to check it.', 'warning')
+        return redirect(url_for('users.settings', tab='deepgram-info'))
 
     try:
-        auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-        print(f"Auth record found: {auth is not None}")
+        r = requests.get(
+            'https://api.deepgram.com/v1/projects',
+            headers={'Authorization': f'Token {candidate}'},
+            timeout=6
+        )
+    except requests.Timeout:
+        flash('Deepgram request timed out. Please try again.', 'warning')
+        return redirect(url_for('users.settings', tab='deepgram-info'))
+    except requests.RequestException as e:
+        flash(f'Network error while contacting Deepgram: {e}', 'danger')
+        return redirect(url_for('users.settings', tab='deepgram-info'))
 
-        if not auth:
-            print("No GoogleCalendarAuth found - returning configuration needed")
-            return jsonify({
-                'ok': False,
-                'message': 'No Google Calendar configuration found',
-                'has_credentials': False,
-                'has_token': False,
-                'status': 'not_configured',
-                'missing_fields': ['credentials_json', 'token_json', 'account_email', 'calendar_id'],
-                'warnings': [
-                    'No Google Calendar configuration exists',
-                    'You need to upload either service account credentials or user token',
-                    'Configure account email and calendar ID for proper integration'
-                ]
-            }), 200
+    if r.status_code == 200:
+        flash('✅ Deepgram API key is valid.', 'success')
+    elif r.status_code in (401, 403):
+        flash('❌ Invalid Deepgram API key.', 'danger')
+    elif r.status_code == 429:
+        retry = r.headers.get('Retry-After')
+        msg = f'Rate limited by Deepgram. Try again{f" after {retry}s" if retry else ""}.'
+        flash(msg, 'warning')
+    else:
+        snippet = (r.text or '')[:160]
+        flash(f'Deepgram error {r.status_code}: {snippet}', 'danger')
 
-        print(f"Auth details: ID={auth.id}, Status={auth.status}, Has credentials={bool(auth.credentials_json)}, Has token={bool(auth.token_json)}")
+    return redirect(url_for('users.settings', tab='deepgram-info'))
 
-        # Check what fields are missing
-        missing_fields = []
-        warnings = []
-
-        if not auth.credentials_json and not auth.token_json:
-            missing_fields.append('credentials_json')
-            missing_fields.append('token_json')
-            warnings.append('Missing authentication credentials - upload service account credentials or user token')
-
-        if not auth.account_email:
-            missing_fields.append('account_email')
-            warnings.append('Account email not configured - needed for service account impersonation')
-
-        if not auth.calendar_id:
-            missing_fields.append('calendar_id')
-            warnings.append('Calendar ID not configured - will use primary calendar')
-
-        # Determine overall status
-        if missing_fields:
-            if not auth.credentials_json and not auth.token_json:
-                status = 'incomplete'
-                status_message = 'Missing authentication credentials'
-            else:
-                status = 'configured'
-                status_message = 'Basic configuration complete but some fields missing'
-        else:
-            status = 'configured'
-            status_message = 'All required fields configured'
-
-        return jsonify({
-            'ok': True,
-            'message': 'Google Calendar configuration found',
-            'has_credentials': bool(auth.credentials_json),
-            'has_token': bool(auth.token_json),
-            'status': status,
-            'status_message': status_message,
-            'account_email': auth.account_email,
-            'calendar_id': auth.calendar_id,
-            'last_tested': auth.last_tested_at.isoformat() if auth.last_tested_at else None,
-            'last_error': auth.last_error,
-            'missing_fields': missing_fields,
-            'warnings': warnings,
-            'is_testable': bool(auth.credentials_json or auth.token_json)
-        }), 200
-
-    except Exception as e:
-        print(f"Error in get_calendar_auth_status: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'ok': False,
-            'message': f'Error: {str(e)}',
-            'missing_fields': [],
-            'warnings': [f'Server error: {str(e)}']
-        }), 500
-
-
-@users.route('/api/calendar/events', methods=['GET'])
-@login_required
-def fetch_google_calendar_events():
-    """Fetch Google Calendar events for the current user"""
-    print(f"Calendar events request from user {current_user.id}")
-
-    auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-    if not auth:
-        print(f"No GoogleCalendarAuth found for user {current_user.id}")
-        return jsonify({'ok': False, 'message': 'No Google Calendar configuration found.'}), 400
-
-    print(f"Found auth record: {auth.id}, has credentials: {bool(auth.credentials_json)}, has token: {bool(auth.token_json)}")
-
-    try:
-        from googleapiclient.discovery import build  # type: ignore
-        from google.oauth2 import service_account  # type: ignore
-        from google.oauth2.credentials import Credentials as UserCredentials  # type: ignore
-        print("Google API imports successful")
-    except Exception as import_err:
-        print(f"Google API import failed: {import_err}")
-        return jsonify({'ok': False, 'message': f'Google API import failed: {import_err}'}), 500
-
-    try:
-        scopes_list = []
-        if auth.scopes:
-            scopes_list = [s.strip() for s in auth.scopes.replace('\n', ',').split(',') if s.strip()]
-        if not scopes_list:
-            scopes_list = ['https://www.googleapis.com/auth/calendar.readonly']
-
-        print(f"Using scopes: {scopes_list}")
-
-        credentials_info = None
-        if auth.credentials_json:
-            try:
-                credentials_info = json.loads(auth.credentials_json)
-                print(f"Credentials type: {credentials_info.get('type') if credentials_info else 'None'}")
-            except json.JSONDecodeError as e:
-                print(f"Invalid credentials JSON: {e}")
-                return jsonify({'ok': False, 'message': 'Invalid credentials JSON format'}), 400
-
-        creds = None
-        if credentials_info and credentials_info.get('type') == 'service_account':
-            print("Creating service account credentials")
-            creds = service_account.Credentials.from_service_account_info(credentials_info, scopes=scopes_list)
-            if auth.account_email:
-                print(f"Impersonating account: {auth.account_email}")
-                creds = creds.with_subject(auth.account_email)
-        elif auth.token_json:
-            try:
-                token_info = json.loads(auth.token_json)
-                print("Creating user credentials from token")
-                creds = UserCredentials.from_authorized_user_info(token_info, scopes=scopes_list)
-            except json.JSONDecodeError as e:
-                print(f"Invalid token JSON: {e}")
-                return jsonify({'ok': False, 'message': 'Invalid token JSON format'}), 400
-        else:
-            print("No valid credentials found")
-            return jsonify({'ok': False, 'message': 'No valid credentials found'}), 400
-
-        if not creds:
-            print("Failed to create credentials")
-            return jsonify({'ok': False, 'message': 'Failed to create credentials'}), 400
-
-        print("Building calendar service...")
-        service = build('calendar', 'v3', credentials=creds, cache_discovery=False)
-
-        # Get calendar ID - use primary if not specified
-        calendar_id = auth.calendar_id or 'primary'
-        print(f"Fetching events from calendar: {calendar_id}")
-
-        # Get events for next 30 days
-        from datetime import timedelta
-        now = datetime.utcnow()
-        time_min = now.isoformat() + 'Z'
-        time_max = (now + timedelta(days=30)).isoformat() + 'Z'
-
-        print(f"Time range: {time_min} to {time_max}")
-
-        events_result = service.events().list(
-            calendarId=calendar_id,
-            timeMin=time_min,
-            timeMax=time_max,
-            maxResults=50,
-            singleEvents=True,
-            orderBy='startTime'
-        ).execute()
-
-        events = events_result.get('items', [])
-        print(f"Found {len(events)} events")
-
-        # Update last tested time
-        auth.last_tested_at = datetime.utcnow()
-        auth.last_error = None
-        db.session.commit()
-
-        return jsonify({
-            'ok': True,
-            'message': f'Successfully loaded {len(events)} events',
-            'events': events
-        }), 200
-
-    except Exception as e:
-        print(f"Error fetching calendar events: {e}")
-        import traceback
-        traceback.print_exc()
-
-        # Update error status
-        auth.last_tested_at = datetime.utcnow()
-        auth.last_error = str(e)
-        db.session.commit()
-
-        return jsonify({
-            'ok': False,
-            'message': f'Failed to fetch events: {str(e)}'
-        }), 500
-
-
-@users.route('/api/calendar/initiate-auth', methods=['POST'])
-@login_required
-def initiate_google_auth():
-    """Initiate Google OAuth flow for calendar access"""
-    try:
-        from google_auth_oauthlib.flow import InstalledAppFlow
-        from google.auth.transport.requests import Request
-        from google.oauth2.credentials import Credentials
-        import os
-
-        # OAuth 2.0 scopes for Google Calendar
-        SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-
-        # Check if we have existing credentials file
-        token_file = f'token_{current_user.id}.json'
-
-        creds = None
-        if os.path.exists(token_file):
-            creds = Credentials.from_authorized_user_file(token_file, SCOPES)
-
-        # If there are no (valid) credentials available, let the user log in
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                try:
-                    creds.refresh(Request())
-                except Exception as refresh_error:
-                    print(f"Token refresh failed: {refresh_error}")
-                    # Remove invalid token file
-                    if os.path.exists(token_file):
-                        os.remove(token_file)
-                    creds = None
-
-            if not creds:
-                # Need to create new credentials file for this user
-                credentials_file = 'credentials.json'
-                if not os.path.exists(credentials_file):
-                    return jsonify({
-                        'ok': False,
-                        'message': 'Google OAuth credentials file not found. Please upload credentials.json to the server.',
-                        'needs_credentials_file': True
-                    }), 400
-
-                flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
-                creds = flow.run_local_server(port=0)
-
-                # Save the credentials for the next run
-                with open(token_file, 'w') as token:
-                    token.write(creds.to_json())
-
-        # Now test the credentials by making a simple API call
-        try:
-            from googleapiclient.discovery import build
-            service = build('calendar', 'v3', credentials=creds)
-
-            # Test with a simple calendar list call
-            calendar_list = service.calendarList().list(maxResults=1).execute()
-
-            # Update or create GoogleCalendarAuth record
-            auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-            if not auth:
-                auth = GoogleCalendarAuth(user_id=current_user.id)
-                db.session.add(auth)
-
-            # Save the token info
-            auth.token_json = creds.to_json()
-            auth.account_email = creds.client_id  # This will be the client ID, not ideal but works
-            auth.status = 'valid'
-            auth.last_tested_at = datetime.utcnow()
-            auth.last_error = None
-            auth.scopes = ','.join(SCOPES)
-
-            db.session.commit()
-
-            return jsonify({
-                'ok': True,
-                'message': 'Google Calendar authentication successful!',
-                'status': 'authenticated'
-            }), 200
-
-        except Exception as api_error:
-            print(f"API test failed: {api_error}")
-            return jsonify({
-                'ok': False,
-                'message': f'Authentication successful but API test failed: {str(api_error)}',
-                'status': 'api_test_failed'
-            }), 400
-
-    except Exception as e:
-        print(f"OAuth initiation error: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({
-            'ok': False,
-            'message': f'OAuth initiation failed: {str(e)}',
-            'status': 'error'
-        }), 500
-
-
-@users.route('/api/calendar/refresh-auth', methods=['POST'])
-@login_required
-def refresh_google_auth():
-    """Refresh Google Calendar authentication"""
-    try:
-        auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id, revoked=False).order_by(GoogleCalendarAuth.id.desc()).first()
-        if not auth:
-            return jsonify({
-                'ok': False,
-                'message': 'No Google Calendar configuration found'
-            }), 400
-
-        # Try to refresh existing credentials
-        if auth.token_json:
-            try:
-                from google.oauth2.credentials import Credentials
-                from google.auth.transport.requests import Request
-                from googleapiclient.discovery import build
-
-                creds = Credentials.from_authorized_user_info(json.loads(auth.token_json))
-
-                if creds.expired and creds.refresh_token:
-                    creds.refresh(Request())
-
-                    # Update token in database
-                    auth.token_json = creds.to_json()
-                    auth.status = 'valid'
-                    auth.last_tested_at = datetime.utcnow()
-                    auth.last_error = None
-                    db.session.commit()
-
-                    return jsonify({
-                        'ok': True,
-                        'message': 'Authentication refreshed successfully',
-                        'status': 'refreshed'
-                    }), 200
-                else:
-                    return jsonify({
-                        'ok': False,
-                        'message': 'No refresh needed or no refresh token available',
-                        'status': 'no_refresh_needed'
-                    }), 400
-
-            except Exception as refresh_error:
-                print(f"Token refresh error: {refresh_error}")
-                auth.status = 'error'
-                auth.last_error = str(refresh_error)
-                auth.last_tested_at = datetime.utcnow()
-                db.session.commit()
-
-                return jsonify({
-                    'ok': False,
-                    'message': f'Token refresh failed: {str(refresh_error)}',
-                    'status': 'refresh_failed'
-                }), 400
-
-        return jsonify({
-            'ok': False,
-            'message': 'No token available for refresh',
-            'status': 'no_token'
-        }), 400
-
-    except Exception as e:
-        print(f"Refresh auth error: {e}")
-        return jsonify({
-            'ok': False,
-            'message': f'Refresh failed: {str(e)}',
-            'status': 'error'
-        }), 500

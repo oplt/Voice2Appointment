@@ -1,9 +1,11 @@
-from flask_wtf import FlaskForm
-from flask_wtf.file import FileField, FileAllowed
 from wtforms import StringField, PasswordField, SubmitField, BooleanField
-from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationError
+from wtforms.validators import DataRequired, Length, Email, EqualTo, ValidationError, Optional
 from flask_login import current_user
 from flaskapp.database.models import User
+from flask_wtf import FlaskForm
+from wtforms import FileField, StringField, SelectField, TextAreaField
+from flask_wtf.file import FileAllowed
+import pytz
 
 
 class RegistrationForm(FlaskForm):
@@ -74,13 +76,38 @@ class ResetPasswordForm(FlaskForm):
     submit = SubmitField('Reset Password')
 
 
-class SettingsForm(FlaskForm):
-    # Twilio Configuration
-    twilio_account_sid = StringField('Twilio Account SID')
-    twilio_auth_token = StringField('Twilio Auth Token')
-    twilio_phone_number = StringField('Twilio Phone Number')
-    
-    # Deepgram Configuration
-    deepgram_api_key = StringField('Deepgram API Key')
-    
-    submit = SubmitField('Save Settings')
+class GoogleCalendarForm(FlaskForm):
+    credentials_json = FileField('Credentials File', validators=[FileAllowed(['json']), Optional()])
+    token_json = FileField('Token File', validators=[FileAllowed(['json']), Optional()])
+    account_email = StringField('Account Email', validators=[Email(), DataRequired()])
+    calendar_id = StringField('Calendar ID', validators=[DataRequired()])
+    scopes = StringField('Scopes', validators=[DataRequired()])
+    time_zone = SelectField(
+        'Preferred Timezone',
+        choices=[(tz, tz) for tz in pytz.all_timezones], validators=[DataRequired()]
+    )
+    submit = SubmitField('Save Google Calendar Settings')
+
+    def validate(self, extra_validators=None):
+        ok = super().validate(extra_validators)
+        if not ok:
+            return False
+        if not self.credentials_json.data and not self.token_json.data:
+            self.credentials_json.errors.append('Upload credentials.json or token.json')
+            self.token_json.errors.append('Upload credentials.json or token.json')
+            return False
+        return True
+
+class TwilioForm(FlaskForm):
+    twilio_account_sid = StringField('Twilio Account SID', validators=[DataRequired()])
+    twilio_auth_token = PasswordField('Twilio Auth Token', validators=[DataRequired()])
+    twilio_phone_number = StringField('Twilio Phone Number', validators=[DataRequired()])
+    submit = SubmitField('Save Twilio Settings')
+
+class DeepgramForm(FlaskForm):
+    deepgram_api_key = PasswordField('Deepgram API Key', validators=[DataRequired()])
+    submit = SubmitField('Save Deepgram Settings')
+
+class ConfigForm(FlaskForm):
+    config_json = TextAreaField("Configuration (JSON)", validators=[Optional()])
+    submit_config = SubmitField("Save Configuration")

@@ -17,8 +17,6 @@ class User(db.Model, UserMixin):
     email = db.Column(db.String(255), unique=True, nullable=False)
     image_file = db.Column(db.String(255), nullable=False, default='default.jpg')
     password = db.Column(db.String(128), nullable=False)
-    credentials_file = db.Column(db.LargeBinary, nullable=True)
-    token_file = db.Column(db.LargeBinary, nullable=True)
 
     # Twilio Configuration
     twilio_account_sid = db.Column(db.String(255), nullable=True)
@@ -27,6 +25,8 @@ class User(db.Model, UserMixin):
     
     # Deepgram Configuration
     deepgram_api_key = db.Column(db.String(255), nullable=True)
+
+    config_json = db.Column(db.Text, nullable=True)
 
     # Relationships
     call_sessions = db.relationship('CallSession', backref='user', lazy=True)
@@ -82,6 +82,8 @@ class GoogleCalendarAuth(db.Model, TimestampMixin):
     # OAuth/credentials
     credentials_json = db.Column(db.Text, nullable=True)
     token_json = db.Column(db.Text, nullable=True)
+    # credentials_file = db.Column(db.LargeBinary, nullable=True)
+    # token_file = db.Column(db.LargeBinary, nullable=True)
     scopes = db.Column(db.Text, nullable=True)
 
     # Operational
@@ -90,8 +92,7 @@ class GoogleCalendarAuth(db.Model, TimestampMixin):
     access_token_expires_at = db.Column(db.DateTime, nullable=True)
     revoked = db.Column(db.Boolean, nullable=False, default=False)
     status = db.Column(db.String(32), nullable=True)
-    last_tested_at = db.Column(db.DateTime, nullable=True)
-    last_error = db.Column(db.Text, nullable=True)
+
 
 class CallSession(db.Model):
     __tablename__ = 'callsession'

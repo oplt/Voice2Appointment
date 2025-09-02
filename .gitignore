@@ -189,3 +189,7 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,linux
+
+# Google API credentials and tokens
+credentials.json
+backend/google_calendar/token.json
