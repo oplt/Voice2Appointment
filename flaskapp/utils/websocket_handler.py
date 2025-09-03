@@ -5,11 +5,12 @@ import websockets
 import os
 from dotenv import load_dotenv
 from pathlib import Path
-from .functions_map import FUNCTION_MAP
+from flaskapp.calendar.functions_map import FUNCTION_MAP
 from flaskapp import create_app
-from flask import current_app
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import pytz
+from flaskapp.database.models import CallSession, User
+from config import settings
 
 
 load_dotenv()
@@ -34,64 +35,20 @@ def sts_connect():
     return sts_ws
 
 
-# def load_config():
-#     current_dir = Path(__file__).parent
-#     config_path = current_dir / "config.json"
-#
-#     with open(config_path, "r") as f:
-#         config = json.load(f)
-#
-#     current_date_context = get_current_date_context()
-#
-#     # Inject current date context into the prompt
-#     if "agent" in config and "think" in config["agent"] and "prompt" in config["agent"]["think"]:
-#         config["agent"]["think"]["prompt"] = config["agent"]["think"]["prompt"].format(
-#             current_date_context=current_date_context
-#         )
-#
-#     return config
-
 def load_config():
     current_dir = Path(__file__).parent
     config_path = current_dir / "config.json"
 
-    default_config = {
-        "agent": {
-            "think": {
-                "prompt": "Hello! Today's date info: {current_date_context}"
-            }
-        }
-    }
+    with open(config_path, "r") as f:
+        config = json.load(f)
 
-    config = default_config
-    try:
-        if config_path.exists():
-            with open(config_path, "r") as f:
-                file_config = json.load(f)
-
-            # Merge file_config into default_config (deep merge)
-            def merge_dicts(base, override):
-                for key, value in override.items():
-                    if isinstance(value, dict) and key in base and isinstance(base[key], dict):
-                        merge_dicts(base[key], value)
-                    else:
-                        base[key] = value
-            merge_dicts(config, file_config)
-        else:
-            print(f"[WARN] config.json not found. Using default config.")
-
-    except Exception as e:
-        print(f"[ERROR] Failed to load config.json: {e}. Using default config.")
-
-    # Always inject date context
     current_date_context = get_current_date_context()
-    try:
-        if "agent" in config and "think" in config["agent"] and "prompt" in config["agent"]["think"]:
-            config["agent"]["think"]["prompt"] = config["agent"]["think"]["prompt"].format(
-                current_date_context=current_date_context
-            )
-    except Exception as e:
-        print(f"[ERROR] Failed to inject date context: {e}")
+
+    # Inject current date context into the prompt
+    if "agent" in config and "think" in config["agent"] and "prompt" in config["agent"]["think"]:
+        config["agent"]["think"]["prompt"] = config["agent"]["think"]["prompt"].format(
+            current_date_context=current_date_context
+        )
 
     return config
 
@@ -250,6 +207,7 @@ async def sts_receiver(sts_ws, twilio_ws, streamsid_queue):
 async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
     BUFFER_SIZE = 20 * 160
     inbuffer = bytearray(b"")
+    cs = None
 
     async for message in twilio_ws:
         try:
@@ -259,7 +217,17 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
             if event == "start":
                 print("get our streamsid")
                 start = data["start"]
-                streamsid = start["streamSid"]
+                streamsid = start.get("streamSid")
+                call_sid   = start.get("callSid")
+                from_number   = start.get("from")
+                to_number     = start.get("to")
+                user_id = User.query.filter_by(phone_number=to_number).first().id
+                cs = CallSession.create(call_sid=call_sid,
+                                        from_number=from_number,
+                                        to_number=to_number,
+                                        started_at=datetime.now(timezone.utc),
+                                        user_id=user_id
+                                    )
                 streamsid_queue.put_nowait(streamsid)
             elif event == "connected":
                 continue
@@ -269,6 +237,13 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
                 if media["track"] == "inbound":
                     inbuffer.extend(chunk)
             elif event == "stop":
+                if cs is not None:
+                    with get_app().app_context():
+                        cs.update({
+                            'status': 'ended',
+                            'ended_at': datetime.now(timezone.utc)
+                        })
+
                 break
 
             while len(inbuffer) >= BUFFER_SIZE:
@@ -276,6 +251,16 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
                 audio_queue.put_nowait(chunk)
                 inbuffer = inbuffer[BUFFER_SIZE:]
         except:
+            try:
+                call_sid = (data.get("start") or {}).get("callSid") \
+                           or (data.get("stop") or {}).get("callSid")
+                if call_sid:
+                    session = CallSession.query.filter_by(call_sid=call_sid).first()
+                    if session:
+                        with get_app().app_context():
+                            cs.update({'status': 'error'})
+            except Exception:
+                pass
             break
 
 

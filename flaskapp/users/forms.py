@@ -86,6 +86,8 @@ class GoogleCalendarForm(FlaskForm):
         'Preferred Timezone',
         choices=[(tz, tz) for tz in pytz.all_timezones], validators=[DataRequired()]
     )
+    embedded_link = StringField('Embeded Link', validators=[Optional(), Length(max=500)])
+
     submit = SubmitField('Save Google Calendar Settings')
 
     def validate(self, extra_validators=None):

@@ -56,28 +56,40 @@
           "parameters": {
             "properties": {
               "attendees": {
-                "description": "List of email addresses or names of people attending the appointment",
                 "items": {
                   "type": "string"
                 },
                 "type": "array"
               },
+              "call_sid": {
+                "description": "Twilio Call SID for linking to CallSession",
+                "type": "string"
+              },
+              "client_email": {
+                "type": "string"
+              },
+              "client_name": {
+                "type": "string"
+              },
+              "client_phone": {
+                "type": "string"
+              },
               "datetime_end": {
-                "description": "The end date and time of the appointment in ISO format",
+                "description": "...",
                 "format": "date-time",
                 "type": "string"
               },
               "datetime_start": {
-                "description": "The start date and time of the appointment in ISO format",
+                "description": "...",
                 "format": "date-time",
                 "type": "string"
               },
               "description": {
-                "description": "Additional details about the appointment, including attendee names, purpose, or special instructions",
+                "description": "...",
                 "type": "string"
               },
               "summary": {
-                "description": "The title or summary of the appointment (e.g., 'Dr. Smith Appointment', 'Team Meeting', 'Client Consultation')",
+                "description": "...",
                 "type": "string"
               }
             },

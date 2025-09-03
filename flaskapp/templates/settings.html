@@ -127,6 +127,19 @@
                                         {% endif %}
                                     </div>
                                     <div class="form-group">
+                                        {{ google_form.embedded_link.label(class="form-control-label") }}
+                                        {% if google_form.embedded_link.errors %}
+                                        {{ google_form.embedded_link(class="form-control form-control-lg is-invalid") }}
+                                        <div class="invalid-feedback">
+                                            {% for error in google_form.embedded_link.errors %}
+                                            <span>{{ error }}</span>
+                                            {% endfor %}
+                                        </div>
+                                        {% else %}
+                                        {{ google_form.embedded_link(class="form-control form-control-lg") }}
+                                        {% endif %}
+                                    </div>
+                                    <div class="form-group">
                                         <button type="submit" name="submit_google" class="btn btn-outline-info">Save
                                             Google Calendar Settings
                                         </button>

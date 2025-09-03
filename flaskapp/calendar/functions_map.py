@@ -1,17 +1,14 @@
 import logging
 from datetime import datetime, timedelta
 from flaskapp.calendar.calendar import GoogleCalendarService
+from flaskapp.database.models import Appointment, CallSession
+from flaskapp import db
 
 DEFAULT_USER_ID = 1
 
 def check_calendar_availability(datetime_start=None, datetime_end=None):
-    """
-    Check if a specific time slot is available on Google Calendar
-    """
-    # user_id = user_id or DEFAULT_USER_ID
 
     try:
-        # Convert to proper datetime format if needed
         if isinstance(datetime_start, str):
             datetime_start = datetime.fromisoformat(datetime_start.replace('Z', '+00:00'))
         if isinstance(datetime_end, str):
@@ -54,37 +51,44 @@ def check_calendar_availability(datetime_start=None, datetime_end=None):
             "available": False
         }
 
-def create_calendar_event(summary=None, datetime_start=None, datetime_end=None, description=None, attendees=None):
-    """
-    Create a new calendar event for an appointment on Google Calendar
-    """
-    # user_id = user_id or DEFAULT_USER_ID
+
+def create_calendar_event(summary=None, datetime_start=None, datetime_end=None,
+                          description=None, attendees=None, call_sid=None, client_name=None, client_phone=None, client_email=None):
 
     try:
-        # Convert to proper datetime format if needed
         if isinstance(datetime_start, str):
             datetime_start = datetime.fromisoformat(datetime_start.replace('Z', '+00:00'))
         if isinstance(datetime_end, str):
             datetime_end = datetime.fromisoformat(datetime_end.replace('Z', '+00:00'))
 
-        # Format for Google Calendar API
         start_iso = datetime_start.isoformat()
         end_iso = datetime_end.isoformat()
 
         logging.info(f"Creating calendar event: {summary} from {start_iso} to {end_iso}")
 
-        # Initialize calendar service with user_id
-        # calendar_service = GoogleCalendarService(user_id)
         calendar_service = GoogleCalendarService()
-
-        # Create the event
         event = calendar_service.create_event(
-            summary=summary,
-            datetime_start=start_iso,
-            datetime_end=end_iso,
-            description=description or f"Appointment: {summary}",
-            timezone="UTC"
-        )
+                                            summary=summary,
+                                            datetime_start=start_iso,
+                                            datetime_end=end_iso,
+                                            description=description or f"Appointment: {summary}",
+                                            timezone="UTC"
+                                        )
+
+        call_session = CallSession.query.filter_by(call_sid=call_sid).first()
+
+        appt = Appointment.create_from_call(
+                                        call_session=call_session,
+                                        summary=summary,
+                                        start_datetime=datetime_start,
+                                        end_datetime=datetime_end,
+                                        description=description or f"Appointment: {summary}",
+                                        client_name=client_name or "",
+                                        client_phone=client_phone or "",
+                                        client_email=client_email or ""
+                                    )
+        db.session.add(appt)
+        db.session.commit()
 
         return {
             "success": True,
@@ -93,15 +97,17 @@ def create_calendar_event(summary=None, datetime_start=None, datetime_end=None, 
             "summary": event.get('summary'),
             "start_time": event['start'].get('dateTime'),
             "end_time": event['end'].get('dateTime'),
-            "message": "Appointment successfully created on Google Calendar"
+            "message": "Appointment created and saved"
         }
 
     except Exception as e:
         logging.error(f"Error creating calendar event: {e}")
+        db.session.rollback()
         return {
             "error": f"Failed to create appointment: {str(e)}",
             "success": False
         }
+
 
 def reschedule_appointment(original_datetime=None, new_datetime_start=None, new_datetime_end=None, reason=None):
     """

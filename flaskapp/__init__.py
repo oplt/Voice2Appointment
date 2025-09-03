@@ -1,11 +1,15 @@
-# __init__.py
 from flask import Flask
 from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
 from flask_mail import Mail
-import logging
+import logging, os
 from config import settings as Config
+from cryptography.fernet import Fernet
+from flaskapp.database.fernet_init import init_fernet
+
+
+
 
 # Initialize extensions
 db = SQLAlchemy()
@@ -21,6 +25,7 @@ def create_app(config_class=Config):
 
     # Initialize extensions with app
     db.init_app(app)
+    init_fernet(app)
     bcrypt.init_app(app)
     login_manager.init_app(app)
     mail.init_app(app)
@@ -43,10 +48,14 @@ def create_app(config_class=Config):
     from flaskapp.users.routes import users
     from flaskapp.main.routes import main
     from flaskapp.errors.handlers import errors
+    from flaskapp.calendar.routes import calendar_bp
+    from flaskapp.twilio.routes import twilio_bp
 
     app.register_blueprint(users)
     app.register_blueprint(main)
     app.register_blueprint(errors)
+    app.register_blueprint(calendar_bp)
+    app.register_blueprint(twilio_bp)
 
     logging.info("Flask application created successfully")
     return app

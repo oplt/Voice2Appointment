@@ -1,44 +1,43 @@
-import os
 from dataclasses import dataclass
 from dotenv import load_dotenv
-import os
+import os, time
 import logging
+from logging.handlers import RotatingFileHandler
+
 
 load_dotenv()
 
+
 def setup_logging():
-    """Centralized logging configuration with environment variable support"""
     log_level = os.getenv("LOG_LEVEL", "INFO").upper()
 
-    # Clear any existing handlers to prevent conflicts
-    root_logger = logging.getLogger()
-    for handler in root_logger.handlers[:]:
-        root_logger.removeHandler(handler)
+    # UTC timestamps (optional)
+    logging.Formatter.converter = time.gmtime
 
-    # Create formatter
+    # Reset root handlers
+    root_logger = logging.getLogger()
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+
+    os.makedirs("logs", exist_ok=True)
+
     formatter = logging.Formatter(
         "%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    # File handler
-    file_handler = logging.FileHandler("VoiceAsst.log")
+    file_handler = RotatingFileHandler(
+        "logs/VoiceAsst.log", maxBytes=5_000_000, backupCount=5
+    )
     file_handler.setFormatter(formatter)
     file_handler.setLevel(getattr(logging, log_level, logging.INFO))
-
-    # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(formatter)
     console_handler.setLevel(getattr(logging, log_level, logging.INFO))
-
-    # Configure root logger
     root_logger.setLevel(getattr(logging, log_level, logging.INFO))
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
-
-    # Prevent Flask from overriding our logging
-    logging.getLogger('werkzeug').setLevel(logging.INFO)
-    logging.getLogger('werkzeug').handlers = []
+    logging.getLogger("werkzeug").setLevel(logging.INFO)
 
 
 
@@ -69,8 +68,10 @@ class Settings:
     TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
     TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
     TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
+    CALL_EXPIRES_IN = 5
 
     DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
+    FERNET_KEY = os.getenv('FERNET_KEY')
 
     CALENDAR = {
         'SCOPES': ['https://www.googleapis.com/auth/calendar'],

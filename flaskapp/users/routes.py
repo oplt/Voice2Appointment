@@ -53,7 +53,10 @@ def logout():
 @users.route("/dashboard")
 @login_required
 def dashboard():
-    return render_template('dashboard.html')
+    auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id).first()
+    calendar_url = auth.embedded_link if auth and auth.embedded_link else None
+    return render_template('dashboard.html', calendar_url=calendar_url)
+
 
 @users.route("/settings", methods=['GET', 'POST'])
 @login_required
@@ -126,32 +129,33 @@ def settings():
 
 def save_google_settings(form):
     # get latest non-revoked record for this user, or create one
-    settings = (GoogleCalendarAuth.query
+    google = (GoogleCalendarAuth.query
                 .filter_by(user_id=current_user.id, revoked=False)
                 .order_by(GoogleCalendarAuth.id.desc())
                 .first())
-    if not settings:
-        settings = GoogleCalendarAuth(user_id=current_user.id, provider='google')
-        db.session.add(settings)
+    if not google:
+        google = GoogleCalendarAuth(user_id=current_user.id, provider='google')
+        db.session.add(google)
 
     # plain text fields
-    settings.account_email = (form.account_email.data or '').strip() or None
-    settings.calendar_id   = (form.calendar_id.data or '').strip() or None
-    settings.scopes        = (form.scopes.data or '').strip() or None
-    settings.time_zone     = (form.time_zone.data or '').strip() or None
+    google.account_email = (form.account_email.data or '').strip() or None
+    google.calendar_id   = (form.calendar_id.data or '').strip() or None
+    google.scopes        = (form.scopes.data or '').strip() or None
+    google.time_zone     = (form.time_zone.data or '').strip() or None
+    google.embedded_link = (form.embedded_link.data or '').strip() or None
 
     # file fields -> read() -> decode() -> assign TEXT
     if form.credentials_json.data:
         f = form.credentials_json.data
-        settings.credentials_json = f.read().decode('utf-8')
+        google.credentials_json = f.read().decode('utf-8')
         f.seek(0)
 
     if form.token_json.data:
         f = form.token_json.data
-        settings.token_json = f.read().decode('utf-8')   # <-- fixed (no FileStorage on the left)
+        google.token_json = f.read().decode('utf-8')
         f.seek(0)
 
-    settings.updated_at = datetime.utcnow()
+    google.updated_at = datetime.utcnow()
     db.session.commit()
 
 def save_twilio_settings(form):
@@ -244,6 +248,7 @@ def populate_forms(google_form, twilio_form, deepgram_form, config_form=None, ac
         google_form.calendar_id.data = google_settings.calendar_id
         google_form.scopes.data = google_settings.scopes
         google_form.time_zone.data = google_settings.time_zone
+        google_form.embedded_link.data = google_settings.embedded_link
 
     twilio_form.twilio_account_sid.data = current_user.twilio_account_sid
     twilio_form.twilio_auth_token.data = current_user.twilio_auth_token
