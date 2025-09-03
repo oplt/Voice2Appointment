@@ -20,14 +20,9 @@ class GoogleCalendarService:
     def authenticate(self):
         """Authenticate with Google Calendar"""
         try:
-            # if self.user_id is None:
-            #     raise ValueError("No user ID provided")
-
-            # Get credentials from database
-            # auth_record = GoogleCalendarAuth.query.filter_by(user_id=self.user_id).first()
             auth_record = GoogleCalendarAuth.query.first()
             if not auth_record:
-                raise ValueError(f"No Google Calendar authentication found for user {self.user_id}")
+                raise ValueError(f"No Google Calendar authentication found")
 
             credentials_json = auth_record.credentials_json
             token_json = auth_record.token_json
@@ -36,7 +31,7 @@ class GoogleCalendarService:
                 raise ValueError("No credentials found in database")
 
             creds = None
-            SCOPES = ['https://www.googleapis.com/auth/calendar']
+            SCOPES = ['https://www.googleapis.com/auth/calendar',]
 
             # If we have a token, try to use it
             if token_json:
@@ -239,4 +234,4 @@ def authenticate_google_calendar():
     # if user_id is None:
     #     raise ValueError("user_id is required for Google Calendar authentication")
     service = GoogleCalendarService()
-    return service.service
+    return service.authenticate()

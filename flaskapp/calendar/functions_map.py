@@ -1,10 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-import json
-from flaskapp.utils.calendar import GoogleCalendarService
-from flask import has_request_context
-from flask_login import current_user
-
+from flaskapp.calendar.calendar import GoogleCalendarService
 
 DEFAULT_USER_ID = 1
 
