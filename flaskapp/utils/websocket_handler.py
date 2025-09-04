@@ -3,6 +3,7 @@ import base64
 import json
 import websockets
 import os
+import logging
 from dotenv import load_dotenv
 from pathlib import Path
 from flaskapp.calendar.functions_map import FUNCTION_MAP
@@ -126,11 +127,11 @@ def execute_function_call(func_name, arguments):
         # ensure we’re inside an app context
         with flask_app.app_context():
             result = FUNCTION_MAP[func_name](**arguments)
-        print(f"Function call result: {result}")
+        logging.info(f"Function call result: {result}")
         return result
     else:
         result = {"error": f"Unknown function: {func_name}"}
-        print(result)
+        logging.info(result)
         return result
 
 
@@ -150,16 +151,16 @@ async def handle_function_call_request(decoded, sts_ws):
             func_id = function_call["id"]
             arguments = json.loads(function_call["arguments"])
 
-            print(f"Function call: {func_name} (ID: {func_id}), arguments: {arguments}")
+            logging.info(f"Function call: {func_name} (ID: {func_id}), arguments: {arguments}")
 
             result = execute_function_call(func_name, arguments)
 
             function_result = create_function_call_response(func_id, func_name, result)
             await sts_ws.send(json.dumps(function_result))
-            print(f"Sent function result: {function_result}")
+            logging.info(f"Sent function result: {function_result}")
 
     except Exception as e:
-        print(f"Error calling function: {e}")
+        logging.error(f"Error calling function: {e}")
         error_result = create_function_call_response(
             func_id if "func_id" in locals() else "unknown",
             func_name if "func_name" in locals() else "unknown",
@@ -176,19 +177,19 @@ async def handle_text_message(decoded, twilio_ws, sts_ws, streamsid):
 
 
 async def sts_sender(sts_ws, audio_queue):
-    print("sts_sender started")
+    logging.info("sts_sender started")
     while True:
         chunk = await audio_queue.get()
         await sts_ws.send(chunk)
 
 
 async def sts_receiver(sts_ws, twilio_ws, streamsid_queue):
-    print("sts_receiver started")
+    logging.info("sts_receiver started")
     streamsid = await streamsid_queue.get()
 
     async for message in sts_ws:
         if type(message) is str:
-            print(message)
+            logging.info(message)
             decoded = json.loads(message)
             await handle_text_message(decoded, twilio_ws, sts_ws, streamsid)
             continue
@@ -215,7 +216,7 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
             event = data["event"]
 
             if event == "start":
-                print("get our streamsid")
+                logging.info("get our streamsid")
                 start = data["start"]
                 streamsid = start.get("streamSid")
                 call_sid   = start.get("callSid")
@@ -243,7 +244,6 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
                             'status': 'ended',
                             'ended_at': datetime.now(timezone.utc)
                         })
-
                 break
 
             while len(inbuffer) >= BUFFER_SIZE:

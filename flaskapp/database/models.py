@@ -179,3 +179,20 @@ class Appointment(TimestampMixin, db.Model):
         if reason:
             self.notes = f"Cancelled: {reason}"
         db.session.commit()
+
+
+# models.py - Add this class
+class TwilioCallAnalytics(db.Model, TimestampMixin):
+    __tablename__ = 'twilio_call_analytics'
+
+    id = db.Column(db.Integer, primary_key=True)
+    date = db.Column(db.Date, nullable=False, index=True)
+    call_data = db.Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    processed_metrics = db.Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    created_at = db.Column(db.DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+    # __table_args__ = (db.UniqueConstraint('user_id', 'date', name='unique_user_date'),)
+
+    def __repr__(self):
+        return f"<TwilioCallAnalytics date={self.date}>"
+

@@ -3,7 +3,7 @@ from flask import Blueprint, request, jsonify, abort
 from twilio.request_validator import RequestValidator
 from flaskapp.database.models import CallSession
 from flaskapp import db
-from .worker import download_and_archive_recording  # Celery task
+from flaskapp.twilio.worker import download_and_archive_recording  # Celery task
 from flaskapp.database.models import User
 
 logger = logging.getLogger(__name__)

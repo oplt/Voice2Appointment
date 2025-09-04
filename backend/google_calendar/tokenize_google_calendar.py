@@ -1,4 +1,5 @@
 import os
+import logging
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -27,9 +28,9 @@ def main():
     # Try to build the service to confirm it works
     try:
         service = build('calendar', 'v3', credentials=creds)
-        print("Authentication successful! token.json has been created/updated.")
+        logging.info("Authentication successful! token.json has been created/updated.")
     except Exception as e:
-        print(f"An error occurred: {e}")
+        logging.error(f"An error occurred: {e}")
 
 if __name__ == '__main__':
     main()

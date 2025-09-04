@@ -2,7 +2,6 @@
 
 {% block content %}
 
-
 <div class="container mt-5">
     <h4 class="font-weight-bold py-3 mb-4">
         Dashboard
@@ -21,49 +20,34 @@
         <div class="row no-gutters row-bordered row-border-light">
             <div class="col-md-3 pt-0">
                 <div class="list-group list-group-flush dashboard-tabs">
-                    <a class="list-group-item list-group-item-action active" data-bs-toggle="list" href="#calendar">
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'calendar' %}active{% endif %}"
+                       href="{{ url_for('users.dashboard', tab='calendar') }}">
                         <i class="fas fa-calendar mr-2"></i>Calendar View
                     </a>
-                    <a class="list-group-item list-group-item-action" data-bs-toggle="list" href="#appointments">
-                        <i class="fas fa-clock mr-2"></i>Upcoming Appointments
-                    </a>
 
-                    <a class="list-group-item list-group-item-action" data-bs-toggle="list" href="#statistics">
-                        <i class="fas fa-chart-bar mr-2"></i>Statistics
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'analytics' %}active{% endif %}"
+                       href="{{ url_for('users.dashboard', tab='analytics') }}">
+                        <i class="fas fa-chart-line mr-2"></i>Analytics
                     </a>
                 </div>
             </div>
             <div class="col-md-9">
                 <div class="tab-content">
-                    <!-- Appointments Tab -->
-                    <div class="tab-pane fade" id="appointments">
-                        <div class="card-body">
-                            <div class="card">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Upcoming Appointments</h5>
-                                </div>
-                                <div class="card-body">
-                                    <div class="appointments-carousel">
-                                        <!-- Keep the original id so existing JS can populate it -->
-                                        <div class="appointments-track" id="upcomingAppointments">
-                                            <!-- Expect child elements with .appointment-card; fallback content removed -->
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Calendar Tab -->
-                    <div class="tab-pane fade active show" id="calendar">
+                    {% if active_tab == 'calendar' %}
+                    <div class="tab-pane fade active show">
                         <div class="card-body">
                             <!-- Statistics Section -->
                             <div class="row mb-4 stats-grid">
                                 <div class="card border-left-primary shadow stat-card">
                                     <div class="card-body d-flex align-items-center">
                                         <div class="col">
-                                            <div class="text-xs font-weight-bold text-primary text-uppercase text-center mb-1">Today's Appointments</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center" id="todayCount">0</div>
+                                            <div class="text-xs font-weight-bold text-primary text-uppercase text-center mb-1">
+                                                Today's Appointments
+                                            </div>
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center"
+                                                 id="todayCount">0
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -71,8 +55,12 @@
                                 <div class="card border-left-success shadow stat-card">
                                     <div class="card-body d-flex align-items-center">
                                         <div class="col">
-                                            <div class="text-xs font-weight-bold text-success text-uppercase text-center mb-1">This Week</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center" id="weekCount">0</div>
+                                            <div class="text-xs font-weight-bold text-success text-uppercase text-center mb-1">
+                                                This Week
+                                            </div>
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center"
+                                                 id="weekCount">0
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -80,8 +68,12 @@
                                 <div class="card border-left-info shadow stat-card">
                                     <div class="card-body d-flex align-items-center">
                                         <div class="col">
-                                            <div class="text-xs font-weight-bold text-info text-uppercase text-center mb-1">This Month</div>
-                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center" id="voiceCount">0</div>
+                                            <div class="text-xs font-weight-bold text-info text-uppercase text-center mb-1">
+                                                This Month
+                                            </div>
+                                            <div class="h5 mb-0 font-weight-bold text-gray-800 text-center"
+                                                 id="voiceCount">0
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -101,13 +93,14 @@
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <!-- Calendar Section -->
                             <div class="card h-100">
                                 <div class="card-header d-flex justify-content-between align-items-center">
                                     <h5 class="mb-0"><i class="fas fa-calendar mr-2"></i>Google Calendar</h5>
                                     <div>
-                                        <a href="https://calendar.google.com" target="_blank" class="btn btn-outline-primary btn-sm">
+                                        <a href="https://calendar.google.com" target="_blank"
+                                           class="btn btn-outline-primary btn-sm">
                                             <i class="fab fa-google mr-2"></i>Open in Google
                                         </a>
                                     </div>
@@ -118,26 +111,184 @@
                             </div>
                         </div>
                     </div>
+                    {% endif %}
 
-                    <!-- Statistics Tab -->
-                    <div class="tab-pane fade" id="statistics">
+                    <!-- Analytics Tab -->
+                    {% if active_tab == 'analytics' %}
+                    <div class="tab-pane fade active show">
                         <div class="card-body">
-                            <div class="text-center">
-                                <div class="card border-0 shadow-sm">
-                                    <div class="card-body py-5">
-                                        <i class="fas fa-chart-bar fa-3x text-muted mb-3"></i>
-                                        <h5 class="text-muted">Statistics Moved</h5>
-                                        <p class="text-muted mb-0">
-                                            Your appointment statistics are now displayed at the top of the Calendar View tab for better integration.
-                                        </p>
-                                        <a href="#calendar" class="btn btn-primary mt-3" data-bs-toggle="list">
-                                            <i class="fas fa-calendar me-2"></i>Go to Calendar View
-                                        </a>
+                            <!-- Date Range Selector for Analytics Only -->
+                            <div class="row mb-4">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h5 class="mb-0">Date Range Selection</h5>
+                                        </div>
+                                        <div class="card-body">
+                                            <form method="GET" action="{{ url_for('users.dashboard') }}" class="row g-3">
+                                                <input type="hidden" name="tab" value="analytics">
+                                                <div class="col-md-4">
+                                                    <label for="start_date" class="form-label">Start Date</label>
+                                                    <input type="date" class="form-control" id="start_date"
+                                                           name="start_date" value="{{ start_date }}">
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label for="end_date" class="form-label">End Date</label>
+                                                    <input type="date" class="form-control" id="end_date"
+                                                           name="end_date" value="{{ end_date }}">
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <label class="form-label">&nbsp;</label>
+                                                    <div class="d-flex gap-2">
+                                                        <button type="submit" class="btn btn-primary flex-grow-1">Apply
+                                                            Filter
+                                                        </button>
+
+                                                        <a href="{{ url_for('fetch_data_bp.fetch_twilio_data') }}"
+                                                           class="btn btn-info">
+                                                            <i class="fas fa-sync-alt"></i>
+                                                        </a>
+                                                    </div>
+                                                </div>
+                                            </form>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+
+                            {% if analytics_data %}
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <h5 class="mb-3">Call Analytics ({{ start_date }} to {{ end_date }})</h5>
+                                </div>
+                            </div>
+
+                            <!-- Summary Statistics -->
+                            <div class="row mb-4">
+                                <div class="col-md-3">
+                                    <div class="card bg-primary text-white text-center p-3">
+                                        <h6>Total Calls</h6>
+                                        <h3>{{ analytics_data.total_calls }}</h3>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-success text-white text-center p-3">
+                                        <h6>Total Duration (min)</h6>
+                                        <h3>{{ analytics_data.total_duration }}</h3>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-info text-white text-center p-3">
+                                        <h6>Average Duration (min)</h6>
+                                        <h3>{{ analytics_data.avg_duration }}</h3>
+                                    </div>
+                                </div>
+                                <div class="col-md-3">
+                                    <div class="card bg-warning text-white text-center p-3">
+                                        <h6>Total Cost</h6>
+                                        <h3>${{ analytics_data.total_cost }}</h3>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Charts -->
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Calls Over Time</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <img src="data:image/png;base64,{{ analytics_data.calls_over_time }}"
+                                                 class="img-fluid" alt="Calls Over Time">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Call Duration Distribution</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <img src="data:image/png;base64,{{ analytics_data.duration_distribution }}"
+                                                 class="img-fluid" alt="Duration Distribution">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="row mb-4">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Cost Over Time</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <img src="data:image/png;base64,{{ analytics_data.cost_over_time }}"
+                                                 class="img-fluid" alt="Cost Over Time">
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Top Numbers</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <img src="data:image/png;base64,{{ analytics_data.top_numbers }}"
+                                                 class="img-fluid" alt="Top Numbers">
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Data Table -->
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Call Details</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="table-responsive">
+                                                <table class="table table-striped">
+                                                    <thead>
+                                                    <tr>
+                                                        <th>From</th>
+                                                        <th>To</th>
+                                                        <th>Start Time</th>
+                                                        <th>Duration (sec)</th>
+                                                        <th>Cost</th>
+                                                    </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                    {% for call in analytics_data.call_details %}
+                                                    <tr>
+                                                        <td>{{ call.from }}</td>
+                                                        <td>{{ call.to }}</td>
+                                                        <td>{{ call.start_time }}</td>
+                                                        <td>{{ call.duration_sec }}</td>
+                                                        <td>${{ call.price }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            {% else %}
+                            <div class="text-center py-5">
+                                <i class="fas fa-chart-line fa-4x text-muted mb-3"></i>
+                                <h5>No Analytics Data Available</h5>
+                                <p class="text-muted">Click the refresh button to fetch Twilio data and get started with
+                                    analytics.</p>
+                            </div>
+                            {% endif %}
                         </div>
                     </div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -147,44 +298,9 @@
 <!-- Your custom dashboard script -->
 <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
 
-<!-- Tab functionality and carousel helper -->
+<!-- Remove the JavaScript tab functionality since we're handling it server-side -->
 <script>
     document.addEventListener('DOMContentLoaded', () => {
-      // Tab functionality similar to settings page
-      const urlParams = new URLSearchParams(window.location.search);
-      const activeTab = urlParams.get('tab');
-
-      // Set active tab from URL parameter
-      if (activeTab) {
-        const tabLink = document.querySelector(`[href="#${activeTab}"]`);
-        if (tabLink) {
-          // Remove active class from all tabs
-          document.querySelectorAll('.dashboard-tabs .list-group-item').forEach(tab => {
-            tab.classList.remove('active');
-          });
-          document.querySelectorAll('.tab-pane').forEach(pane => {
-            pane.classList.remove('active', 'show');
-          });
-          
-          // Add active class to selected tab
-          tabLink.classList.add('active');
-          const targetPane = document.getElementById(activeTab);
-          if (targetPane) {
-            targetPane.classList.add('active', 'show');
-          }
-        }
-      }
-
-      // Handle tab changes and update URL
-      document.body.addEventListener('shown.bs.tab', function (e) {
-        const target = e.target;
-        const tabName = target.getAttribute('href').substring(1);
-        const url = new URL(window.location);
-        url.searchParams.set('tab', tabName);
-        window.history.replaceState({}, '', url);
-        console.log('Dashboard tab changed to:', tabName);
-      });
-
       // Carousel functionality for both appointment sections
       const setupCarousel = (trackId) => {
         const track = document.getElementById(trackId);

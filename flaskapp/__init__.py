@@ -3,12 +3,9 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_login import LoginManager
 from flask_mail import Mail
-import logging, os
+import logging
 from config import settings as Config
-from cryptography.fernet import Fernet
 from flaskapp.database.fernet_init import init_fernet
-
-
 
 
 # Initialize extensions
@@ -45,17 +42,19 @@ def create_app(config_class=Config):
                 logging.error(f"Error loading user: {e}")
                 return None
 
-    from flaskapp.users.routes import users
-    from flaskapp.main.routes import main
+    from flaskapp.routes.user_routes import users
+    from flaskapp.routes.main_routes import main
     from flaskapp.errors.handlers import errors
-    from flaskapp.calendar.routes import calendar_bp
-    from flaskapp.twilio.routes import twilio_bp
+    from flaskapp.routes.calendar_routes import calendar_bp
+    from flaskapp.routes.twilio_routes import twilio_bp
+    from flaskapp.routes.data_fetch_routes import fetch_data_bp
 
     app.register_blueprint(users)
     app.register_blueprint(main)
     app.register_blueprint(errors)
     app.register_blueprint(calendar_bp)
     app.register_blueprint(twilio_bp)
+    app.register_blueprint(fetch_data_bp)
 
     logging.info("Flask application created successfully")
     return app

@@ -1,6 +1,6 @@
-from flask import render_template, url_for, redirect, request, Blueprint, flash
+from flask import render_template, url_for, redirect, request, Blueprint, flash, session
 import json, os, logging, requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask_login import login_user, current_user, logout_user, login_required
 from flaskapp import db, bcrypt
 from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm,
@@ -8,6 +8,7 @@ from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm
 from flaskapp.users.utils import save_picture, send_reset_email
 from flaskapp.database.models import GoogleCalendarAuth, User
 from flask import current_app
+from flaskapp.analysis.dashboard_functions import process_twilio_data
 
 
 users = Blueprint('users', __name__)
@@ -55,7 +56,23 @@ def logout():
 def dashboard():
     auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id).first()
     calendar_url = auth.embedded_link if auth and auth.embedded_link else None
-    return render_template('dashboard.html', calendar_url=calendar_url)
+
+    active_tab = request.args.get('tab', 'calendar')
+    start_date = request.args.get('start_date', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
+    end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
+    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+    end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+    analytics_data = None
+    if active_tab == 'analytics' and 'twilio_data' in session and session['twilio_data']:
+        try:
+            analytics_data = process_twilio_data(session['twilio_data'], start_dt, end_dt)
+        except Exception as e:
+            current_app.logger.error(f"Error processing Twilio data: {str(e)}")
+            analytics_data = None
+    return render_template('dashboard.html', calendar_url=calendar_url, active_tab=active_tab,
+                           start_date=start_date,
+                           end_date=end_date,
+                           analytics_data=analytics_data)
 
 
 @users.route("/settings", methods=['GET', 'POST'])

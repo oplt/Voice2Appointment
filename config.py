@@ -1,8 +1,10 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from dotenv import load_dotenv
 import os, time
 import logging
 from logging.handlers import RotatingFileHandler
+from typing import Optional, Dict, Any
+from datetime import timedelta
 
 
 load_dotenv()
@@ -43,46 +45,38 @@ def setup_logging():
 
 @dataclass
 class Settings:
+    SECRET_KEY: str = os.getenv('SECRET_KEY', '')
+    DEBUG: bool = False
+    TESTING: bool = False
 
-    # Database Configuration
-    SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL', '')
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        'pool_pre_ping': True,
-        'pool_recycle': 300,
+    SQLALCHEMY_DATABASE_URI: str = os.getenv('DATABASE_URL', '')
+    SQLALCHEMY_TRACK_MODIFICATIONS: bool = False
+    SQLALCHEMY_ENGINE_OPTIONS: Dict[str, Any] = field(default_factory=dict)
+
+    MAIL_SERVER: str = 'smtp.gmail.com'
+    MAIL_PORT: int = 587
+    MAIL_USE_TLS: bool = True
+    MAIL_USERNAME: Optional[str] = os.getenv('EMAIL_USER')
+    MAIL_PASSWORD: Optional[str] = os.getenv('EMAIL_PASSWORD')
+
+    TWILIO_ACCOUNT_SID: Optional[str] = os.getenv('TWILIO_ACCOUNT_SID')
+    TWILIO_AUTH_TOKEN: Optional[str] = os.getenv('TWILIO_AUTH_TOKEN')
+    TWILIO_PHONE_NUMBER: Optional[str] = os.getenv('TWILIO_PHONE_NUMBER')
+    CALL_EXPIRES_IN: int = 5
+
+    DEEPGRAM_API_KEY: Optional[str] = os.getenv('DEEPGRAM_API_KEY')
+
+    FERNET_KEY: Optional[str] = os.getenv('FERNET_KEY')
+
+    REDIS_URL: str = os.getenv('REDIS_URL', 'redis://localhost:6379/0')
+    CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+    CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+    CELERYBEAT_SCHEDULE = {
+        'fetch-twilio-calls-every-hour': {
+            'task': 'app.tasks.twilio_tasks.fetch_twilio_calls',
+            'schedule': timedelta(seconds=3600),  # Every hour
+        },
     }
-
-    # Flask Configuration
-    SECRET_KEY = os.getenv('SECRET_KEY', '')
-    DEBUG = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
-    TESTING = os.getenv('FLASK_TESTING', 'False').lower() == 'true'
-
-    # Mail Configuration
-    MAIL_SERVER = 'smtp.gmail.com'
-    MAIL_PORT = 587
-    MAIL_USE_TLS = True
-    MAIL_USERNAME = os.getenv('EMAIL_USER')
-    MAIL_PASSWORD = os.getenv('EMAIL_PASSWORD')
-
-    # Twilio Configuration
-    TWILIO_ACCOUNT_SID = os.getenv('TWILIO_ACCOUNT_SID')
-    TWILIO_AUTH_TOKEN = os.getenv('TWILIO_AUTH_TOKEN')
-    TWILIO_PHONE_NUMBER = os.getenv('TWILIO_PHONE_NUMBER')
-    CALL_EXPIRES_IN = 5
-
-    DEEPGRAM_API_KEY = os.getenv('DEEPGRAM_API_KEY')
-    FERNET_KEY = os.getenv('FERNET_KEY')
-
-    CALENDAR = {
-        'SCOPES': ['https://www.googleapis.com/auth/calendar'],
-        'CALENDAR_ID': 'primary',
-        'TIMEZONE': 'Europe/Brussels',
-        'WORKING_HOURS': (9, 17),  # 9 AM to 5 PM
-        'APPOINTMENT_DURATION': 30,  # minutes
-        'TIMEZONE_SUPPORT': True,  # Enable timezone handling
-        'DEFAULT_TIMEZONE': 'Europe/Brussels'  # Fallback timezone
-    }
-    # Other Configurations
 
 
 settings = Settings()

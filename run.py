@@ -3,9 +3,6 @@ from flaskapp.utils.websocket_handler import twilio_handler
 from config import setup_logging
 from flaskapp import create_app, db
 
-
-
-
 '''
     TO-DO:
     - Add error handling and logging
@@ -24,6 +21,7 @@ from flaskapp import create_app, db
     - add visulization for appointments and call sessions
     - test twilio webhook for recording
     - make a Settings table in database for user settings
+    - call info is generated when call starts and also through api call to twilio with celery task. choose one
     '''
 
 

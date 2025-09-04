@@ -2,6 +2,7 @@
 import os
 import tempfile
 import json
+import logging
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -40,7 +41,7 @@ class GoogleCalendarService:
                     token_data = json.loads(token_json)
                     creds = Credentials.from_authorized_user_info(token_data, SCOPES)
                 except (json.JSONDecodeError, Exception) as e:
-                    print(f"Error parsing token: {e}")
+                    logging.error(f"Error parsing token: {e}")
                     creds = None
 
             # If no valid credentials, try to refresh or get new ones
@@ -52,7 +53,7 @@ class GoogleCalendarService:
                         auth_record.token_json = creds.to_json()
                         db.session.commit()
                     except Exception as e:
-                        print(f"Error refreshing token: {e}")
+                        logging.error(f"Error refreshing token: {e}")
                         creds = None
 
                 # If still no valid credentials, need to re-authenticate
@@ -83,7 +84,7 @@ class GoogleCalendarService:
             return self.service
 
         except Exception as e:
-            print(f"Error in Google Calendar authentication: {e}")
+            logging.error(f"Error in Google Calendar authentication: {e}")
             raise
 
     def check_availability(self, datetime_start, datetime_end, calendar_id='primary'):
@@ -101,7 +102,7 @@ class GoogleCalendarService:
             return len(events) == 0, events
 
         except HttpError as error:
-            print(f"An error occurred: {error}")
+            logging.error(f"An error occurred: {error}")
             raise
 
     def create_event(self, summary, datetime_start, datetime_end,
@@ -125,7 +126,7 @@ class GoogleCalendarService:
             return event
 
         except HttpError as error:
-            print(f"An error occurred: {error}")
+            logging.error(f"An error occurred: {error}")
             raise
 
     def update_event(self, event_id, summary=None, datetime_start=None, datetime_end=None,
@@ -156,7 +157,7 @@ class GoogleCalendarService:
             return updated_event
 
         except HttpError as error:
-            print(f"An error occurred: {error}")
+            logging.error(f"An error occurred: {error}")
             raise
 
     def delete_event(self, event_id, calendar_id='primary'):
@@ -165,7 +166,7 @@ class GoogleCalendarService:
             self.service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
             return True
         except HttpError as error:
-            print(f"An error occurred: {error}")
+            logging.error(f"An error occurred: {error}")
             raise
 
     def get_available_slots(self, date, duration_minutes=30, start_hour=9, end_hour=17, calendar_id='primary'):
@@ -224,7 +225,7 @@ class GoogleCalendarService:
             return available_slots
             
         except Exception as e:
-            print(f"Error getting available slots: {e}")
+            logging.error(f"Error getting available slots: {e}")
             return []
 
 
