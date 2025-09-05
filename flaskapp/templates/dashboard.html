@@ -217,6 +217,30 @@
                                 </div>
                             </div>
 
+                            <!-- World Map Section -->
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Incoming Calls by Country</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if analytics_data.world_map_html %}
+                                            <div style="height:520px; overflow:hidden;">
+                                                {{ analytics_data.world_map_html | safe }}
+                                            </div>
+                                            {% else %}
+                                            <div class="text-center py-4">
+                                                <i class="fas fa-globe-americas fa-3x text-muted mb-3"></i>
+                                                <p class="text-muted">No geographic data available for the selected period.</p>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+
+                                    </div>
+                                </div>
+                            </div>
+
                             <div class="row mb-4">
                                 <div class="col-md-6">
                                     <div class="card">

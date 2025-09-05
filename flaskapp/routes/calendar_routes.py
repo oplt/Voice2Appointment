@@ -1,6 +1,6 @@
 from flask import render_template, request, Blueprint, jsonify
 from flask_login import current_user, login_required
-from numba.cuda.cudadrv.devicearray import lru_cache
+from functools import lru_cache
 from flaskapp.database.models import GoogleCalendarAuth
 from flaskapp.calendar.calendar import  authenticate_google_calendar
 from datetime import datetime, timedelta

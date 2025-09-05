@@ -2,12 +2,13 @@ import logging
 from flask import Blueprint, request, jsonify, abort
 from twilio.request_validator import RequestValidator
 from flaskapp.database.models import CallSession
-from flaskapp import db
 from flaskapp.twilio.worker import download_and_archive_recording  # Celery task
 from flaskapp.database.models import User
 
+
 logger = logging.getLogger(__name__)
 twilio_bp = Blueprint("twilio", __name__)
+
 
 # this is a webhook endpoint that Twilio will call when a recording is available
 @twilio_bp.route("/twilio/recording", methods=["POST"])

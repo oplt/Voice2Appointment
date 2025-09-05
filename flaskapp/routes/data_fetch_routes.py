@@ -41,7 +41,9 @@ def fetch_twilio_data():
                 "start_time": c.start_time.isoformat() if c.start_time else None,
                 "duration_sec": int(c.duration) if c.duration else None,
                 "price": float(c.price) if c.price else None,
-                "price_unit": c.price_unit
+                "price_unit": c.price_unit,
+                "direction": getattr(c, "direction", None),
+                "from_formatted": getattr(c, "from_formatted", None),
             })
 
         # Store in session
