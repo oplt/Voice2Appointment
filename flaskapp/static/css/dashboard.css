@@ -83,3 +83,90 @@
         font-size: 1rem;
     }
 }
+
+.category-list .list-group-item,
+.menu-items .list-group-item { cursor: grab; }
+.droppable.drag-over { outline: 2px dashed #007bff; outline-offset: 2px; }
+.menu-card .total-price { font-size: 0.875rem; }
+.menu-card [contenteditable="true"] { border-bottom: 1px dotted #ccc; outline: none; }
+
+/* Menu Builder Layout Improvements */
+.menu-builder-left {
+    min-height: 600px;
+}
+
+.menu-builder-right {
+    min-height: 600px;
+}
+
+.menu-builder .card {
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    border: 1px solid #e9ecef;
+}
+
+.menu-builder .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #e9ecef;
+    font-weight: 600;
+}
+
+.menu-builder .form-group label {
+    font-weight: 500;
+    color: #495057;
+    margin-bottom: 0.25rem;
+}
+
+.menu-builder .list-group-item {
+    border-left: none;
+    border-right: none;
+    padding: 0.75rem 1rem;
+}
+
+.menu-builder .list-group-item:first-child {
+    border-top: none;
+}
+
+.menu-builder .list-group-item:last-child {
+    border-bottom: none;
+}
+
+.menu-builder .btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+.menu-builder .badge {
+    font-size: 0.65rem;
+}
+
+.menu-builder .category-card {
+    margin-bottom: 1.5rem;
+}
+
+.menu-builder .category-card .card-header {
+    background-color: #f8f9fa;
+    border-bottom: 2px solid #dee2e6;
+    font-size: 1.1rem;
+}
+
+.menu-builder .category-card .list-group-item {
+    border-left: 3px solid transparent;
+    transition: all 0.2s ease;
+}
+
+.menu-builder .category-card .list-group-item:hover {
+    border-left-color: #007bff;
+    background-color: #f8f9fa;
+}
+
+/* Responsive adjustments for menu builder */
+@media (max-width: 768px) {
+    .menu-builder-left,
+    .menu-builder-right {
+        min-height: auto;
+    }
+    
+    .menu-builder .col-12 {
+        margin-bottom: 1rem;
+    }
+}

@@ -21,14 +21,23 @@
             <div class="col-md-3 pt-0">
                 <div class="list-group list-group-flush dashboard-tabs">
                     <a class="list-group-item list-group-item-action {% if active_tab == 'calendar' %}active{% endif %}"
-                       href="{{ url_for('users.dashboard', tab='calendar') }}">
+                       href="{{ url_for('dashboard_bp.dashboard', tab='calendar') }}">
                         <i class="fas fa-calendar mr-2"></i>Calendar View
                     </a>
 
                     <a class="list-group-item list-group-item-action {% if active_tab == 'analytics' %}active{% endif %}"
-                       href="{{ url_for('users.dashboard', tab='analytics') }}">
+                       href="{{ url_for('dashboard_bp.dashboard', tab='analytics') }}">
                         <i class="fas fa-chart-line mr-2"></i>Analytics
                     </a>
+
+                    <!-- Menu Builder tab link -->
+                    <a class="list-group-item list-group-item-action {% if active_tab == 'menu' %}active{% endif %}"
+                       href="{{ url_for('dashboard_bp.dashboard', tab='menu', menu_id=(current_menu.id if current_menu else None)) }}">
+                        <i class="fas fa-utensils mr-2"></i>Menu Builder
+                    </a>
+
+
+
                 </div>
             </div>
             <div class="col-md-9">
@@ -125,7 +134,7 @@
                                             <h5 class="mb-0">Date Range Selection</h5>
                                         </div>
                                         <div class="card-body">
-                                            <form method="GET" action="{{ url_for('users.dashboard') }}" class="row g-3">
+                                            <form method="GET" action="{{ url_for('dashboard_bp.dashboard') }}" class="row g-3">
                                                 <input type="hidden" name="tab" value="analytics">
                                                 <div class="col-md-4">
                                                     <label for="start_date" class="form-label">Start Date</label>
@@ -140,12 +149,12 @@
                                                 <div class="col-md-4">
                                                     <label class="form-label">&nbsp;</label>
                                                     <div class="d-flex gap-2">
-                                                        <button type="submit" class="btn btn-primary flex-grow-1">Apply
+                                                        <button type="submit" class="btn text-white flex-grow-1" style="background-color:#0077b6">Apply
                                                             Filter
                                                         </button>
 
                                                         <a href="{{ url_for('fetch_data_bp.fetch_twilio_data') }}"
-                                                           class="btn btn-info">
+                                                           class="btn btn-info text-white " style="background-color:#0077b6">
                                                             <i class="fas fa-sync-alt"></i>
                                                         </a>
                                                     </div>
@@ -166,25 +175,25 @@
                             <!-- Summary Statistics -->
                             <div class="row mb-4">
                                 <div class="col-md-3">
-                                    <div class="card bg-primary text-white text-center p-3">
+                                    <div class="card text-white text-center p-3" style="background-color: #8ecae6">
                                         <h6>Total Calls</h6>
                                         <h3>{{ analytics_data.total_calls }}</h3>
                                     </div>
                                 </div>
                                 <div class="col-md-3">
-                                    <div class="card bg-success text-white text-center p-3">
+                                    <div class="card text-white text-center p-3" style="background-color: #8ecae6">
                                         <h6>Total Duration (min)</h6>
                                         <h3>{{ analytics_data.total_duration }}</h3>
                                     </div>
                                 </div>
                                 <div class="col-md-3">
-                                    <div class="card bg-info text-white text-center p-3">
+                                    <div class="card text-white text-center p-3" style="background-color: #8ecae6">
                                         <h6>Average Duration (min)</h6>
                                         <h3>{{ analytics_data.avg_duration }}</h3>
                                     </div>
                                 </div>
                                 <div class="col-md-3">
-                                    <div class="card bg-warning text-white text-center p-3">
+                                    <div class="card text-white text-center p-3" style="background-color: #8ecae6">
                                         <h6>Total Cost</h6>
                                         <h3>${{ analytics_data.total_cost }}</h3>
                                     </div>
@@ -266,6 +275,99 @@
                                 </div>
                             </div>
 
+                            <!-- NEW: Peak Hours & Days Heatmap -->
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Peak Hours &amp; Days</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if analytics_data.heatmap_peak_hours_days %}
+                                            <img src="data:image/png;base64,{{ analytics_data.heatmap_peak_hours_days }}" class="img-fluid" alt="Peak Hours &amp; Days Heatmap">
+                                            {% else %}
+                                            <div class="text-center text-muted py-3">No data to display.</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- NEW: Geographic Cost Map (by Total Cost) -->
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <div class="card">
+                                        <div class="card-header">
+                                            <h6 class="mb-0">Geographic Cost Map (Total Cost)</h6>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if analytics_data.cost_world_map_html %}
+                                            <div style="height:520px; overflow:hidden;">
+                                                {{ analytics_data.cost_world_map_html | safe }}
+                                            </div>
+                                            {% else %}
+                                            <div class="text-center py-4">
+                                                <i class="fas fa-globe-europe fa-3x text-muted mb-3"></i>
+                                                <p class="text-muted">No geographic cost data for the selected period.</p>
+                                            </div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- NEW: Top Countries Ranking Table + Export buttons -->
+                            <div class="row mb-4">
+                                <div class="col-md-12">
+                                    <div class="card">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <h6 class="mb-0">Top Countries</h6>
+                                            <div class="btn-group">
+                                                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard_bp.export_calls_csv', start_date=start_date, end_date=end_date) }}">
+                                                    <i class="fas fa-file-csv mr-1"></i> CSV
+                                                </a>
+                                                <a class="btn btn-outline-secondary btn-sm" href="{{ url_for('dashboard_bp.export_calls_excel', start_date=start_date, end_date=end_date) }}">
+                                                    <i class="fas fa-file-excel mr-1"></i> Excel
+                                                </a>
+                                            </div>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if analytics_data.top_countries %}
+                                            <div class="table-responsive">
+                                                <table class="table table-striped">
+                                                    <thead>
+                                                    <tr>
+                                                        <th>Country</th>
+                                                        <th>ISO3</th>
+                                                        <th>Calls</th>
+                                                        <th>Total Cost ($)</th>
+                                                        <th>Avg Duration (min)</th>
+                                                    </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                    {% for row in analytics_data.top_countries %}
+                                                    <tr>
+                                                        <td>{{ row.country }}</td>
+                                                        <td>{{ row.iso3 }}</td>
+                                                        <td>{{ row.calls }}</td>
+                                                        <td>${{ '%.4f'|format(row.total_cost) }}</td>
+                                                        <td>{{ '%.2f'|format(row.avg_duration_min) }}</td>
+                                                    </tr>
+                                                    {% endfor %}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            {% else %}
+                                            <div class="text-center text-muted py-3">No country breakdown available.</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+
+
+
                             <!-- Data Table -->
                             <div class="row mb-4">
                                 <div class="col-md-12">
@@ -310,6 +412,183 @@
                                     analytics.</p>
                             </div>
                             {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    {% if active_tab == 'menu' %}
+                    <div class="tab-pane fade active show">
+                        <div class="card-body menu-builder">
+                            <div class="row">
+                                <!-- LEFT: Menus & Create Menu -->
+                                <div class="col-md-5 menu-builder-left">
+                                    <div class="card mb-3">
+                                        <div class="card-header"><strong>Menus</strong></div>
+                                        <div class="card-body">
+                                            <ul class="list-unstyled mb-3">
+                                                {% for m in menus %}
+                                                <li class="mb-2">
+                                                    <a href="{{ url_for('dashboard_bp.dashboard', tab='menu', menu_id=m.id) }}"
+                                                       class="{% if current_menu and current_menu.id == m.id %}font-weight-bold{% endif %}">
+                                                        {{ m.name }}
+                                                    </a>
+                                                    {% if current_menu and current_menu.id == m.id %}
+                                                    <span class="badge badge-primary">active</span>
+                                                    {% endif %}
+                                                </li>
+                                                {% else %}
+                                                <li class="text-muted">No menus yet.</li>
+                                                {% endfor %}
+                                            </ul>
+
+                                            <form class="form-inline" method="post" action="{{ url_for('menu_bp.create_menu') }}">
+                                                <div class="form-group mb-2 mr-2">
+                                                    <input name="name" type="text" class="form-control" placeholder="New menu name" required>
+                                                </div>
+                                                <button class="btn btn-primary mb-2" type="submit">Create Menu</button>
+                                            </form>
+                                        </div>
+                                    </div>
+
+                                    {% if current_menu %}
+                                    <div class="card">
+                                        <div class="card-header d-flex justify-content-between align-items-center">
+                                            <strong>Current Menu</strong>
+                                            <span>Total: ${{ '%.2f'|format(current_menu.total_price) }}</span>
+                                        </div>
+                                        <div class="card-body">
+                                            {% if current_menu.items %}
+                                            <ul class="list-group">
+                                                {% for it in current_menu.items %}
+                                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                                    <div>
+                                                        {{ it.product.name }}
+                                                        <small class="text-muted">x{{ it.quantity }}</small>
+                                                        <div class="small text-muted">
+                                                            ${{ '%.2f'|format((it.price_override or it.product.price)) }} each
+                                                        </div>
+                                                    </div>
+                                                    <form method="post" action="{{ url_for('menu_bp.remove_item', menu_id=current_menu.id, item_id=it.id) }}">
+                                                        <input type="hidden" name="menu_id" value="{{ current_menu.id }}">
+                                                        <button class="btn btn-sm btn-outline-danger" title="Remove">×</button>
+                                                    </form>
+                                                </li>
+                                                {% endfor %}
+                                            </ul>
+                                            {% else %}
+                                            <div class="text-muted">No items yet. Add from the sections →</div>
+                                            {% endif %}
+                                        </div>
+                                    </div>
+                                    {% endif %}
+
+                                    <!-- Add Product -->
+                                    <div class="card mb-3">
+                                        <div class="card-header"><strong>Add Product</strong></div>
+                                        <div class="card-body">
+                                            <form method="post" action="{{ url_for('menu_bp.create_product') }}">
+                                                <div class="form-group mb-2">
+                                                    <label for="prodname">Product Name</label>
+                                                    <input id="prodname" name="name" type="text" class="form-control" placeholder="Enter product name" required>
+                                                </div>
+                                                <div class="form-group mb-2">
+                                                    <label for="prodprice">Price</label>
+                                                    <input id="prodprice" name="price" type="number" step="0.01" min="0" class="form-control" placeholder="0.00" required>
+                                                </div>
+                                                <div class="form-group mb-3">
+                                                    <label for="category_select">Category</label>
+                                                    <select id="category_select" class="form-control" name="category_id" required>
+                                                        {% for c in categories %}
+                                                        <option value="{{ c.id }}">{{ c.name }}</option>
+                                                        {% endfor %}
+                                                    </select>
+                                                </div>
+                                                {% if current_menu %}
+                                                <input type="hidden" name="menu_id" value="{{ current_menu.id }}">
+                                                {% endif %}
+                                                <button class="btn btn-primary btn-block" type="submit">Add Product</button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- RIGHT: Sections (Categories) -->
+                                <div class="col-md-7 menu-builder-right">
+
+                                    <!-- Category Sections with products -->
+                                    <div class="row">
+                                        {% for c in categories %}
+                                        <div class="col-12">
+                                            <div class="card mb-3 category-card">
+                                                <div class="card-header d-flex justify-content-between align-items-center">
+                                                    <strong>{{ c.name }}</strong>
+                                                    <small class="text-muted">{{ products_by_cat[c.id]|length }} items</small>
+                                                </div>
+                                                <div class="card-body p-0">
+                                                    {% if products_by_cat[c.id] %}
+                                                    <ul class="list-group list-group-flush">
+                                                        {% for p in products_by_cat[c.id] %}
+                                                        <li class="list-group-item">
+                                                            <div class="d-flex justify-content-between align-items-center">
+                                                                <div>
+                                                                    <div class="font-weight-bold">{{ p.name }}</div>
+                                                                    <div class="small text-muted">${{ '%.2f'|format(p.price) }}</div>
+                                                                </div>
+
+                                                                <div class="d-flex align-items-center">
+                                                                    {% if current_menu %}
+                                                                    <!-- Add to current menu -->
+                                                                    <form class="form-inline mr-2" method="post" action="{{ url_for('menu_bp.add_to_menu', menu_id=current_menu.id) }}">
+                                                                        <input type="hidden" name="product_id" value="{{ p.id }}">
+                                                                        <input type="number" name="quantity" min="1" value="1" class="form-control form-control-sm mr-1" style="width:70px">
+                                                                        <button class="btn btn-sm btn-outline-primary">Add</button>
+                                                                    </form>
+                                                                    {% endif %}
+
+                                                                    <!-- Move (drag-drop alternative) -->
+                                                                    <form class="form-inline mr-2" method="post" action="{{ url_for('menu_bp.move_product', product_id=p.id) }}">
+                                                                        {% if current_menu %}<input type="hidden" name="menu_id" value="{{ current_menu.id }}">{% endif %}
+                                                                        <select name="category_id" class="form-control form-control-sm mr-1">
+                                                                            {% for c2 in categories %}
+                                                                            <option value="{{ c2.id }}" {% if c2.id == c.id %}selected{% endif %}>→ {{ c2.name }}</option>
+                                                                            {% endfor %}
+                                                                        </select>
+                                                                        <button class="btn btn-sm btn-outline-secondary">Move</button>
+                                                                    </form>
+
+                                                                    <!-- Reorder -->
+                                                                    <form class="mr-1" method="post" action="{{ url_for('menu_bp.reorder_product', product_id=p.id) }}">
+                                                                        {% if current_menu %}<input type="hidden" name="menu_id" value="{{ current_menu.id }}">{% endif %}
+                                                                        <input type="hidden" name="direction" value="up">
+                                                                        <button class="btn btn-sm btn-light" title="Move up">↑</button>
+                                                                    </form>
+                                                                    <form class="mr-2" method="post" action="{{ url_for('menu_bp.reorder_product', product_id=p.id) }}">
+                                                                        {% if current_menu %}<input type="hidden" name="menu_id" value="{{ current_menu.id }}">{% endif %}
+                                                                        <input type="hidden" name="direction" value="down">
+                                                                        <button class="btn btn-sm btn-light" title="Move down">↓</button>
+                                                                    </form>
+
+                                                                    <!-- Delete -->
+                                                                    <form method="post" action="{{ url_for('menu_bp.delete_product', product_id=p.id) }}">
+                                                                        {% if current_menu %}<input type="hidden" name="menu_id" value="{{ current_menu.id }}">{% endif %}
+                                                                        <button class="btn btn-sm btn-outline-danger" title="Delete">×</button>
+                                                                    </form>
+                                                                </div>
+                                                            </div>
+                                                        </li>
+                                                        {% endfor %}
+                                                    </ul>
+                                                    {% else %}
+                                                    <div class="p-3 text-muted">No products in this section.</div>
+                                                    {% endif %}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {% endfor %}
+                                    </div>
+
+                                </div>
+                            </div>
                         </div>
                     </div>
                     {% endif %}

@@ -8,6 +8,7 @@ from config import settings as Config
 from flaskapp.database.fernet_init import init_fernet
 
 
+
 # Initialize extensions
 db = SQLAlchemy()
 bcrypt = Bcrypt()
@@ -48,6 +49,8 @@ def create_app(config_class=Config):
     from flaskapp.routes.calendar_routes import calendar_bp
     from flaskapp.routes.twilio_routes import twilio_bp
     from flaskapp.routes.data_fetch_routes import fetch_data_bp
+    from flaskapp.routes.dashboard_routes import dashboard_bp
+    from flaskapp.routes.menu_routes import menu_bp
 
     app.register_blueprint(users)
     app.register_blueprint(main)
@@ -55,6 +58,8 @@ def create_app(config_class=Config):
     app.register_blueprint(calendar_bp)
     app.register_blueprint(twilio_bp)
     app.register_blueprint(fetch_data_bp)
+    app.register_blueprint(dashboard_bp)
+    app.register_blueprint(menu_bp)
 
     logging.info("Flask application created successfully")
     return app

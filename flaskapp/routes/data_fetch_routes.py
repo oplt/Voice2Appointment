@@ -1,11 +1,6 @@
-import pandas as pd
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
-import matplotlib.pyplot as plt
-import io
-import base64
-from datetime import datetime, timedelta
-from flask import  request, session, Blueprint
+matplotlib.use('Agg')
+from flask import session, Blueprint
 import twilio.rest
 from flask_login import login_required
 from flask import current_app, redirect, flash, url_for
@@ -24,7 +19,7 @@ def fetch_twilio_data():
 
         if not account_sid or not auth_token:
             flash('Twilio credentials not configured', 'error')
-            return redirect(url_for('users.dashboard', tab='analytics'))
+            return redirect(url_for('dashboard_bp.dashboard', tab='analytics'))
 
         client = twilio.rest.Client(account_sid, auth_token)
 
@@ -52,9 +47,9 @@ def fetch_twilio_data():
 
         flash('Twilio data fetched successfully', 'success')
         # Redirect back to analytics tab
-        return redirect(url_for('users.dashboard', tab='analytics'))
+        return redirect(url_for('dashboard_bp.dashboard', tab='analytics'))
 
     except Exception as e:
         # Handle errors
         flash(f'Error fetching Twilio data: {str(e)}', 'error')
-        return redirect(url_for('users.dashboard', tab='analytics'))
+        return redirect(url_for('dashboard_bp.dashboard', tab='analytics'))

@@ -3,7 +3,7 @@ from flask_login import UserMixin
 from config import settings
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy import text
-from flaskapp import db
+from .. import db
 
 
 class TimestampMixin:
@@ -195,4 +195,97 @@ class TwilioCallAnalytics(db.Model, TimestampMixin):
 
     def __repr__(self):
         return f"<TwilioCallAnalytics date={self.date}>"
+
+
+
+''' RESTAURANT SECTION'''
+
+from decimal import Decimal
+from sqlalchemy import UniqueConstraint
+from sqlalchemy.orm import validates
+
+class Category(db.Model, TimestampMixin):
+    __tablename__ = 'category'
+    # __table_args__ = (
+    #     UniqueConstraint('user_id', 'slug', name='uq_category_user_slug'),
+    # )
+
+    id = db.Column(db.Integer, primary_key=True)
+    # user_id = db.Column(db.Integer, db.ForeignKey('res_user.id'), nullable=False, index=True)
+    name = db.Column(db.String(80), nullable=False)
+    slug = db.Column(db.String(80), nullable=False)  # e.g., snack, spices, cold_drink
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+
+    products = db.relationship('Product', backref='category', lazy=True, order_by='Product.sort_order')
+
+    def __repr__(self):
+        return f"<Category {self.slug} ({self.name})>"
+
+
+class Product(db.Model, TimestampMixin):
+    __tablename__ = 'product'
+    # __table_args__ = (
+    #     UniqueConstraint('user_id', 'category_id', 'name', name='uq_product_user_cat_name'),
+    # )
+
+    id = db.Column(db.Integer, primary_key=True)
+    # user_id = db.Column(db.Integer, db.ForeignKey('res_user.id'), nullable=False, index=True)
+    category_id = db.Column(db.Integer, db.ForeignKey('category.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+    price = db.Column(db.Numeric(10, 2), nullable=False)  # stored as Decimal
+    sort_order = db.Column(db.Integer, nullable=False, default=0)
+
+    menu_items = db.relationship('MenuItem', backref='product', lazy=True, cascade='all, delete-orphan')
+
+    @validates('price')
+    def validate_price(self, key, value):
+        if isinstance(value, str):
+            value = Decimal(value)
+        if value < 0:
+            raise ValueError("Price cannot be negative")
+        return value
+
+    def __repr__(self):
+        return f"<Product {self.name} ${self.price}>"
+
+
+class Menu(db.Model, TimestampMixin):
+    __tablename__ = 'menu'
+    # __table_args__ = (
+    #     UniqueConstraint('user_id', 'name', name='uq_menu_user_name'),
+    # )
+
+    id = db.Column(db.Integer, primary_key=True)
+    # user_id = db.Column(db.Integer, db.ForeignKey('res_user.id'), nullable=False, index=True)
+    name = db.Column(db.String(120), nullable=False)
+
+    items = db.relationship('MenuItem', backref='menu', lazy=True, cascade='all, delete-orphan', order_by='MenuItem.id')
+
+    @property
+    def total_price(self):
+        total = Decimal('0.00')
+        for it in self.items:
+            unit = it.price_override if it.price_override is not None else it.product.price
+            total += (unit or Decimal('0.00')) * it.quantity
+        return total
+
+    def __repr__(self):
+        return f"<Menu {self.name} items={len(self.items)}>"
+
+
+class MenuItem(db.Model, TimestampMixin):
+    __tablename__ = 'menu_item'
+    __table_args__ = (
+        UniqueConstraint('menu_id', 'product_id', name='uq_menu_item_unique_product'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    menu_id = db.Column(db.Integer, db.ForeignKey('menu.id', ondelete='CASCADE'), nullable=False, index=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id', ondelete='CASCADE'), nullable=False, index=True)
+    quantity = db.Column(db.Integer, nullable=False, default=1)
+    price_override = db.Column(db.Numeric(10, 2), nullable=True)  # optional override per menu
+
+    def __repr__(self):
+        return f"<MenuItem menu={self.menu_id} product={self.product_id} qty={self.quantity}>"
+
 

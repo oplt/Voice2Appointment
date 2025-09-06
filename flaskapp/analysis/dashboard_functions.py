@@ -33,6 +33,193 @@ from functools import lru_cache
 #     resp.raise_for_status()  # will raise if network error
 #     return resp.json()
 
+# --- Paste these NEW helpers + features anywhere below your imports ---
+
+WEEKDAY_ORDER = [0, 1, 2, 3, 4, 5, 6]
+WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+def _infer_iso2_from_row(row):
+    """Prefer explicit 'from_country' (ISO2) if present, else infer from E.164 'from'."""
+    iso2 = None
+    if 'from_country' in row and pd.notna(row.get('from_country')):
+        iso2 = str(row.get('from_country')).upper()
+    if not iso2 and phonenumbers and isinstance(row.get('from'), str) and row.get('from', '').startswith('+'):
+        try:
+            num = phonenumbers.parse(row.get('from'), None)
+            reg = pn_geocoder.region_code_for_number(num)
+            if reg and len(reg) == 2:
+                iso2 = reg.upper()
+        except Exception:
+            pass
+    return iso2
+
+def _iso3_from_iso2(iso2):
+    if not iso2:
+        return None
+    if pycountry:
+        try:
+            c = pycountry.countries.get(alpha_2=iso2.upper())
+            return c.alpha_3 if c else None
+        except Exception:
+            return None
+    return iso2.upper()
+
+def _country_name_from_iso(any_iso):
+    """Return a human country name given ISO2 or ISO3 if possible."""
+    if not any_iso:
+        return None
+    try:
+        if pycountry:
+            any_iso = any_iso.upper()
+            if len(any_iso) == 2:
+                c = pycountry.countries.get(alpha_2=any_iso)
+            else:
+                c = pycountry.countries.get(alpha_3=any_iso)
+            return c.name if c else any_iso
+    except Exception:
+        pass
+    return any_iso
+
+def plot_peak_hours_days_heatmap(df):
+    if df.empty:
+        return None
+    work = df.copy()
+    work['start_time'] = pd.to_datetime(work['start_time'], utc=True, errors='coerce')
+    work = work.dropna(subset=['start_time'])
+
+    work['weekday'] = work['start_time'].dt.weekday
+    work['hour'] = work['start_time'].dt.hour
+
+    pivot = (
+        work.pivot_table(index='weekday', columns='hour', values='to', aggfunc='count', fill_value=0)
+        .reindex(WEEKDAY_ORDER)
+    )
+    pivot.index = WEEKDAY_LABELS
+    pivot = pivot.reindex(columns=range(24), fill_value=0)
+
+    plt.figure(figsize=(12, 6))
+    plt.imshow(pivot.values, aspect='auto', cmap='YlOrRd')
+    plt.title('Peak Hours & Days Heatmap', fontsize=25)
+    plt.xlabel('Hour of Day', fontsize=18)
+    plt.ylabel('Day of Week', fontsize=18)
+    plt.xticks(ticks=range(24), labels=[str(h) for h in range(24)], fontsize=10)
+    plt.yticks(ticks=range(len(pivot.index)), labels=pivot.index, fontsize=12)
+    plt.colorbar(label='Call count')
+    plt.tight_layout()
+
+    img = io.BytesIO()
+    plt.savefig(img, format='png', bbox_inches='tight')
+    img.seek(0)
+    plt.close()
+    return base64.b64encode(img.getvalue()).decode()
+
+def compute_top_countries(df, top_n=15):
+    """Return list of dict rows with country, iso3, calls, total_cost, avg_duration_min."""
+    if df.empty:
+        return []
+    work = df.copy()
+
+    work['duration_sec'] = pd.to_numeric(work.get('duration_sec', None), errors='coerce')
+    work['price'] = pd.to_numeric(work.get('price', None), errors='coerce')
+
+    iso2_vals, iso3_vals = [], []
+    for _, row in work.iterrows():
+        iso2 = _infer_iso2_from_row(row)
+        iso3 = _iso3_from_iso2(iso2) if iso2 else None
+        iso2_vals.append(iso2)
+        iso3_vals.append(iso3)
+    work['iso2'] = iso2_vals
+    work['iso3'] = iso3_vals
+
+    g = (
+        work.dropna(subset=['iso3'])
+        .groupby('iso3')
+        .agg(
+            calls=('iso3', 'size'),
+            total_cost=('price', 'sum'),
+            avg_duration_min=('duration_sec', lambda s: (s.fillna(0).mean() / 60.0) if len(s) else 0.0),
+        )
+        .reset_index()
+    )
+    g['country'] = g['iso3'].apply(_country_name_from_iso)
+    g['total_cost'] = g['total_cost'].fillna(0).round(4)
+    g['avg_duration_min'] = g['avg_duration_min'].fillna(0).round(2)
+
+    g = g.sort_values(['calls', 'total_cost'], ascending=[False, False]).head(top_n)
+    cols = ['country', 'iso3', 'calls', 'total_cost', 'avg_duration_min']
+    return g[cols].to_dict('records')
+
+def build_folium_cost_map(df):
+    """Interactive Folium choropleth shaded by TOTAL COST instead of call count."""
+    if df is None or df.empty:
+        return None
+
+    work = df.copy()
+    work['price'] = pd.to_numeric(work.get('price', None), errors='coerce')
+
+    iso3_vals = []
+    for _, row in work.iterrows():
+        iso2 = _infer_iso2_from_row(row)
+        iso3_vals.append(_iso3_from_iso2(iso2))
+    work['iso3'] = iso3_vals
+
+    costs = (
+        work.dropna(subset=['iso3'])
+        .groupby('iso3')['price']
+        .sum()
+        .reset_index(name='total_cost')
+        .sort_values('total_cost', ascending=False)
+    )
+
+    fmap = folium.Map(location=[20, 0], zoom_start=2, tiles="CartoDB positron")
+    Fullscreen(position='topleft', title='Fullscreen', title_cancel='Exit').add_to(fmap)
+
+    geojson_path = os.path.join('flaskapp', 'static', 'data', 'world-countries.json')
+    world_geo = None
+    added_choropleth = False
+    if os.path.exists(geojson_path):
+        try:
+            with open(geojson_path, 'r', encoding='utf-8') as f:
+                world_geo = json.load(f)
+
+            # annotate properties with total_cost for tooltips
+            cost_map = dict(zip(costs['iso3'], costs['total_cost']))
+            for feat in world_geo.get('features', []):
+                iso3 = feat.get('properties', {}).get('ISO_A3')
+                feat.setdefault('properties', {})['total_cost'] = float(cost_map.get(iso3, 0.0))
+
+            bins = [-1, -0.5, -0.25, 0]
+            folium.Choropleth(
+                geo_data=world_geo,
+                name='Cost intensity',
+                data=costs,
+                columns=['iso3', 'total_cost'],
+                key_on='feature.properties.ISO_A3',
+                fill_color='PuRd',
+                fill_opacity=0.2,
+                line_opacity=0.2,
+                legend_name='Total cost ($)',
+                threshold_scale=bins,
+            ).add_to(fmap)
+            added_choropleth = True
+
+            folium.GeoJson(
+                world_geo,
+                name='Countries',
+                style_function=lambda x: {'fillOpacity': 0, 'color': 'transparent'},
+                tooltip=folium.features.GeoJsonTooltip(
+                    fields=['name', 'ISO_A3', 'total_cost'],
+                    aliases=['Country', 'ISO Code', 'Total Cost ($)'],
+                    localize=True,
+                    sticky=True,
+                ),
+            ).add_to(fmap)
+        except Exception:
+            pass
+
+    folium.LayerControl(collapsed=True).add_to(fmap)
+    return fmap.get_root().render()
+
 
 def process_twilio_data(call_data, start_dt, end_dt):
     """Process Twilio call data and generate analytics (UTC-safe; robust parsing)."""
@@ -42,24 +229,19 @@ def process_twilio_data(call_data, start_dt, end_dt):
     df = pd.DataFrame(call_data)
 
     # ---- Parse/clean columns ----
-    # start_time → UTC-aware datetime
     if 'start_time' in df.columns:
         df['start_time'] = pd.to_datetime(df['start_time'], utc=True, errors='coerce')
     else:
         df['start_time'] = pd.NaT
 
-    # duration_sec may be str/None
     df['duration_sec'] = pd.to_numeric(df.get('duration_sec', None), errors='coerce')
-    # price may be str/None
     df['price'] = pd.to_numeric(df.get('price', None), errors='coerce')
 
-    # Drop rows without a valid start time
     df = df.dropna(subset=['start_time'])
     if df.empty:
         return None
 
     # ---- Date range filtering in UTC ----
-    # Normalize user-provided datetimes to UTC (assume UTC if naive)
     if start_dt is not None:
         if start_dt.tzinfo is None:
             start_dt = start_dt.replace(tzinfo=timezone.utc)
@@ -85,16 +267,18 @@ def process_twilio_data(call_data, start_dt, end_dt):
     avg_minutes = (df['duration_sec'].fillna(0).mean() / 60.0) if total_calls else 0.0
     total_cost = df['price'].fillna(0).sum()
 
-    # ---- Plots you already had (unchanged) ----
+    # ---- Existing visuals ----
     calls_over_time = plot_calls_over_time(df)
     duration_distribution = plot_duration_distribution(df)
     cost_over_time = plot_cost_over_time(df)
     top_numbers = plot_top_numbers(df)
-
-    # ---- Folium world map HTML ----
     world_map_html = build_folium_world_map(df)
 
-    # Prepare call details for table
+    # ---- NEW analytics ----
+    heatmap_b64 = plot_peak_hours_days_heatmap(df)
+    top_countries = compute_top_countries(df, top_n=15)
+    cost_world_map_html = build_folium_cost_map(df)
+
     call_details = df.to_dict('records')
 
     return {
@@ -107,11 +291,13 @@ def process_twilio_data(call_data, start_dt, end_dt):
         'cost_over_time': cost_over_time,
         'top_numbers': top_numbers,
         'world_map_html': world_map_html,
-        'call_details': call_details
+        'call_details': call_details,
+
+        # NEW
+        'heatmap_peak_hours_days': heatmap_b64,
+        'top_countries': top_countries,
+        'cost_world_map_html': cost_world_map_html,
     }
-
-
-
 
 def plot_calls_over_time(df):
     """Generate calls over time plot with larger fonts"""
@@ -388,6 +574,8 @@ def add_counts_to_geojson(world_geo, counts_df):
         feature['properties']['call_count'] = counts_map.get(iso3, 0)  # default 0
 
     return world_geo
+
+
 
 
 

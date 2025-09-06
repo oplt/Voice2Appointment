@@ -1,6 +1,6 @@
-from flask import render_template, url_for, redirect, request, Blueprint, flash, session
+from flask import render_template, url_for, redirect, request, Blueprint, flash
 import json, os, logging, requests
-from datetime import datetime, timedelta
+from datetime import datetime
 from flask_login import login_user, current_user, logout_user, login_required
 from flaskapp import db, bcrypt
 from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm,
@@ -8,7 +8,6 @@ from flaskapp.users.forms import (RegistrationForm, LoginForm, UpdateAccountForm
 from flaskapp.users.utils import save_picture, send_reset_email
 from flaskapp.database.models import GoogleCalendarAuth, User
 from flask import current_app
-from flaskapp.analysis.dashboard_functions import process_twilio_data
 
 
 users = Blueprint('users', __name__)
@@ -32,14 +31,14 @@ def register():
 @users.route("/login", methods=['GET', 'POST'])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for('users.dashboard'))
+        return redirect(url_for('dashboard_bp.dashboard'))
     form = LoginForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first()
         if user and bcrypt.check_password_hash(user.password, form.password.data):
             login_user(user, remember=form.remember.data)
             next_page = request.args.get('next')
-            return redirect(next_page) if next_page else redirect(url_for('users.dashboard'))
+            return redirect(next_page) if next_page else redirect(url_for('dashboard_bp.dashboard'))
         else:
             flash('Login Unsuccessful. Please check email and password', 'danger')
     return render_template('login.html', title='Login', form=form)
@@ -50,29 +49,6 @@ def logout():
     logout_user()
     return redirect(url_for('main.home'))
 
-
-@users.route("/dashboard")
-@login_required
-def dashboard():
-    auth = GoogleCalendarAuth.query.filter_by(user_id=current_user.id).first()
-    calendar_url = auth.embedded_link if auth and auth.embedded_link else None
-
-    active_tab = request.args.get('tab', 'calendar')
-    start_date = request.args.get('start_date', (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d'))
-    end_date = request.args.get('end_date', datetime.now().strftime('%Y-%m-%d'))
-    start_dt = datetime.strptime(start_date, '%Y-%m-%d')
-    end_dt = datetime.strptime(end_date, '%Y-%m-%d')
-    analytics_data = None
-    if active_tab == 'analytics' and 'twilio_data' in session and session['twilio_data']:
-        try:
-            analytics_data = process_twilio_data(session['twilio_data'], start_dt, end_dt)
-        except Exception as e:
-            current_app.logger.error(f"Error processing Twilio data: {str(e)}")
-            analytics_data = None
-    return render_template('dashboard.html', calendar_url=calendar_url, active_tab=active_tab,
-                           start_date=start_date,
-                           end_date=end_date,
-                           analytics_data=analytics_data)
 
 
 @users.route("/settings", methods=['GET', 'POST'])
@@ -285,7 +261,7 @@ def populate_forms(google_form, twilio_form, deepgram_form, config_form=None, ac
 @users.route("/reset_password", methods=['GET', 'POST'])
 def reset_request():
     if current_user.is_authenticated:
-        return redirect(url_for('users.dashboard'))
+        return redirect(url_for('dashboard_bp.dashboard'))
     form = RequestResetForm()
     if form.validate_on_submit():
         user = User.query.filter_by(email=form.email.data).first()
@@ -298,7 +274,7 @@ def reset_request():
 @users.route("/reset_password/<token>", methods=['GET', 'POST'])
 def reset_token(token):
     if current_user.is_authenticated:
-        return redirect(url_for('users.dashboard'))
+        return redirect(url_for('dashboard_bp.dashboard'))
     user = User.verify_reset_token(token)
     if user is None:
         flash('That is an invalid or expired token', 'warning')
