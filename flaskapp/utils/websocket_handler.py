@@ -208,7 +208,6 @@ async def sts_receiver(sts_ws, twilio_ws, streamsid_queue):
 async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
     BUFFER_SIZE = 20 * 160
     inbuffer = bytearray(b"")
-    cs = None
 
     async for message in twilio_ws:
         try:
@@ -216,19 +215,9 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
             event = data["event"]
 
             if event == "start":
-                logging.info("get our streamsid")
+                print("get our streamsid")
                 start = data["start"]
-                streamsid = start.get("streamSid")
-                call_sid   = start.get("callSid")
-                from_number   = start.get("from")
-                to_number     = start.get("to")
-                user_id = User.query.filter_by(phone_number=to_number).first().id
-                cs = CallSession.create(call_sid=call_sid,
-                                        from_number=from_number,
-                                        to_number=to_number,
-                                        started_at=datetime.now(timezone.utc),
-                                        user_id=user_id
-                                    )
+                streamsid = start["streamSid"]
                 streamsid_queue.put_nowait(streamsid)
             elif event == "connected":
                 continue
@@ -238,12 +227,6 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
                 if media["track"] == "inbound":
                     inbuffer.extend(chunk)
             elif event == "stop":
-                if cs is not None:
-                    with get_app().app_context():
-                        cs.update({
-                            'status': 'ended',
-                            'ended_at': datetime.now(timezone.utc)
-                        })
                 break
 
             while len(inbuffer) >= BUFFER_SIZE:
@@ -251,18 +234,7 @@ async def twilio_receiver(twilio_ws, audio_queue, streamsid_queue):
                 audio_queue.put_nowait(chunk)
                 inbuffer = inbuffer[BUFFER_SIZE:]
         except:
-            try:
-                call_sid = (data.get("start") or {}).get("callSid") \
-                           or (data.get("stop") or {}).get("callSid")
-                if call_sid:
-                    session = CallSession.query.filter_by(call_sid=call_sid).first()
-                    if session:
-                        with get_app().app_context():
-                            cs.update({'status': 'error'})
-            except Exception:
-                pass
             break
-
 
 async def twilio_handler(twilio_ws):
     audio_queue = asyncio.Queue()

@@ -36,16 +36,16 @@ def twilio_recording():
         logger.warning("Missing required fields: %s", payload)
         return jsonify({"status": "missing fields"}), 200  # or 400
 
-    cs = CallSession.query.filter_by(call_sid=call_sid).first()
-    if not cs:
-        logger.warning("No CallSession for %s", call_sid)
-        return jsonify({"status": "no matching call session"}), 200
-
-    cs.update({
-        'recording_sid': recording_sid,
-        'recording_url': recording_url,
-        'duration_seconds': duration
-    })
+    # cs = CallSession.query.filter_by(call_sid=call_sid).first()
+    # if not cs:
+    #     logger.warning("No CallSession for %s", call_sid)
+    #     return jsonify({"status": "no matching call session"}), 200
+    #
+    # cs.update({
+    #     'recording_sid': recording_sid,
+    #     'recording_url': recording_url,
+    #     'duration_seconds': duration
+    # })
     download_and_archive_recording.delay(
                                         recording_sid=recording_sid,
                                         recording_url=recording_url,

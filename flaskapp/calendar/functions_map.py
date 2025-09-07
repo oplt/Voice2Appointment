@@ -53,7 +53,8 @@ def check_calendar_availability(datetime_start=None, datetime_end=None):
 
 
 def create_calendar_event(summary=None, datetime_start=None, datetime_end=None,
-                          description=None, attendees=None, call_sid=None, client_name=None, client_phone=None, client_email=None):
+                          description=None, ):
+                          # attendees=None, call_sid=None, client_name=None, client_phone=None, client_email=None):
 
     try:
         if isinstance(datetime_start, str):
@@ -74,21 +75,22 @@ def create_calendar_event(summary=None, datetime_start=None, datetime_end=None,
                                             description=description or f"Appointment: {summary}",
                                             timezone="UTC"
                                         )
+        '''populate datase through twilio api calls'''
 
-        call_session = CallSession.query.filter_by(call_sid=call_sid).first()
-
-        appt = Appointment.create_from_call(
-                                        call_session=call_session,
-                                        summary=summary,
-                                        start_datetime=datetime_start,
-                                        end_datetime=datetime_end,
-                                        description=description or f"Appointment: {summary}",
-                                        client_name=client_name or "",
-                                        client_phone=client_phone or "",
-                                        client_email=client_email or ""
-                                    )
-        db.session.add(appt)
-        db.session.commit()
+        # call_session = CallSession.query.filter_by(call_sid=call_sid).first()
+        #
+        # appt = Appointment.create_from_call(
+        #                                 call_session=call_session,
+        #                                 summary=summary,
+        #                                 start_datetime=datetime_start,
+        #                                 end_datetime=datetime_end,
+        #                                 description=description or f"Appointment: {summary}",
+        #                                 client_name=client_name or "",
+        #                                 client_phone=client_phone or "",
+        #                                 client_email=client_email or ""
+        #                             )
+        # db.session.add(appt)
+        # db.session.commit()
 
         return {
             "success": True,

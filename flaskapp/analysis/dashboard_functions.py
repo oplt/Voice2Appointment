@@ -9,6 +9,8 @@ from folium.plugins import Fullscreen
 from datetime import timezone
 import requests
 from functools import lru_cache
+import uuid
+import time
 
 
 # Optional: robust phone parsing when 'from_country' is not present
@@ -37,6 +39,28 @@ from functools import lru_cache
 
 WEEKDAY_ORDER = [0, 1, 2, 3, 4, 5, 6]
 WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
+
+def _save_folium_map_and_get_url(fmap, prefix):
+    maps_dir = os.path.join('flaskapp', 'static', 'maps')
+    os.makedirs(maps_dir, exist_ok=True)
+
+    # Optional: clean up old map files (> 1 day)
+    now = time.time()
+    for fname in os.listdir(maps_dir):
+        if fname.endswith('.html'):
+            fpath = os.path.join(maps_dir, fname)
+            try:
+                if now - os.path.getmtime(fpath) > 24*3600:
+                    os.remove(fpath)
+            except Exception:
+                pass
+
+    fname = f"{prefix}_{uuid.uuid4().hex}.html"
+    fpath = os.path.join(maps_dir, fname)
+    fmap.save(fpath)
+    return f"/static/maps/{fname}"
+
 
 def _infer_iso2_from_row(row):
     """Prefer explicit 'from_country' (ISO2) if present, else infer from E.164 'from'."""
@@ -218,7 +242,9 @@ def build_folium_cost_map(df):
             pass
 
     folium.LayerControl(collapsed=True).add_to(fmap)
-    return fmap.get_root().render()
+    # return fmap.get_root().render()
+    return _save_folium_map_and_get_url(fmap, prefix="world_map")
+
 
 
 def process_twilio_data(call_data, start_dt, end_dt):
@@ -500,6 +526,7 @@ def build_folium_world_map(df):
     geojson_path = os.path.join('flaskapp', 'static', 'data', 'world-countries.json')
     world_geo = None
     added_choropleth = False
+
     if os.path.exists(geojson_path):
         try:
             with open(geojson_path, 'r', encoding='utf-8') as f:
@@ -564,7 +591,9 @@ def build_folium_world_map(df):
     #     ).add_to(mc)
 
     folium.LayerControl(collapsed=True).add_to(fmap)
-    return fmap.get_root().render()
+    # return fmap.get_root().render()
+    return _save_folium_map_and_get_url(fmap, prefix="world_map")
+
 
 def add_counts_to_geojson(world_geo, counts_df):
     counts_map = dict(zip(counts_df['iso3'], counts_df['call_count']))
