@@ -30,7 +30,25 @@ def _test_runtime_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "cookie_secure", False)
     monkeypatch.setattr(settings, "cookie_samesite", "lax")
     monkeypatch.setattr(settings, "public_base_url", "http://localhost:8000")
+    # Prefer process-local limiter so Redis state cannot flake auth tests (P7-01).
+    monkeypatch.setattr(
+        "app.core.rate_limit._redis_allow",
+        lambda *args, **kwargs: None,
+    )
     limiter._hits.clear()
+    try:
+        from app.core.metrics import metrics
+
+        metrics.reset()
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        from app.voice.admission import admission
+
+        admission.reset()
+        admission.configure(max_concurrent=settings.voice_max_concurrent_calls)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 @pytest.fixture()

@@ -1,4 +1,4 @@
-"""Deepgram speech-to-speech connection and settings (Phase 8)."""
+"""Deepgram speech-to-speech connection and settings (Phase 8 / P2)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,12 @@ import logging
 from dataclasses import dataclass
 
 import websockets
+from websockets.exceptions import (
+    ConnectionClosed,
+    InvalidHandshake,
+    InvalidStatus,
+    InvalidURI,
+)
 from websockets.typing import Subprotocol
 
 from app.core.config import settings
@@ -16,9 +22,17 @@ _GLOBAL_AGENT = "wss://agent.deepgram.com/v1/agent/converse"
 _EU_AGENT = "wss://api.eu.deepgram.com/v1/agent/converse"
 
 
+class DeepgramAuthError(RuntimeError):
+    """Permanent credential/configuration failure — do not retry."""
+
+
+class DeepgramTransientError(RuntimeError):
+    """Network/service failure — may reconnect within budget."""
+
+
 @dataclass(frozen=True)
 class DeepgramSettings:
-    """Central speech-provider configuration (keep small)."""
+    """Central speech-provider configuration (global app credential only)."""
 
     api_key: str | None
     region: str
@@ -55,16 +69,41 @@ def get_deepgram_settings() -> DeepgramSettings:
     return DeepgramSettings.from_settings()
 
 
+def classify_deepgram_error(exc: BaseException) -> type[Exception]:
+    """Return DeepgramAuthError or DeepgramTransientError class for ``exc``."""
+    if isinstance(exc, DeepgramAuthError):
+        return DeepgramAuthError
+    if isinstance(exc, (InvalidHandshake, InvalidStatus, InvalidURI)):
+        return DeepgramAuthError
+    text = str(exc).lower()
+    if any(
+        needle in text
+        for needle in ("401", "403", "unauthorized", "forbidden", "invalid api key")
+    ):
+        return DeepgramAuthError
+    return DeepgramTransientError
+
+
 def sts_connect():
     """Return an awaitable Deepgram agent websocket connection context manager."""
     dg = get_deepgram_settings()
     if not dg.api_key:
-        raise RuntimeError("DEEPGRAM_API_KEY not found")
+        raise DeepgramAuthError("DEEPGRAM_API_KEY not found")
     logger.info("Connecting Deepgram agent region=%s endpoint=%s", dg.region, dg.endpoint)
     return websockets.connect(  # type: ignore[attr-defined]
         dg.endpoint,
         subprotocols=[Subprotocol("token"), Subprotocol(dg.api_key)],
+        open_timeout=10,
+        close_timeout=5,
     )
+
+
+def is_retryable_disconnect(exc: BaseException | None) -> bool:
+    if exc is None:
+        return False
+    if classify_deepgram_error(exc) is DeepgramAuthError:
+        return False
+    return isinstance(exc, (ConnectionClosed, DeepgramTransientError, OSError, TimeoutError))
 
 
 async def wait_for_message_type(sts_ws, expected_type: str, *, timeout: float = 15.0):
@@ -83,6 +122,6 @@ async def wait_for_message_type(sts_ws, expected_type: str, *, timeout: float = 
             if msg.get("type") == expected_type:
                 return msg
             logger.debug("Deepgram handshake skip type=%s", msg.get("type"))
-        raise RuntimeError(f"Deepgram socket closed before {expected_type}")
+        raise DeepgramTransientError(f"Deepgram socket closed before {expected_type}")
 
     return await asyncio.wait_for(_loop(), timeout=timeout)

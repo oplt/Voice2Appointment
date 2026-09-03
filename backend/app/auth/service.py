@@ -11,10 +11,10 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.security import (
-    create_password_reset_token,
+    consume_password_reset_token,
     hash_password,
+    mint_password_reset_token,
     verify_password,
-    verify_password_reset_token,
 )
 from app.db.models import User
 
@@ -52,29 +52,8 @@ def create_user(db: Session, *, username: str, email: str, password: str) -> Use
     return user
 
 
-def request_password_reset(db: Session, email: str) -> str:
-    """Always return the same message; do not reveal whether the email exists."""
-    user = get_user_by_email(db, email)
-    if user is not None:
-        token = create_password_reset_token(user_id=user.id)
-        _send_reset_email(user.email, token)
-    return GENERIC_RESET_MESSAGE
-
-
-def reset_password_with_token(db: Session, *, token: str, new_password: str) -> bool:
-    user_id = verify_password_reset_token(token)
-    if user_id is None:
-        return False
-    user = get_user_by_id(db, user_id)
-    if user is None:
-        return False
-    user.password = hash_password(new_password)
-    db.commit()
-    return True
-
-
 def _send_reset_email(email: str, token: str) -> None:
-    reset_url = f"{settings.public_base_url.rstrip('/')}/reset-password?token={token}"
+    reset_url = f"{settings.frontend_base_url.rstrip('/')}/reset-password?token={token}"
     body = (
         "To reset your password, visit the following link:\n"
         f"{reset_url}\n\n"
@@ -82,9 +61,13 @@ def _send_reset_email(email: str, token: str) -> None:
     )
 
     if not settings.mail_username or not settings.mail_password:
-        logger.info(
-            "Password reset email (mail not configured) to=%s url=%s", email, reset_url
-        )
+        if settings.is_production:
+            logger.error(
+                "Password reset mail transport unavailable; refusing delivery"
+            )
+            raise RuntimeError("mail transport not configured")
+        # Dev only: never log token, URL, or email address.
+        logger.info("Password reset email skipped (mail not configured)")
         return
 
     msg = EmailMessage()
@@ -99,4 +82,31 @@ def _send_reset_email(email: str, token: str) -> None:
             smtp.login(settings.mail_username, settings.mail_password)
             smtp.send_message(msg)
     except OSError:
-        logger.exception("Failed to send password reset email to %s", email)
+        logger.exception("Failed to send password reset email")
+        if settings.is_production:
+            raise
+
+
+def request_password_reset(db: Session, email: str) -> str:
+    """Always return the same message; do not reveal whether the email exists."""
+    user = get_user_by_email(db, email)
+    if user is not None:
+        token = mint_password_reset_token(db, user)
+        try:
+            if settings.mail_username and settings.mail_password:
+                from app.workers.tasks import send_password_reset_email
+
+                try:
+                    send_password_reset_email.delay(user.email, token)
+                except Exception:
+                    _send_reset_email(user.email, token)
+            else:
+                _send_reset_email(user.email, token)
+        except RuntimeError:
+            if not settings.is_production:
+                raise
+    return GENERIC_RESET_MESSAGE
+
+
+def reset_password_with_token(db: Session, *, token: str, new_password: str) -> bool:
+    return consume_password_reset_token(db, token=token, new_password=new_password)

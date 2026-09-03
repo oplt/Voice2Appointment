@@ -53,4 +53,14 @@ def get_current_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
+    token_av = payload.get("av", 0)
+    try:
+        token_av_int = int(token_av)
+    except (TypeError, ValueError):
+        token_av_int = 0
+    if token_av_int != int(user.auth_version or 0):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+        )
     return user

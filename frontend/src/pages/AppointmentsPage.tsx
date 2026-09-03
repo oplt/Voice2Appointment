@@ -1,8 +1,11 @@
 import AddIcon from '@mui/icons-material/Add'
-import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined'
+import CancelOutlinedIcon from '@mui/icons-material/CancelOutlined'
 import EditOutlinedIcon from '@mui/icons-material/EditOutlined'
+import VisibilityOutlinedIcon from '@mui/icons-material/VisibilityOutlined'
 import Alert from '@mui/material/Alert'
+import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
+import Chip from '@mui/material/Chip'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
@@ -14,10 +17,10 @@ import Stack from '@mui/material/Stack'
 import Table from '@mui/material/Table'
 import TableBody from '@mui/material/TableBody'
 import TableCell from '@mui/material/TableCell'
+import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import TextField from '@mui/material/TextField'
-import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 
@@ -32,6 +35,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { PageHeader } from '../components/PageHeader'
 import { useSnackbar } from '../components/SnackbarProvider'
 import type { Appointment, AppointmentCreate } from '../types'
+
 
 type FormState = {
   summary: string
@@ -126,12 +130,13 @@ export function AppointmentsPage() {
 
   const [deleteTarget, setDeleteTarget] = useState<Appointment | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [detail, setDetail] = useState<Appointment | null>(null)
 
   const load = useCallback(() => {
     setLoading(true)
     setError(null)
-    listAppointments()
-      .then(setItems)
+    listAppointments({ scope: 'all', limit: 100 })
+      .then((page) => setItems(page.items))
       .catch((err: unknown) => {
         setItems([])
         setError(err instanceof ApiError ? err.message : 'Failed to load appointments')
@@ -193,14 +198,19 @@ export function AppointmentsPage() {
     setDeleting(true)
     try {
       await deleteAppointment(deleteTarget.id)
-      notify('Appointment deleted', 'success')
+      notify('Appointment cancelled', 'success')
       setDeleteTarget(null)
       load()
     } catch (err: unknown) {
-      notify(err instanceof ApiError ? err.message : 'Delete failed', 'error')
+      notify(err instanceof ApiError ? err.message : 'Cancel failed', 'error')
     } finally {
       setDeleting(false)
     }
+  }
+
+  const syncLabel = (item: Appointment) => {
+    if (item.google_calendar_event_id) return 'Synced'
+    return 'Local only'
   }
 
   return (
@@ -236,56 +246,122 @@ export function AppointmentsPage() {
         </Stack>
       ) : items.length === 0 && !error ? (
         <Alert severity="info">
-          No appointments yet. Create one to sync with your calendar.
+          No appointments yet. Create one — Google sync runs when Calendar is connected.
         </Alert>
       ) : items.length > 0 ? (
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Summary</TableCell>
-              <TableCell>Start</TableCell>
-              <TableCell>Client</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
+        <Stack spacing={2}>
+          <Stack spacing={1.5} sx={{ display: { xs: 'flex', md: 'none' } }}>
             {items.map((item) => (
-              <TableRow key={item.id} hover>
-                <TableCell>
-                  <Typography variant="body2">{item.summary}</Typography>
-                </TableCell>
-                <TableCell>{formatWhen(item.start_datetime)}</TableCell>
-                <TableCell>{item.client_name ?? '—'}</TableCell>
-                <TableCell>{item.status}</TableCell>
-                <TableCell align="right">
-                  <Tooltip title="Edit">
-                    <IconButton
-                      aria-label={`Edit appointment ${item.summary}`}
+              <Box
+                key={item.id}
+                sx={{
+                  border: 1,
+                  borderColor: 'divider',
+                  borderRadius: 1,
+                  p: 1.5,
+                }}
+              >
+                <Stack spacing={1}>
+                  <Typography variant="subtitle1">{item.summary}</Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {formatWhen(item.start_datetime)}
+                  </Typography>
+                  <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+                    <Chip size="small" label={item.status} variant="outlined" />
+                    <Chip size="small" label={syncLabel(item)} variant="outlined" />
+                  </Stack>
+                  <Stack direction="row" spacing={1}>
+                    <Button
                       size="small"
+                      startIcon={<VisibilityOutlinedIcon />}
+                      onClick={() => setDetail(item)}
+                    >
+                      View
+                    </Button>
+                    <Button
+                      size="small"
+                      startIcon={<EditOutlinedIcon />}
                       onClick={() => openEdit(item)}
+                      disabled={item.status === 'cancelled'}
                     >
-                      <EditOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                  <Tooltip title="Delete">
-                    <IconButton
-                      aria-label={`Delete appointment ${item.summary}`}
+                      Reschedule
+                    </Button>
+                    <Button
                       size="small"
+                      color="error"
+                      startIcon={<CancelOutlinedIcon />}
                       onClick={() => setDeleteTarget(item)}
+                      disabled={item.status === 'cancelled'}
                     >
-                      <DeleteOutlinedIcon fontSize="small" />
-                    </IconButton>
-                  </Tooltip>
-                </TableCell>
-              </TableRow>
+                      Cancel
+                    </Button>
+                  </Stack>
+                </Stack>
+              </Box>
             ))}
-          </TableBody>
-        </Table>
+          </Stack>
+
+          <TableContainer sx={{ display: { xs: 'none', md: 'block' }, overflowX: 'auto' }}>
+            <Table size="small" aria-label="Appointments">
+              <TableHead>
+                <TableRow>
+                  <TableCell>Summary</TableCell>
+                  <TableCell>Start</TableCell>
+                  <TableCell>Client</TableCell>
+                  <TableCell>Status</TableCell>
+                  <TableCell>Sync</TableCell>
+                  <TableCell align="right">Actions</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {items.map((item) => (
+                  <TableRow key={item.id} hover>
+                    <TableCell>
+                      <Typography variant="body2">{item.summary}</Typography>
+                    </TableCell>
+                    <TableCell>{formatWhen(item.start_datetime)}</TableCell>
+                    <TableCell>{item.client_name ?? '—'}</TableCell>
+                    <TableCell>
+                      <Chip size="small" label={item.status} variant="outlined" />
+                    </TableCell>
+                    <TableCell>
+                      <Chip size="small" label={syncLabel(item)} variant="outlined" />
+                    </TableCell>
+                    <TableCell align="right">
+                      <IconButton
+                        aria-label={`View appointment ${item.summary}`}
+                        size="small"
+                        onClick={() => setDetail(item)}
+                      >
+                        <VisibilityOutlinedIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        aria-label={`Reschedule appointment ${item.summary}`}
+                        size="small"
+                        onClick={() => openEdit(item)}
+                        disabled={item.status === 'cancelled'}
+                      >
+                        <EditOutlinedIcon fontSize="small" />
+                      </IconButton>
+                      <IconButton
+                        aria-label={`Cancel appointment ${item.summary}`}
+                        size="small"
+                        onClick={() => setDeleteTarget(item)}
+                        disabled={item.status === 'cancelled'}
+                      >
+                        <CancelOutlinedIcon fontSize="small" />
+                      </IconButton>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Stack>
       ) : null}
 
       <Dialog open={dialogOpen} onClose={closeDialog} fullWidth maxWidth="sm">
-        <DialogTitle>{editing ? 'Edit appointment' : 'New appointment'}</DialogTitle>
+        <DialogTitle>{editing ? 'Reschedule / edit' : 'New appointment'}</DialogTitle>
         <DialogContent>
           <Stack component="form" id="appointment-form" onSubmit={onSubmit} spacing={2} sx={{ mt: 1 }}>
             {formError ? <Alert severity="error">{formError}</Alert> : null}
@@ -387,15 +463,74 @@ export function AppointmentsPage() {
         </DialogActions>
       </Dialog>
 
+      <Dialog open={Boolean(detail)} onClose={() => setDetail(null)} fullWidth maxWidth="sm">
+        <DialogTitle>Appointment details</DialogTitle>
+        <DialogContent dividers>
+          {detail ? (
+            <Stack spacing={1.5}>
+              <Typography variant="body2">Summary: {detail.summary}</Typography>
+              <Typography variant="body2">Status: {detail.status}</Typography>
+              <Typography variant="body2">Start: {formatWhen(detail.start_datetime)}</Typography>
+              <Typography variant="body2">End: {formatWhen(detail.end_datetime)}</Typography>
+              <Typography variant="body2">Client: {detail.client_name ?? '—'}</Typography>
+              <Typography variant="body2">
+                Sync: {syncLabel(detail)}
+                {detail.google_calendar_link ? (
+                  <>
+                    {' · '}
+                    <Button
+                      href={detail.google_calendar_link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="small"
+                    >
+                      Open in Google
+                    </Button>
+                  </>
+                ) : null}
+              </Typography>
+              {detail.notes ? (
+                <Typography variant="body2">Notes: {detail.notes}</Typography>
+              ) : null}
+              {detail.transcript ? (
+                <Box>
+                  <Typography variant="subtitle2" gutterBottom>
+                    Voice transcript
+                  </Typography>
+                  <Typography
+                    component="pre"
+                    variant="body2"
+                    sx={{ whiteSpace: 'pre-wrap', fontFamily: 'inherit' }}
+                  >
+                    {detail.transcript}
+                  </Typography>
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  No transcript on this appointment.
+                </Typography>
+              )}
+            </Stack>
+          ) : null}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDetail(null)}>Close</Button>
+        </DialogActions>
+      </Dialog>
+
       <ConfirmDialog
         open={Boolean(deleteTarget)}
-        title="Delete appointment?"
+        title="Cancel appointment?"
         description={
           deleteTarget
-            ? `“${deleteTarget.summary}” will be permanently removed.`
+            ? `“${deleteTarget.summary}” will be marked cancelled${
+                deleteTarget.google_calendar_event_id
+                  ? ' and removed from Google Calendar when connected'
+                  : ''
+              }.`
             : undefined
         }
-        confirmLabel="Delete"
+        confirmLabel="Cancel appointment"
         confirmColor="error"
         loading={deleting}
         onClose={() => {

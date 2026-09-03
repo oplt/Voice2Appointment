@@ -1,9 +1,11 @@
 import CloudDoneOutlinedIcon from '@mui/icons-material/CloudDoneOutlined'
+import ChecklistOutlinedIcon from '@mui/icons-material/ChecklistOutlined'
 import KeyOutlinedIcon from '@mui/icons-material/KeyOutlined'
 import LinkOffOutlinedIcon from '@mui/icons-material/LinkOffOutlined'
 import PersonOutlinedIcon from '@mui/icons-material/PersonOutlined'
 import PhoneOutlinedIcon from '@mui/icons-material/PhoneOutlined'
 import TuneOutlinedIcon from '@mui/icons-material/TuneOutlined'
+import PolicyOutlinedIcon from '@mui/icons-material/PolicyOutlined'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
@@ -15,13 +17,15 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { useCallback, useEffect, useState } from 'react'
 
-import { disconnectGoogleCalendar, getCalendarStatus } from '../../api/calendars'
+import { disconnectGoogleCalendar, getCalendarStatus, startGoogleCalendarConnect, updateCalendarPreferences } from '../../api/calendars'
 import { ApiError } from '../../api/client'
-import { getMe, updateMe } from '../../api/users'
+import { getBookingPolicy, getMe, putBookingPolicy, updateMe } from '../../api/users'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { PageHeader } from '../../components/PageHeader'
 import { useSnackbar } from '../../components/SnackbarProvider'
-import type { CalendarStatus, UserProfile } from '../../types'
+import type { BookingPolicy, CalendarStatus, UserProfile } from '../../types'
+import { ProductPrefsPanels } from './ProductPrefsPanels'
+import { SetupChecklist } from './SetupChecklist'
 
 const SECRET_PLACEHOLDER = '••••••••'
 
@@ -41,10 +45,6 @@ type TelephonyForm = {
   twilio_phone_number: string
 }
 
-type VoiceForm = {
-  deepgram_api_key: string
-}
-
 export function SettingsPanels() {
   const { notify } = useSnackbar()
   const [tab, setTab] = useState(0)
@@ -60,8 +60,14 @@ export function SettingsPanels() {
     twilio_auth_token: '',
     twilio_phone_number: '',
   })
-  const [voice, setVoice] = useState<VoiceForm>({ deepgram_api_key: '' })
-  const [configJson, setConfigJson] = useState('')
+  const [policy, setPolicy] = useState<BookingPolicy>({
+    default_service_duration_minutes: 30,
+    service_durations_minutes: {},
+    buffer_before_minutes: 0,
+    buffer_after_minutes: 0,
+    business_hours: {},
+  })
+  const [serviceDurationsText, setServiceDurationsText] = useState('{}')
   const [saving, setSaving] = useState(false)
   const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
@@ -70,18 +76,14 @@ export function SettingsPanels() {
     setProfile(next)
     setAccount({ username: next.username, email: next.email })
     setCalendar({
-      calendar_id: next.calendar_id ?? status?.calendar_id ?? '',
-      time_zone: next.time_zone ?? status?.time_zone ?? '',
+      calendar_id: status?.calendar_id ?? '',
+      time_zone: status?.time_zone ?? '',
     })
     setTelephony({
       twilio_account_sid: next.twilio_account_sid ?? '',
       twilio_auth_token: next.twilio_auth_token_set ? SECRET_PLACEHOLDER : '',
       twilio_phone_number: next.twilio_phone_number ?? '',
     })
-    setVoice({
-      deepgram_api_key: next.deepgram_api_key_set ? SECRET_PLACEHOLDER : '',
-    })
-    setConfigJson(next.config_json ?? '')
   }
 
   const load = useCallback(() => {
@@ -90,10 +92,17 @@ export function SettingsPanels() {
     Promise.all([
       getMe(),
       getCalendarStatus().catch(() => null),
+      getBookingPolicy().catch(() => null),
     ])
-      .then(([me, status]) => {
+      .then(([me, status, booking]) => {
         setCalStatus(status)
         applyProfile(me, status)
+        if (booking) {
+          setPolicy(booking)
+          setServiceDurationsText(
+            JSON.stringify(booking.service_durations_minutes || {}, null, 2),
+          )
+        }
       })
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : 'Failed to load settings')
@@ -136,7 +145,7 @@ export function SettingsPanels() {
     <Stack spacing={3}>
       <PageHeader
         title="Settings"
-        subtitle="Account, calendar, telephony, voice, and agent config."
+        subtitle="Account, calendar, telephony, voice, and booking policy."
       />
 
       {error ? (
@@ -170,7 +179,9 @@ export function SettingsPanels() {
             <Tab icon={<CloudDoneOutlinedIcon />} iconPosition="start" label="Calendar" />
             <Tab icon={<PhoneOutlinedIcon />} iconPosition="start" label="Telephony" />
             <Tab icon={<KeyOutlinedIcon />} iconPosition="start" label="Voice" />
-            <Tab icon={<TuneOutlinedIcon />} iconPosition="start" label="Config" />
+            <Tab icon={<TuneOutlinedIcon />} iconPosition="start" label="Booking" />
+            <Tab icon={<PolicyOutlinedIcon />} iconPosition="start" label="Product" />
+            <Tab icon={<ChecklistOutlinedIcon />} iconPosition="start" label="Setup" />
           </Tabs>
 
           {tab === 0 ? (
@@ -222,38 +233,28 @@ export function SettingsPanels() {
                 ) : null}
               </Stack>
               <Alert severity="info">
-                OAuth connect stays on the backend. Tokens never appear in the browser.
+                Connect Google Calendar with a secure server-side OAuth flow. Tokens
+                never appear in the browser.
               </Alert>
-              <TextField
-                label="Calendar ID"
-                value={calendar.calendar_id}
-                onChange={(e) => setCalendar((c) => ({ ...c, calendar_id: e.target.value }))}
-                fullWidth
-                placeholder="primary"
-              />
-              <TextField
-                label="Time zone"
-                value={calendar.time_zone}
-                onChange={(e) => setCalendar((c) => ({ ...c, time_zone: e.target.value }))}
-                fullWidth
-                placeholder="Europe/Brussels"
-              />
               <Stack direction="row" spacing={2}>
                 <Button
                   variant="contained"
+                  startIcon={<CloudDoneOutlinedIcon />}
                   disabled={saving}
-                  loading={saving}
-                  onClick={() =>
-                    savePatch(
-                      {
-                        calendar_id: calendar.calendar_id.trim() || null,
-                        time_zone: calendar.time_zone.trim() || null,
-                      },
-                      'Calendar settings saved',
-                    )
-                  }
+                  onClick={() => {
+                    void startGoogleCalendarConnect()
+                      .then((res) => {
+                        window.location.assign(res.authorization_url)
+                      })
+                      .catch((err: unknown) => {
+                        notify(
+                          err instanceof ApiError ? err.message : 'Failed to start Google connect',
+                          'error',
+                        )
+                      })
+                  }}
                 >
-                  Save
+                  Connect Google
                 </Button>
                 <Button
                   variant="outlined"
@@ -265,6 +266,48 @@ export function SettingsPanels() {
                   Disconnect
                 </Button>
               </Stack>
+              <TextField
+                label="Calendar ID"
+                value={calendar.calendar_id}
+                onChange={(e) => setCalendar((c) => ({ ...c, calendar_id: e.target.value }))}
+                fullWidth
+                placeholder="primary"
+                disabled={!calStatus?.connected}
+              />
+              <TextField
+                label="Time zone"
+                value={calendar.time_zone}
+                onChange={(e) => setCalendar((c) => ({ ...c, time_zone: e.target.value }))}
+                fullWidth
+                placeholder="Europe/Brussels"
+                disabled={!calStatus?.connected}
+              />
+              <Button
+                variant="contained"
+                disabled={saving || !calStatus?.connected}
+                loading={saving}
+                sx={{ alignSelf: 'flex-start' }}
+                onClick={() => {
+                  setSaving(true)
+                  updateCalendarPreferences({
+                    calendar_id: calendar.calendar_id.trim() || 'primary',
+                    time_zone: calendar.time_zone.trim() || undefined,
+                  })
+                    .then((status) => {
+                      setCalStatus(status)
+                      notify('Calendar settings saved', 'success')
+                    })
+                    .catch((err: unknown) => {
+                      notify(
+                        err instanceof ApiError ? err.message : 'Failed to save calendar settings',
+                        'error',
+                      )
+                    })
+                    .finally(() => setSaving(false))
+                }}
+              >
+                Save calendar preferences
+              </Button>
             </Stack>
           ) : null}
 
@@ -329,58 +372,71 @@ export function SettingsPanels() {
           {tab === 3 ? (
             <Stack spacing={2} sx={{ maxWidth: 480 }}>
               <Typography variant="body2" color="text.secondary">
-                Deepgram (speech-to-text) for the voice assistant.
+                Speech is powered by a platform-managed Deepgram credential
+                (<code>DEEPGRAM_API_KEY</code>). Per-account keys are not collected.
               </Typography>
-              <TextField
-                label="Deepgram API Key"
-                type="password"
-                value={voice.deepgram_api_key}
-                onChange={(e) => setVoice({ deepgram_api_key: e.target.value })}
-                fullWidth
-                autoComplete="new-password"
-                helperText={
-                  profile?.deepgram_api_key_set
-                    ? 'Leave masked value unchanged to keep the existing key.'
-                    : undefined
-                }
-              />
-              <Button
-                variant="contained"
-                disabled={saving}
-                loading={saving}
-                sx={{ alignSelf: 'flex-start' }}
-                onClick={() => {
-                  const body: Parameters<typeof updateMe>[0] = {}
-                  if (
-                    voice.deepgram_api_key &&
-                    voice.deepgram_api_key !== SECRET_PLACEHOLDER
-                  ) {
-                    body.deepgram_api_key = voice.deepgram_api_key
-                  } else if (!voice.deepgram_api_key) {
-                    body.deepgram_api_key = null
-                  }
-                  if (Object.keys(body).length === 0) {
-                    notify('No changes to save', 'info')
-                    return
-                  }
-                  void savePatch(body, 'Voice settings saved')
-                }}
-              >
-                Save voice
-              </Button>
+              <Alert severity={profile?.has_deepgram ? 'success' : 'warning'}>
+                {profile?.has_deepgram
+                  ? 'Deepgram is configured on the server.'
+                  : 'Deepgram is not configured. Ask an administrator to set DEEPGRAM_API_KEY.'}
+              </Alert>
             </Stack>
           ) : null}
 
           {tab === 4 ? (
-            <Stack spacing={2} sx={{ maxWidth: 640 }}>
+            <Stack spacing={2} sx={{ maxWidth: 560 }}>
+              <Typography variant="body2" color="text.secondary">
+                Typed booking rules used by HTTP appointments and voice tools.
+              </Typography>
               <TextField
-                label="Config JSON"
-                multiline
-                minRows={10}
+                label="Default duration (minutes)"
+                type="number"
+                value={policy.default_service_duration_minutes}
+                onChange={(e) =>
+                  setPolicy((p) => ({
+                    ...p,
+                    default_service_duration_minutes: Number(e.target.value) || 30,
+                  }))
+                }
                 fullWidth
-                value={configJson}
-                onChange={(e) => setConfigJson(e.target.value)}
-                placeholder='{"agent": {...}}'
+                slotProps={{ htmlInput: { min: 5, max: 480 } }}
+              />
+              <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+                <TextField
+                  label="Buffer before (minutes)"
+                  type="number"
+                  value={policy.buffer_before_minutes}
+                  onChange={(e) =>
+                    setPolicy((p) => ({
+                      ...p,
+                      buffer_before_minutes: Number(e.target.value) || 0,
+                    }))
+                  }
+                  fullWidth
+                  slotProps={{ htmlInput: { min: 0, max: 240 } }}
+                />
+                <TextField
+                  label="Buffer after (minutes)"
+                  type="number"
+                  value={policy.buffer_after_minutes}
+                  onChange={(e) =>
+                    setPolicy((p) => ({
+                      ...p,
+                      buffer_after_minutes: Number(e.target.value) || 0,
+                    }))
+                  }
+                  fullWidth
+                  slotProps={{ htmlInput: { min: 0, max: 240 } }}
+                />
+              </Stack>
+              <TextField
+                label="Named service durations (JSON)"
+                helperText='Example: {"Consultation": 45, "Follow-up": 20}'
+                multiline
+                minRows={4}
+                fullWidth
+                value={serviceDurationsText}
+                onChange={(e) => setServiceDurationsText(e.target.value)}
                 slotProps={{
                   input: { sx: { fontFamily: 'ui-monospace, monospace', fontSize: 13 } },
                 }}
@@ -391,24 +447,45 @@ export function SettingsPanels() {
                 loading={saving}
                 sx={{ alignSelf: 'flex-start' }}
                 onClick={() => {
-                  if (configJson.trim()) {
-                    try {
-                      JSON.parse(configJson)
-                    } catch {
-                      notify('Config must be valid JSON', 'error')
-                      return
+                  let services: Record<string, number> = {}
+                  try {
+                    const parsed = JSON.parse(serviceDurationsText || '{}') as unknown
+                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                      throw new Error('must be an object')
                     }
+                    services = parsed as Record<string, number>
+                  } catch {
+                    notify('Service durations must be valid JSON object', 'error')
+                    return
                   }
-                  void savePatch(
-                    { config_json: configJson.trim() || null },
-                    'Config saved',
-                  )
+                  setSaving(true)
+                  putBookingPolicy({
+                    ...policy,
+                    service_durations_minutes: services,
+                  })
+                    .then((saved) => {
+                      setPolicy(saved)
+                      setServiceDurationsText(
+                        JSON.stringify(saved.service_durations_minutes || {}, null, 2),
+                      )
+                      notify('Booking policy saved', 'success')
+                    })
+                    .catch((err: unknown) => {
+                      notify(
+                        err instanceof ApiError ? err.message : 'Failed to save policy',
+                        'error',
+                      )
+                    })
+                    .finally(() => setSaving(false))
                 }}
               >
-                Save config
+                Save booking policy
               </Button>
             </Stack>
           ) : null}
+
+          {tab === 5 ? <ProductPrefsPanels /> : null}
+          {tab === 6 ? <SetupChecklist /> : null}
         </>
       )}
 

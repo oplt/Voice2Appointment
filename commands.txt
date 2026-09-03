@@ -1,0 +1,4 @@
+  alembic init migrations
+  alembic -c backend/migrations/alembic.ini revision --autogenerate -m "create users table"
+  alembic -c backend/migrations/alembic.ini upgrade head
+  alembic -c backend/migrations/alembic.ini downgrade base

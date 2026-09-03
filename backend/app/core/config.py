@@ -42,6 +42,27 @@ class Settings:
     deepgram_model: str = os.getenv("DEEPGRAM_MODEL", "nova-3")
     deepgram_language: str = os.getenv("DEEPGRAM_LANGUAGE", "en")
     deepgram_agent_url: str = os.getenv("DEEPGRAM_AGENT_URL", "")
+    deepgram_tts_model: str = os.getenv("DEEPGRAM_TTS_MODEL", "aura-asteria-en")
+
+    # Supported voice pipeline (P2-03): deepgram_agent only.
+    voice_pipeline: str = os.getenv("VOICE_PIPELINE", "deepgram_agent").strip().lower()
+
+    # Deepgram reconnect budget (P2-02)
+    deepgram_reconnect_max_attempts: int = int(
+        os.getenv("DEEPGRAM_RECONNECT_MAX_ATTEMPTS", "3")
+    )
+    deepgram_reconnect_backoff_seconds: float = float(
+        os.getenv("DEEPGRAM_RECONNECT_BACKOFF_SECONDS", "0.5")
+    )
+    deepgram_reconnect_deadline_seconds: float = float(
+        os.getenv("DEEPGRAM_RECONNECT_DEADLINE_SECONDS", "20")
+    )
+    voice_audio_queue_maxsize: int = int(os.getenv("VOICE_AUDIO_QUEUE_MAXSIZE", "50"))
+    voice_reconnect_buffer_frames: int = int(
+        os.getenv("VOICE_RECONNECT_BUFFER_FRAMES", "50")
+    )
+    # Per-process media session cap (P8-01). Scale horizontally for larger N.
+    voice_max_concurrent_calls: int = int(os.getenv("VOICE_MAX_CONCURRENT_CALLS", "25"))
 
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -74,9 +95,64 @@ class Settings:
     mail_server: str = os.getenv("MAIL_SERVER", "smtp.gmail.com")
     mail_port: int = int(os.getenv("MAIL_PORT", "587"))
     public_base_url: str = os.getenv("PUBLIC_BASE_URL", "http://localhost:5173")
+    frontend_base_url: str = os.getenv(
+        "FRONTEND_BASE_URL",
+        os.getenv("PUBLIC_BASE_URL", "http://localhost:5173"),
+    )
+
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    google_redirect_uri: str = os.getenv(
+        "GOOGLE_REDIRECT_URI",
+        "http://localhost:8000/api/v1/calendars/google/callback",
+    )
+
+    # Comma-separated CIDRs of reverse proxies allowed to set X-Forwarded-For.
+    trusted_proxy_cidrs: str = os.getenv(
+        "TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12"
+    )
 
     call_expires_in: int = int(os.getenv("CALL_EXPIRES_IN", "5"))
+    stream_token_ttl_seconds: int = int(os.getenv("STREAM_TOKEN_TTL_SECONDS", "300"))
     default_timezone: str = os.getenv("DEFAULT_TIMEZONE", "Europe/Brussels")
+
+    # Recording download hardening (P0-04)
+    recording_max_bytes: int = int(os.getenv("RECORDING_MAX_BYTES", str(50 * 1024 * 1024)))
+    recording_download_timeout_seconds: float = float(
+        os.getenv("RECORDING_DOWNLOAD_TIMEOUT_SECONDS", "30")
+    )
+    twilio_media_hosts: frozenset[str] = field(
+        default_factory=lambda: frozenset(
+            h.strip().lower()
+            for h in os.getenv(
+                "TWILIO_MEDIA_HOSTS",
+                "api.twilio.com,api.ashburn.us1.twilio.com,"
+                "api.dublin.ie1.twilio.com,api.sydney.au1.twilio.com,"
+                "api.tokyo.jp1.twilio.com,api.singapore.sg1.twilio.com",
+            ).split(",")
+            if h.strip()
+        )
+    )
+
+    twilio_sync_page_size: int = int(os.getenv("TWILIO_SYNC_PAGE_SIZE", "100"))
+    twilio_sync_max_pages: int = int(os.getenv("TWILIO_SYNC_MAX_PAGES", "50"))
+    twilio_sync_lookback_seconds: int = int(
+        os.getenv("TWILIO_SYNC_LOOKBACK_SECONDS", "300")
+    )
+
+    analytics_max_range_days: int = int(os.getenv("ANALYTICS_MAX_RANGE_DAYS", "366"))
+    analytics_default_range_days: int = int(
+        os.getenv("ANALYTICS_DEFAULT_RANGE_DAYS", "30")
+    )
+    reporting_currency: str = os.getenv("REPORTING_CURRENCY", "").strip().upper()
+
+    redis_socket_connect_timeout: float = float(
+        os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "0.5")
+    )
+    redis_socket_timeout: float = float(os.getenv("REDIS_SOCKET_TIMEOUT", "1.0"))
+    redis_retry_after_seconds: float = float(
+        os.getenv("REDIS_RETRY_AFTER_SECONDS", "30")
+    )
 
     log_format: str = os.getenv("LOG_FORMAT", "json").strip().lower()
     sentry_dsn: str = os.getenv("SENTRY_DSN", "")
@@ -113,6 +189,11 @@ class Settings:
                 + ", ".join(missing)
                 + ". Set them in the environment or .env before starting."
             )
+        if self.voice_pipeline != "deepgram_agent":
+            raise RuntimeError(
+                f"Unsupported VOICE_PIPELINE={self.voice_pipeline!r}. "
+                "Only 'deepgram_agent' is supported."
+            )
         try:
             from cryptography.fernet import Fernet
 
@@ -123,6 +204,24 @@ class Settings:
                 "python -c \"from cryptography.fernet import Fernet; "
                 'print(Fernet.generate_key().decode())"'
             ) from exc
+
+        if self.is_production:
+            problems: list[str] = []
+            if len((self.secret_key or "").strip()) < 32:
+                problems.append("SECRET_KEY must be at least 32 characters")
+            if not self.cookie_secure:
+                problems.append("COOKIE_SECURE must be true in production")
+            if self.cookie_samesite == "none" and not self.cookie_secure:
+                problems.append("COOKIE_SAMESITE=none requires COOKIE_SECURE=true")
+            pub = (self.public_base_url or "").strip().lower()
+            if not pub.startswith("https://"):
+                problems.append("PUBLIC_BASE_URL must be https:// in production")
+            if not self.cors_origins:
+                problems.append("CORS_ORIGINS must be non-empty in production")
+            if problems:
+                raise RuntimeError(
+                    "Unsafe production configuration: " + "; ".join(problems)
+                )
 
 
 settings = Settings()

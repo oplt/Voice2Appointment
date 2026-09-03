@@ -34,9 +34,9 @@ def get_auth_record(db: Session, user_id: int) -> GoogleCalendarAuth | None:
 
 
 def calendar_status(db: Session, user_id: int) -> dict[str, Any]:
-    from app.core.cache import cache_get, cache_set
+    from app.core.cache import CACHE_TTL_STATUS, cache_get, cache_set, versioned_key
 
-    cache_key = f"cal:status:{user_id}"
+    cache_key = versioned_key(user_id, "cal", "status")
     cached = cache_get(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -59,7 +59,7 @@ def calendar_status(db: Session, user_id: int) -> dict[str, Any]:
             "embedded_link": auth.embedded_link,
             "status": auth.status,
         }
-    cache_set(cache_key, payload, ttl_seconds=60)
+    cache_set(cache_key, payload, ttl_seconds=CACHE_TTL_STATUS)
     return payload
 
 
@@ -70,9 +70,11 @@ def list_events(
     time_max: str,
     timezone_str: str | None = None,
 ) -> list[dict[str, Any]]:
-    from app.core.cache import cache_get, cache_set
+    from app.core.cache import CACHE_TTL_CALENDAR, cache_get, cache_set, versioned_key
 
-    cache_key = f"cal:events:{user_id}:{time_min}:{time_max}:{timezone_str or ''}"
+    cache_key = versioned_key(
+        user_id, "cal", "events", time_min, time_max, timezone_str or ""
+    )
     cached = cache_get(cache_key)
     if isinstance(cached, list):
         return cached
@@ -136,7 +138,7 @@ def list_events(
         if event.get("htmlLink"):
             item["url"] = event["htmlLink"]
         formatted.append(item)
-    cache_set(cache_key, formatted, ttl_seconds=45)
+    cache_set(cache_key, formatted, ttl_seconds=CACHE_TTL_CALENDAR)
     return formatted
 
 
@@ -194,3 +196,116 @@ def disconnect_google(db: Session, user_id: int) -> bool:
 
     invalidate_user_calendar_caches(user_id)
     return True
+
+
+class BookingProviderHooks:
+    """Optional Google callbacks for the unified booking service."""
+
+    __slots__ = ("calendar_id", "create_event", "update_event", "delete_event", "check_availability")
+
+    def __init__(
+        self,
+        *,
+        calendar_id: str = "primary",
+        create_event=None,
+        update_event=None,
+        delete_event=None,
+        check_availability=None,
+    ):
+        self.calendar_id = calendar_id
+        self.create_event = create_event
+        self.update_event = update_event
+        self.delete_event = delete_event
+        self.check_availability = check_availability
+
+
+def booking_provider_hooks(db: Session, user_id: int) -> BookingProviderHooks:
+    """Return provider hooks when Google is connected; otherwise local-only."""
+    auth = get_auth_record(db, user_id)
+    if auth is None or not auth.token_json:
+        return BookingProviderHooks()
+    try:
+        service = GoogleCalendarService(db, user_id)
+    except Exception:
+        return BookingProviderHooks()
+
+    calendar_id = auth.calendar_id or "primary"
+
+    def _create(**kwargs):
+        return service.create_event(**kwargs)
+
+    def _update(**kwargs):
+        kwargs = dict(kwargs)
+        kwargs.setdefault("calendar_id", calendar_id)
+        return service.update_event(**kwargs)
+
+    def _delete(*, event_id: str, **_kwargs):
+        return service.delete_event(event_id, calendar_id=calendar_id)
+
+    def _availability(start: datetime, end: datetime) -> None:
+        ok, _conflicts = service.check_availability(
+            start.isoformat(), end.isoformat(), calendar_id=calendar_id
+        )
+        if not ok:
+            from app.appointments.policy import BookingConflictError
+
+            raise BookingConflictError("Google Calendar reports the slot as busy")
+
+    return BookingProviderHooks(
+        calendar_id=calendar_id,
+        create_event=_create,
+        update_event=_update,
+        delete_event=_delete,
+        check_availability=_availability,
+    )
+
+
+def update_calendar_preferences(
+    db: Session,
+    user_id: int,
+    *,
+    calendar_id: str | None = None,
+    time_zone: str | None = None,
+) -> dict[str, Any]:
+    auth = get_auth_record(db, user_id)
+    if auth is None:
+        raise ValueError("Google Calendar not connected")
+    if calendar_id is not None:
+        cleaned = calendar_id.strip() or "primary"
+        auth.calendar_id = cleaned
+    if time_zone is not None:
+        from app.appointments.schemas import validate_timezone_name
+
+        auth.time_zone = validate_timezone_name(time_zone)
+    db.commit()
+    from app.core.cache import invalidate_user_calendar_caches
+
+    invalidate_user_calendar_caches(user_id)
+    return calendar_status(db, user_id)
+
+
+def start_google_oauth(user_id: int) -> dict[str, str]:
+    from app.calendars.providers.google import build_authorization_url
+
+    return build_authorization_url(user_id=user_id)
+
+
+def finish_google_oauth(
+    db: Session, *, state: str, code: str | None, error: str | None
+) -> str:
+    """Persist tokens and return frontend redirect URL."""
+    from urllib.parse import urlencode
+
+    from app.calendars.providers.google import exchange_authorization_code
+
+    base = settings.frontend_base_url.rstrip("/")
+    settings_path = f"{base}/settings"
+    if error:
+        return f"{settings_path}?{urlencode({'google': 'denied'})}"
+    if not code:
+        return f"{settings_path}?{urlencode({'google': 'error'})}"
+    try:
+        exchange_authorization_code(db, state=state, code=code)
+    except Exception:
+        return f"{settings_path}?{urlencode({'google': 'error'})}"
+    return f"{settings_path}?{urlencode({'google': 'connected'})}"

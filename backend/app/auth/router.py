@@ -86,12 +86,19 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
-    token = create_access_token(subject=str(user.id))
+    token = create_access_token(
+        subject=str(user.id), auth_version=int(user.auth_version or 0)
+    )
     _set_access_cookie(response, token)
     return AuthResponse(user=UserPublic.model_validate(user))
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=AuthResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limit(limit=5, window_seconds=60, name="register"))],
+)
 def register(
     payload: RegisterRequest,
     response: Response,
@@ -116,7 +123,9 @@ def register(
             detail="Username or email already registered",
         ) from exc
 
-    token = create_access_token(subject=str(user.id))
+    token = create_access_token(
+        subject=str(user.id), auth_version=int(user.auth_version or 0)
+    )
     _set_access_cookie(response, token)
     return AuthResponse(user=UserPublic.model_validate(user))
 

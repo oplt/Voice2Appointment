@@ -95,6 +95,9 @@ def test_cancel_tasks_cancels_pending() -> None:
 
 def test_function_calls_offloaded_to_thread() -> None:
     async def _run() -> None:
+        from app.voice.context import CallContext
+        from app.voice.latency import LatencyTracker
+
         decoded = {
             "functions": [
                 {
@@ -106,12 +109,15 @@ def test_function_calls_offloaded_to_thread() -> None:
         }
         sts_ws = MagicMock()
         sts_ws.send = AsyncMock()
+        ctx = CallContext(
+            call_sid="CAtest", user_id=1, timezone="UTC", calendar_id="primary"
+        )
 
-        with patch(
-            "app.voice.session.asyncio.to_thread", new_callable=AsyncMock
-        ) as to_thread:
+        with patch.object(asyncio, "to_thread", new_callable=AsyncMock) as to_thread:
             to_thread.return_value = {"available": True}
-            await handle_function_call_request(decoded, sts_ws)
+            await handle_function_call_request(
+                decoded, sts_ws, ctx=ctx, latency=LatencyTracker()
+            )
             to_thread.assert_awaited()
             sts_ws.send.assert_awaited()
 

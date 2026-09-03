@@ -1,4 +1,4 @@
-import type { ApiErrorBody } from './types'
+import type { ApiErrorBody } from '../types'
 
 /** Empty string uses same-origin / Vite proxy in development. */
 const DEFAULT_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
@@ -34,6 +34,14 @@ function formatErrorMessage(body: ApiErrorBody | null, status: number): string {
   }
   if (typeof body.detail === 'string' && body.detail) {
     return body.detail
+  }
+  if (
+    body.detail &&
+    typeof body.detail === 'object' &&
+    !Array.isArray(body.detail) &&
+    typeof (body.detail as { message?: string }).message === 'string'
+  ) {
+    return (body.detail as { message: string }).message
   }
   if (Array.isArray(body.detail) && body.detail.length > 0) {
     return body.detail

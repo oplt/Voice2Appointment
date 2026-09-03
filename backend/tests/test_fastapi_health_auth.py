@@ -93,12 +93,13 @@ def test_appointments_tenant_isolation(client, db_session) -> None:
 
         bob_list = bob_client.get("/api/v1/appointments")
         assert bob_list.status_code == 200
-        assert any(a["id"] == bob_appt_id for a in bob_list.json())
+        bob_items = bob_list.json()["items"]
+        assert any(a["id"] == bob_appt_id for a in bob_items)
 
     client.cookies = alice_cookies
     alice_list = client.get("/api/v1/appointments")
     assert alice_list.status_code == 200
-    assert all(a["id"] != bob_appt_id for a in alice_list.json())
+    assert all(a["id"] != bob_appt_id for a in alice_list.json()["items"])
 
     alice_get = client.get(f"/api/v1/appointments/{bob_appt_id}")
     assert alice_get.status_code == 404

@@ -73,6 +73,17 @@ def health_ready(response: Response) -> dict[str, Any]:
     return payload
 
 
+@router.get("/health/metrics")
+def health_metrics() -> dict[str, Any]:
+    """Bounded process metrics snapshot (no PII / no high-cardinality labels)."""
+    from app.core.metrics import metrics
+    from app.voice.admission import admission
+
+    snap = metrics.snapshot()
+    snap["admission"] = admission.snapshot()
+    return {"status": "ok", "metrics": snap}
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     """Backward-compatible alias for liveness."""

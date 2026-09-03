@@ -1,5 +1,3 @@
-from datetime import datetime
-
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
@@ -37,8 +35,3 @@ class PasswordResetRequest(BaseModel):
 class PasswordResetConfirmRequest(BaseModel):
     token: str = Field(min_length=1)
     password: str = Field(min_length=8, max_length=128)
-
-
-class TokenPayload(BaseModel):
-    sub: str
-    exp: datetime | None = None

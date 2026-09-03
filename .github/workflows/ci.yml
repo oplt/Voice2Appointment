@@ -64,13 +64,14 @@ jobs:
       - name: Mypy
         run: mypy
 
-      - name: Pytest
+      - name: Pytest (SQLite unit)
         working-directory: ${{ github.workspace }}
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           PYTHONPATH: backend
           DATABASE_URL: sqlite://
-        run: pytest backend/tests -q
+        # Explicitly load pytest-timeout (autoload disabled for hermetic CI).
+        run: pytest -p timeout backend/tests -q -m "not integration"
 
       - name: Migration test
         env:
@@ -81,11 +82,26 @@ jobs:
           # Prove head is idempotent against an already-migrated database
           alembic upgrade head
 
+      - name: Pytest (PostgreSQL integration)
+        working-directory: ${{ github.workspace }}
+        env:
+          PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
+          PYTHONPATH: backend
+          DATABASE_URL: postgresql://voice_asst:voice_asst@localhost:5432/voice_asst_ci
+        run: pytest -p timeout backend/tests -q -m integration
+
       - name: Dependency security audit
-        # Reports known vulnerabilities. continue-on-error keeps CI green while
-        # still surfacing audit output for follow-up dependency bumps.
-        continue-on-error: true
-        run: pip-audit -r requirements.txt
+        # Network failure must be inconclusive (fail), never a silent green pass.
+        run: |
+          set +e
+          out=$(pip-audit -r requirements.txt 2>&1)
+          code=$?
+          echo "$out"
+          if echo "$out" | grep -qiE 'network|temporary failure|Name or service not known|timed out|Connection refused|Could not fetch|SSLError|Max retries'; then
+            echo "::error::pip-audit inconclusive (network/advisory DB unreachable)"
+            exit 1
+          fi
+          exit $code
 
   frontend:
     name: Frontend
@@ -107,11 +123,27 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
+      - name: Lint
+        run: npm run lint
+
       - name: Test
         run: npm test -- --run
 
       - name: Build
         run: npm run build
+
+      - name: Dependency security audit
+        run: |
+          set +e
+          out=$(npm audit --omit=dev 2>&1)
+          code=$?
+          echo "$out"
+          if echo "$out" | grep -qiE 'network|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|fetch failed|getaddrinfo'; then
+            echo "::error::npm audit inconclusive (network)"
+            exit 1
+          fi
+          # npm audit exits 1 on findings; treat moderate+ as blocking.
+          exit $code
 
   docker:
     name: Docker build

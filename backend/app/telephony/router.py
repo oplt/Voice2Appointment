@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
 from app.telephony import service as telephony_service
+from app.telephony.security import validate_twilio_request
 
 router = APIRouter(prefix="/telephony", tags=["telephony"])
 
@@ -37,7 +38,28 @@ async def twilio_inbound_voice(
         To=To,
         From=From,
     )
+    validate_twilio_request(db, request, payload)
     return telephony_service.process_inbound_voice(db, payload)
+
+
+@router.post("/twilio/status")
+async def twilio_status(
+    request: Request,
+    db: Session = Depends(require_db),
+    CallSid: str | None = Form(None),
+    CallStatus: str | None = Form(None),
+    CallDuration: str | None = Form(None),
+    AccountSid: str | None = Form(None),
+) -> dict:
+    payload = await _form_payload(
+        request,
+        CallSid=CallSid,
+        CallStatus=CallStatus,
+        CallDuration=CallDuration,
+        AccountSid=AccountSid,
+    )
+    validate_twilio_request(db, request, payload)
+    return telephony_service.process_status_callback(db, payload)
 
 
 @router.post("/twilio/recording")
@@ -56,4 +78,5 @@ async def twilio_recording(
         RecordingSid=RecordingSid,
         RecordingUrl=RecordingUrl,
     )
+    validate_twilio_request(db, request, payload)
     return telephony_service.process_recording_webhook(db, payload)

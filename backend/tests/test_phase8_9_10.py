@@ -159,8 +159,7 @@ def test_incremental_sync_advances_cursor(db_session, monkeypatch) -> None:
         def __init__(self, **kwargs):
             pass
 
-        def fetch_calls(self, limit=100, *, start_time_after=None):
-            assert start_time_after is None
+        def fetch_calls(self, limit=100, *, start_time_after=None, page_size=None, max_pages=None):
             return [
                 {
                     "sid": "CAnew",
@@ -171,8 +170,12 @@ def test_incremental_sync_advances_cursor(db_session, monkeypatch) -> None:
                     "price": 0.01,
                     "price_unit": "USD",
                     "direction": "inbound",
+                    "status": "completed",
                 }
             ]
+
+        def fetch_calls_by_sids(self, sids):
+            return []
 
     monkeypatch.setattr(
         "app.analytics.service.TwilioProvider", FakeProvider

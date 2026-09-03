@@ -28,3 +28,14 @@ export function meRequest() {
 export function healthRequest() {
   return api.get<{ status: string }>('/api/v1/health')
 }
+
+export function requestPasswordReset(email: string) {
+  return api.post<MessageResponse>('/api/v1/auth/password-reset/request', { email })
+}
+
+export function confirmPasswordReset(token: string, password: string) {
+  return api.post<MessageResponse>('/api/v1/auth/password-reset/confirm', {
+    token,
+    password,
+  })
+}

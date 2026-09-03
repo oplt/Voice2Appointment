@@ -56,14 +56,14 @@ def test_twilio_webhook_unknown_account_sid(db_session) -> None:
     result = telephony_service.process_recording_webhook(
         db_session,
         {
-            "AccountSid": "ACunknown",
-            "CallSid": "CAabc",
-            "RecordingSid": "RExyz",
+            "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "RecordingSid": "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
             "RecordingUrl": "https://api.twilio.com/rec",
         },
         enqueue=False,
     )
-    assert result["ok"] is True
+    assert result["ok"] is False
     assert result["enqueued"] is False
 
 
@@ -72,7 +72,7 @@ def test_twilio_webhook_uses_twilio_account_sid_field(db_session) -> None:
         username="twilio_user",
         email="twilio@example.com",
         password=hash_password("password123"),
-        twilio_account_sid="ACknown",
+        twilio_account_sid="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         twilio_auth_token="secret",
     )
     db_session.add(user)
@@ -80,7 +80,7 @@ def test_twilio_webhook_uses_twilio_account_sid_field(db_session) -> None:
     db_session.refresh(user)
 
     CallSession.create(
-        call_sid="CAknown",
+        call_sid="CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
         from_number="+15550001111",
         to_number="+15550002222",
         user_id=user.id,
@@ -90,17 +90,19 @@ def test_twilio_webhook_uses_twilio_account_sid_field(db_session) -> None:
     result = telephony_service.process_recording_webhook(
         db_session,
         {
-            "AccountSid": "ACknown",
-            "CallSid": "CAknown",
-            "RecordingSid": "REknown",
-            "RecordingUrl": "https://api.twilio.com/rec",
+            "AccountSid": "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "CallSid": "CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "RecordingSid": "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "RecordingUrl": "https://evil.example/rec",
         },
         enqueue=False,
     )
     assert result["ok"] is True
-    cs = db_session.query(CallSession).filter_by(call_sid="CAknown").one()
-    assert cs.recording_sid == "REknown"
-    assert cs.recording_url == "https://api.twilio.com/rec"
+    cs = db_session.query(CallSession).filter_by(
+        call_sid="CAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ).one()
+    assert cs.recording_sid == "RExxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    assert cs.recording_url.startswith("https://api.twilio.com/")
 
 
 def test_password_reset_generic_message_unknown_email(client) -> None:
@@ -132,6 +134,19 @@ def test_password_reset_flow(client, db_session) -> None:
     token = create_password_reset_token(user_id=user.id)
     assert verify_password_reset_token(token) == user.id
 
+    # Persist one-time nonce so confirm can consume (P3-07).
+    from app.core.security import hash_token
+    import jwt
+    from app.core.config import settings
+
+    payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+    user.password_reset_token_hash = hash_token(payload["nonce"])
+    from datetime import datetime, timezone, timedelta
+
+    user.password_reset_expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    user.password_reset_consumed_at = None
+    db_session.commit()
+
     bad = client.post(
         "/api/v1/auth/password-reset/confirm",
         json={"token": "not-a-token", "password": "newpassword1"},
@@ -144,9 +159,17 @@ def test_password_reset_flow(client, db_session) -> None:
     )
     assert ok.status_code == 200
 
+    # Replay must fail
+    replay = client.post(
+        "/api/v1/auth/password-reset/confirm",
+        json={"token": token, "password": "anotherpass1"},
+    )
+    assert replay.status_code == 400
+
     db_session.refresh(user)
     assert verify_password("newpassword1", user.password)
     assert not verify_password("oldpassword", user.password)
+    assert int(user.auth_version or 0) >= 1
 
     login = client.post(
         "/api/v1/auth/login",

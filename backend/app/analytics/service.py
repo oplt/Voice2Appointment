@@ -184,6 +184,8 @@ def _series_cost_over_time(rows: list[tuple[datetime, dict[str, Any]]]) -> dict[
 
 
 def _series_top_numbers(rows: list[dict[str, Any]]) -> dict[str, list]:
+    from app.analytics.aggregate import mask_phone_label
+
     counts: Counter[str] = Counter()
     for row in rows:
         to_num = row.get("to")
@@ -191,7 +193,7 @@ def _series_top_numbers(rows: list[dict[str, Any]]) -> dict[str, list]:
             counts[str(to_num)] += 1
     top = counts.most_common(10)
     return {
-        "labels": [label for label, _ in top],
+        "labels": [mask_phone_label(label) for label, _ in top],
         "values": [value for _, value in top],
     }
 
@@ -244,14 +246,39 @@ def process_twilio_data(
     duration_sum = sum(_as_int(row.get("duration_sec")) or 0 for row in rows_only)
     total_minutes = duration_sum / 60.0
     avg_minutes = (duration_sum / 60.0 / total_calls) if total_calls else 0.0
-    total_cost = sum(_as_float(row.get("price")) or 0.0 for row in rows_only)
+    total_cost = 0.0
+    by_currency: dict[str, dict[str, float]] = {}
+    for row in rows_only:
+        price = _as_float(row.get("price")) or 0.0
+        unit = (row.get("price_unit") or "UNKNOWN").upper()
+        bucket = by_currency.setdefault(unit, {"calls": 0, "total_cost": 0.0})
+        bucket["calls"] += 1
+        bucket["total_cost"] += price
+        total_cost += price
+    reporting = None
+    if len(by_currency) == 1:
+        reporting = next(iter(by_currency))
+        total_cost = by_currency[reporting]["total_cost"]
+    elif len(by_currency) > 1:
+        total_cost = None  # mixed currencies — use totals_by_currency
+
     top_countries = compute_top_countries(rows_only, top_n=15)
 
     payload: dict[str, Any] = {
         "total_calls": int(total_calls),
         "total_duration": round(total_minutes, 2),
         "avg_duration": round(avg_minutes, 2),
-        "total_cost": round(float(total_cost), 4),
+        "total_cost": None if total_cost is None else round(float(total_cost), 4),
+        "totals_by_currency": {
+            unit: {
+                "calls": int(stats["calls"]),
+                "total_cost": round(stats["total_cost"], 4),
+            }
+            for unit, stats in sorted(by_currency.items())
+        },
+        "reporting_currency": reporting,
+        "currency": reporting,
+        "timezone": "UTC",
         "calls_over_time": _series_calls_over_time(filtered),
         "duration_distribution": _series_duration_distribution(rows_only),
         "cost_over_time": _series_cost_over_time(filtered),
@@ -290,7 +317,104 @@ def _empty_summary() -> dict[str, Any]:
         },
         "top_countries": [],
         "geo_country_counts": [],
+        "totals_by_currency": {},
+        "reporting_currency": None,
+        "currency": None,
+        "timezone": "UTC",
+        "range": {"start": None, "end": None},
+        "truncated": False,
+        "generated_at": None,
+        "source_synced_at": None,
+        "stale": False,
+        "funnel": None,
+        "comparison": None,
     }
+
+
+class AnalyticsRangeError(ValueError):
+    """Invalid analytics date range (HTTP 422)."""
+
+
+def _tenant_timezone(db: Session, user_id: int) -> str:
+    from app.calendars.service import get_auth_record
+    from app.core.config import settings as app_settings
+
+    auth = get_auth_record(db, user_id)
+    return (
+        (auth.time_zone if auth and auth.time_zone else None)
+        or app_settings.default_timezone
+        or "UTC"
+    )
+
+
+def resolve_analytics_window(
+    start: date | None,
+    end: date | None,
+    *,
+    timezone_name: str,
+    now: datetime | None = None,
+) -> tuple[date, date, str]:
+    """Return inclusive local dates and the IANA timezone used."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    from app.core.config import settings as app_settings
+
+    try:
+        ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise AnalyticsRangeError("timezone must be a valid IANA timezone") from exc
+
+    current = now or datetime.now(timezone.utc)
+    local_today = current.astimezone(ZoneInfo(timezone_name)).date()
+    if start is None and end is None:
+        end = local_today
+        start = end - timedelta(days=app_settings.analytics_default_range_days - 1)
+    elif start is None:
+        start = end  # type: ignore[assignment]
+    elif end is None:
+        end = start
+    assert start is not None and end is not None
+    if start > end:
+        raise AnalyticsRangeError("start must be on or before end")
+    span = (end - start).days + 1
+    if span > app_settings.analytics_max_range_days:
+        raise AnalyticsRangeError(
+            f"range cannot exceed {app_settings.analytics_max_range_days} days"
+        )
+    return start, end, timezone_name
+
+
+def _local_bounds(
+    start: date, end: date, timezone_name: str
+) -> tuple[datetime, datetime]:
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(timezone_name)
+    bound_start = inclusive_start_datetime(start, tz=zone)
+    bound_end = exclusive_end_datetime(end, tz=zone)
+    return bound_start, bound_end
+
+
+def _row_to_call_dict(r: TwilioCall) -> dict[str, Any]:
+    return {
+        "sid": r.sid,
+        "from": r.from_number,
+        "to": r.to_number,
+        "start_time": r.start_time.isoformat() if r.start_time else None,
+        "duration_sec": r.duration_sec,
+        "price": float(r.price) if r.price is not None else None,
+        "price_unit": r.price_unit,
+        "direction": r.direction,
+        "status": r.status,
+    }
+
+
+def _metric_delta(current: float | int | None, prior: float | int | None) -> dict[str, Any]:
+    cur = 0 if current is None else float(current)
+    prv = 0 if prior is None else float(prior)
+    delta = cur - prv
+    pct = None if prv == 0 else round(delta / prv, 4)
+    return {"current": cur, "prior": prv, "delta": round(delta, 4), "delta_pct": pct}
 
 
 def analytics_summary(
@@ -298,97 +422,222 @@ def analytics_summary(
     user_id: int,
     start: date | None = None,
     end: date | None = None,
+    *,
+    timezone_name: str | None = None,
+    compare: bool = False,
 ) -> dict[str, Any]:
-    from app.core.cache import cache_get, cache_set
+    from zoneinfo import ZoneInfo
 
-    cache_key = f"analytics:summary:{user_id}:{start}:{end}"
+    from app.analytics.aggregate import aggregate_twilio_sql, prior_period
+    from app.analytics.funnel import funnel_summary
+    from app.core.cache import (
+        CACHE_TTL_ANALYTICS,
+        CACHE_TTL_ANALYTICS_EMPTY,
+        cache_get,
+        cache_set,
+        versioned_key,
+    )
+    from app.core.config import settings as app_settings
+    from app.db.models import User
+
+    tz_name = timezone_name or _tenant_timezone(db, user_id)
+    start, end, tz_name = resolve_analytics_window(start, end, timezone_name=tz_name)
+    zone = ZoneInfo(tz_name)
+    currency_key = (app_settings.reporting_currency or "auto").lower()
+
+    cache_key = versioned_key(
+        user_id, "analytics", start, end, tz_name, currency_key, int(compare)
+    )
     cached = cache_get(cache_key)
     if isinstance(cached, dict):
         return cached
 
-    # Prefer normalized TwilioCall rows (Phase 10).
-    stmt = select(TwilioCall).where(TwilioCall.user_id == user_id)
-    if start:
-        stmt = stmt.where(TwilioCall.start_time >= inclusive_start_datetime(start))
-    if end:
-        stmt = stmt.where(TwilioCall.start_time < exclusive_end_datetime(end))
-    rows = list(db.scalars(stmt.order_by(TwilioCall.start_time.asc())).all())
+    bound_start, bound_end = _local_bounds(start, end, tz_name)
+    now = datetime.now(timezone.utc)
+    user = db.get(User, user_id)
+    synced_at = user.twilio_last_synced_at if user else None
+    stale = False
+    if synced_at is not None:
+        stale = (now - synced_at) > timedelta(hours=48)
+    elif user and (user.twilio_account_sid and user.twilio_auth_token):
+        stale = True
 
-    all_calls: list[dict[str, Any]] = [
-        {
-            "sid": r.sid,
-            "from": r.from_number,
-            "to": r.to_number,
-            "start_time": r.start_time.isoformat() if r.start_time else None,
-            "duration_sec": r.duration_sec,
-            "price": float(r.price) if r.price is not None else None,
-            "price_unit": r.price_unit,
-            "direction": r.direction,
-        }
-        for r in rows
-    ]
+    processed: dict[str, Any] | None = None
+    try:
+        processed = aggregate_twilio_sql(
+            db,
+            user_id,
+            bound_start=bound_start,
+            bound_end=bound_end,
+            zone=zone,
+        )
+    except Exception:  # noqa: BLE001 — fail open to legacy path
+        processed = None
 
-    # Fallback: legacy daily JSON blobs for this user.
-    if not all_calls:
-        a_stmt = select(TwilioCallAnalytics).where(TwilioCallAnalytics.user_id == user_id)
-        if start:
-            a_stmt = a_stmt.where(TwilioCallAnalytics.date >= start)
-        if end:
-            a_stmt = a_stmt.where(TwilioCallAnalytics.date <= end)
-        for row in db.scalars(a_stmt.order_by(TwilioCallAnalytics.date.asc())).all():
-            data = row.call_data
-            if isinstance(data, list):
-                all_calls.extend(data)
-            elif isinstance(data, dict) and "calls" in data:
-                all_calls.extend(data["calls"])
-
-    # Compact chart JSON only — no call_details / PNG / GeoJSON payloads.
-    processed = process_twilio_data(
-        all_calls, start, end, include_call_details=False
-    )
     if processed is None:
-        return _empty_summary()
-    cache_set(cache_key, processed, ttl_seconds=300)
+        # Legacy / empty fallback: analytics snapshot rows or empty.
+        stmt = (
+            select(TwilioCall)
+            .where(
+                TwilioCall.user_id == user_id,
+                TwilioCall.start_time >= bound_start,
+                TwilioCall.start_time < bound_end,
+            )
+            .order_by(TwilioCall.start_time.asc())
+            .execution_options(yield_per=500)
+        )
+        rows = list(db.scalars(stmt))
+        all_calls: list[dict[str, Any]] = [_row_to_call_dict(r) for r in rows]
+        if not all_calls:
+            a_stmt = select(TwilioCallAnalytics).where(
+                TwilioCallAnalytics.user_id == user_id,
+                TwilioCallAnalytics.date >= start,
+                TwilioCallAnalytics.date <= end,
+            )
+            for row in db.scalars(a_stmt.order_by(TwilioCallAnalytics.date.asc())).all():
+                data = row.call_data
+                if isinstance(data, list):
+                    all_calls.extend(data)
+                elif isinstance(data, dict) and "calls" in data:
+                    all_calls.extend(data["calls"])
+        processed = process_twilio_data(all_calls, start, end, include_call_details=False)
+
+    if processed is None:
+        processed = _empty_summary()
+        ttl = CACHE_TTL_ANALYTICS_EMPTY
+    else:
+        ttl = CACHE_TTL_ANALYTICS
+
+    if app_settings.reporting_currency and processed.get("totals_by_currency"):
+        wanted = app_settings.reporting_currency
+        bucket = processed["totals_by_currency"].get(wanted)
+        processed["reporting_currency"] = wanted
+        processed["total_cost"] = bucket["total_cost"] if bucket else 0
+
+    currency = processed.get("reporting_currency")
+    processed["currency"] = currency
+    processed["timezone"] = tz_name
+    processed["range"] = {"start": start.isoformat(), "end": end.isoformat()}
+    processed["truncated"] = False
+    processed["generated_at"] = now.isoformat()
+    processed["source_synced_at"] = synced_at.isoformat() if synced_at else None
+    processed["stale"] = stale
+    processed["funnel"] = funnel_summary(
+        db, user_id, start=start, end=end, timezone_name=tz_name
+    )
+
+    comparison = None
+    if compare:
+        p_start, p_end = prior_period(start, end)
+        p_bound_start, p_bound_end = _local_bounds(p_start, p_end, tz_name)
+        prior = None
+        try:
+            prior = aggregate_twilio_sql(
+                db,
+                user_id,
+                bound_start=p_bound_start,
+                bound_end=p_bound_end,
+                zone=zone,
+            )
+        except Exception:  # noqa: BLE001
+            prior = None
+        prior = prior or _empty_summary()
+        comparison = {
+            "range": {"start": p_start.isoformat(), "end": p_end.isoformat()},
+            "label": f"Prior { (end - start).days + 1 } day(s): {p_start.isoformat()} → {p_end.isoformat()}",
+            "total_calls": _metric_delta(
+                processed.get("total_calls"), prior.get("total_calls")
+            ),
+            "total_duration": _metric_delta(
+                processed.get("total_duration"), prior.get("total_duration")
+            ),
+        }
+    processed["comparison"] = comparison
+
+    cache_set(cache_key, processed, ttl_seconds=ttl)
     return processed
 
 
-def _parse_call_start(value: str | None) -> datetime | None:
-    return _parse_start(value)
+def _normalize_upsert_row(user_id: int, item: dict[str, Any]) -> dict[str, Any] | None:
+    sid = item.get("sid")
+    if not sid:
+        return None
+    return {
+        "user_id": user_id,
+        "sid": sid,
+        "from_number": item.get("from"),
+        "to_number": item.get("to"),
+        "start_time": _parse_start(item.get("start_time")),
+        "duration_sec": item.get("duration_sec"),
+        "price": item.get("price"),
+        "price_unit": item.get("price_unit"),
+        "direction": item.get("direction"),
+        "status": item.get("status"),
+    }
 
 
 def upsert_twilio_calls(
     db: Session, user_id: int, call_data: list[dict[str, Any]]
 ) -> int:
-    """Idempotent upsert by (user_id, sid). Returns number of rows touched."""
-    touched = 0
+    """Idempotent bulk upsert by (user_id, sid). One commit per page."""
+    from datetime import datetime as dt
+    from datetime import timezone as tz
+
+    from app.telephony.providers.twilio import TERMINAL_CALL_STATUSES
+
+    rows = []
+    seen: set[str] = set()
+    now = dt.now(tz.utc)
     for item in call_data:
-        sid = item.get("sid")
-        if not sid:
+        row = _normalize_upsert_row(user_id, item)
+        if row is None or row["sid"] in seen:
             continue
-        existing = db.scalar(
-            select(TwilioCall).where(
-                TwilioCall.user_id == user_id, TwilioCall.sid == sid
-            )
+        seen.add(row["sid"])
+        row["created_at"] = now
+        row["updated_at"] = now
+        rows.append(row)
+    if not rows:
+        return 0
+
+    bind = db.get_bind()
+    dialect = bind.dialect.name if bind is not None else ""
+    if dialect == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert
+    else:
+        from sqlalchemy.dialects.sqlite import insert
+
+    stmt = insert(TwilioCall).values(rows)
+    excluded = stmt.excluded
+    update_cols = {
+        "from_number": excluded.from_number,
+        "to_number": excluded.to_number,
+        "start_time": excluded.start_time,
+        "duration_sec": excluded.duration_sec,
+        "price": excluded.price,
+        "price_unit": excluded.price_unit,
+        "direction": excluded.direction,
+        "status": excluded.status,
+        "updated_at": excluded.updated_at,
+    }
+    if dialect == "postgresql":
+        terminals = tuple(TERMINAL_CALL_STATUSES)
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_twilio_call_user_sid",
+            set_=update_cols,
+            where=(
+                TwilioCall.status.is_(None)
+                | TwilioCall.status.notin_(terminals)
+                | excluded.status.in_(terminals)
+            ),
         )
-        start_time = _parse_call_start(item.get("start_time"))
-        price = item.get("price")
-        fields = {
-            "from_number": item.get("from"),
-            "to_number": item.get("to"),
-            "start_time": start_time,
-            "duration_sec": item.get("duration_sec"),
-            "price": price,
-            "price_unit": item.get("price_unit"),
-            "direction": item.get("direction"),
-        }
-        if existing is None:
-            db.add(TwilioCall(user_id=user_id, sid=sid, **fields))
-        else:
-            for key, value in fields.items():
-                setattr(existing, key, value)
-        touched += 1
+    else:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "sid"],
+            set_=update_cols,
+        )
+    db.execute(stmt)
     db.commit()
-    return touched
+    return len(rows)
 
 
 def fetch_and_store_twilio(
@@ -397,19 +646,48 @@ def fetch_and_store_twilio(
     user_id: int,
     account_sid: str,
     auth_token: str,
-    limit: int = 100,
+    limit: int | None = None,
 ) -> dict[str, Any]:
-    """Incremental Twilio sync for one tenant (Phase 10.2–10.3)."""
+    """Lossless incremental Twilio sync: paginate, lookback, refresh nonterminal."""
     from app.core.cache import invalidate_user_analytics_caches
+    from app.core.config import settings as app_settings
     from app.db.models import User
+    from app.telephony.providers.twilio import TERMINAL_CALL_STATUSES
 
     user = db.get(User, user_id)
     if user is None:
         raise ValueError("user not found")
 
     provider = TwilioProvider(account_sid=account_sid, auth_token=auth_token)
+    lookback = timedelta(seconds=app_settings.twilio_sync_lookback_seconds)
     start_after = user.twilio_last_synced_at
-    call_data = provider.fetch_calls(limit=limit, start_time_after=start_after)
+    if start_after is not None:
+        start_after = start_after - lookback
+
+    page_size = app_settings.twilio_sync_page_size
+    max_pages = app_settings.twilio_sync_max_pages
+    max_records = page_size * max_pages if limit is None else limit
+    call_data = provider.fetch_calls(
+        limit=max_records,
+        start_time_after=start_after,
+        page_size=page_size,
+        max_pages=max_pages,
+    )
+
+    nonterminal = list(
+        db.scalars(
+            select(TwilioCall.sid).where(
+                TwilioCall.user_id == user_id,
+                (TwilioCall.status.is_(None))
+                | (TwilioCall.status.notin_(tuple(TERMINAL_CALL_STATUSES))),
+            )
+        ).all()
+    )
+    fetched_sids = {c.get("sid") for c in call_data}
+    refresh_sids = [sid for sid in nonterminal if sid not in fetched_sids]
+    if refresh_sids:
+        call_data.extend(provider.fetch_calls_by_sids(refresh_sids))
+
     upsert_twilio_calls(db, user_id, call_data)
 
     today = date.today()
@@ -443,7 +721,10 @@ def fetch_and_store_twilio(
 
     newest = user.twilio_last_synced_at
     for item in call_data:
-        st = _parse_call_start(item.get("start_time"))
+        status = (item.get("status") or "").lower()
+        if status and status not in TERMINAL_CALL_STATUSES:
+            continue
+        st = _parse_start(item.get("start_time"))
         if st is not None and (newest is None or st > newest):
             newest = st
     if newest is not None:

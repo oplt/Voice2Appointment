@@ -1,11 +1,16 @@
 import { api } from './client'
 import type { AnalyticsSummary } from '../types'
 
-export function getAnalyticsSummary(params: { start: string; end: string }) {
+export function getAnalyticsSummary(params: {
+  start: string
+  end: string
+  compare?: boolean
+}) {
   const query = new URLSearchParams({
     start: params.start,
     end: params.end,
   })
+  if (params.compare) query.set('compare', 'true')
   return api.get<AnalyticsSummary>(`/api/v1/analytics/summary?${query.toString()}`)
 }
 

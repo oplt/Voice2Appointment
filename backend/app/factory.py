@@ -11,6 +11,7 @@ from app.analytics.router import router as analytics_router
 from app.appointments.router import router as appointments_router
 from app.auth.router import router as auth_router
 from app.calendars.router import router as calendars_router
+from app.calls.router import router as calls_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
@@ -96,6 +97,7 @@ def create_app(
         application.include_router(users_router, prefix="/api/v1")
         application.include_router(dashboard_router, prefix="/api/v1")
         application.include_router(appointments_router, prefix="/api/v1")
+        application.include_router(calls_router, prefix="/api/v1")
         application.include_router(calendars_router, prefix="/api/v1")
         application.include_router(analytics_router, prefix="/api/v1")
         application.include_router(telephony_router, prefix="/api/v1")

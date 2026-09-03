@@ -35,7 +35,7 @@ DESIGN.md          UI authority
 
 ```bash
 cp .env.example .env   # once; edit secrets
-make local             # backend :8000 + frontend :5173
+make local             # backend :8000 + frontend :5173; opens the homepage in a new tab
 ```
 
 Required in `.env`: `SECRET_KEY`, `FERNET_KEY`, `DATABASE_URL`. Generate a Fernet key with:
@@ -44,7 +44,7 @@ Required in `.env`: `SECRET_KEY`, `FERNET_KEY`, `DATABASE_URL`. Generate a Ferne
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Uses `Procfile` + [honcho](https://github.com/nickstenning/honcho). Open http://localhost:5173 — Vite proxies `/api` and `/ws` to the API.
+Uses `Procfile` + [honcho](https://github.com/nickstenning/honcho). `make local` opens http://localhost:5173 when Vite is ready. Vite proxies `/api` and `/ws` to the API.
 
 ### Manual (without Make)
 

@@ -6,7 +6,6 @@ import PhoneInTalkOutlinedIcon from '@mui/icons-material/PhoneInTalkOutlined'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import Alert from '@mui/material/Alert'
-import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Card from '@mui/material/Card'
 import CardContent from '@mui/material/CardContent'
@@ -63,35 +62,70 @@ export function DashboardOverview() {
 
   const kpis = [
     {
-      label: 'Today',
-      value: summary?.appointments_today ?? '—',
-      to: '/appointments',
+      label: 'Calls today',
+      value: summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today ?? '—',
+      to: '/calls',
+      hint: summary?.operational?.calls_today?.definition,
     },
     {
-      label: 'This week',
-      value: summary?.appointments_week ?? '—',
+      label: 'Booked today',
+      value:
+        summary?.operational?.appointments_booked_today?.value ??
+        summary?.appointments_today ??
+        '—',
       to: '/appointments',
+      hint: summary?.operational?.appointments_booked_today?.definition,
+    },
+    {
+      label: 'Completion',
+      value:
+        summary?.operational?.completion_rate?.value != null
+          ? `${Math.round(summary.operational.completion_rate.value * 100)}%`
+          : summary?.call_statistics?.completion_rate != null
+            ? `${Math.round(summary.call_statistics.completion_rate * 100)}%`
+            : '—',
+      to: '/calls',
+      hint: summary?.operational?.completion_rate?.definition,
+    },
+    {
+      label: 'Needs attention',
+      value:
+        summary?.operational?.attention_needed?.value ??
+        summary?.call_statistics?.attention_today ??
+        '—',
+      to: '/calls',
+      hint: summary?.operational?.attention_needed?.definition,
     },
     {
       label: 'Upcoming',
-      value: summary?.upcoming?.length ?? '—',
-      to: '/calendar',
+      value:
+        summary?.operational?.upcoming_appointments?.value ??
+        summary?.upcoming?.length ??
+        '—',
+      to: '/appointments',
+      hint: summary?.operational?.upcoming_appointments?.definition,
     },
   ] as const
 
   const provider = summary?.provider_status
   const callsToday =
-    summary?.call_statistics?.calls_today ??
-    summary?.call_statistics?.total_calls ??
-    null
+    summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today
+  const recentCallsCount = summary?.recent_calls
+  const timezoneLabel = summary?.timezone
+  const generatedAt = summary?.generated_at
+  const stale = summary?.freshness?.stale
 
   return (
     <Stack spacing={3}>
       <PageHeader
         title="Dashboard"
-        subtitle="What matters now — appointments, calendar, and providers."
+        subtitle={
+          timezoneLabel
+            ? `What matters now — appointments, calendar, and providers (${timezoneLabel}).`
+            : 'What matters now — appointments, calendar, and providers.'
+        }
         actions={
-          <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+          <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
             <Chip
               label={
                 apiHealth.status === 'ok'
@@ -133,10 +167,11 @@ export function DashboardOverview() {
 
       <Grid container spacing={2}>
         {kpis.map((card) => (
-          <Grid key={card.label} size={{ xs: 12, sm: 4 }}>
+          <Grid key={card.label} size={{ xs: 12, sm: 6, md: 4, lg: 2.4 }}>
             <Card
               component={RouterLink}
               to={card.to}
+              title={card.hint}
               sx={{
                 textDecoration: 'none',
                 display: 'block',
@@ -160,6 +195,16 @@ export function DashboardOverview() {
           </Grid>
         ))}
       </Grid>
+
+      {stale ? (
+        <Alert severity="warning">
+          Twilio analytics sync looks stale
+          {summary?.freshness?.source_synced_at
+            ? ` (last sync ${formatWhen(summary.freshness.source_synced_at)})`
+            : ''}
+          . Refresh from Analytics.
+        </Alert>
+      ) : null}
 
       <Grid container spacing={2}>
         <Grid size={{ xs: 12, md: 7 }}>
@@ -215,12 +260,27 @@ export function DashboardOverview() {
                   {callsToday != null ? (
                     <Chip
                       icon={<PhoneInTalkOutlinedIcon />}
-                      label={`${callsToday} calls`}
+                      label={`${callsToday} calls today`}
+                      variant="outlined"
+                    />
+                  ) : null}
+                  {typeof recentCallsCount === 'number' ? (
+                    <Chip
+                      component={RouterLink}
+                      to="/calls"
+                      clickable
+                      icon={<PhoneInTalkOutlinedIcon />}
+                      label={`${recentCallsCount} calls (7d)`}
                       variant="outlined"
                     />
                   ) : null}
                 </Stack>
               )}
+              {generatedAt ? (
+                <Typography variant="caption" color="text.secondary">
+                  Generated {formatWhen(generatedAt)}
+                </Typography>
+              ) : null}
             </Stack>
 
             <Stack spacing={1}>
@@ -230,19 +290,28 @@ export function DashboardOverview() {
               ) : (
                 <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                   <Chip
-                    label={`Twilio: ${provider?.twilio ? 'ready' : '—'}`}
+                    label={provider?.twilio ? 'Twilio ready' : 'Twilio not configured'}
                     size="small"
                     variant="outlined"
+                    color={provider?.twilio ? 'success' : 'default'}
                   />
                   <Chip
-                    label={`Deepgram: ${provider?.deepgram ? 'ready' : '—'}`}
+                    label={provider?.deepgram ? 'Deepgram ready' : 'Deepgram not configured'}
                     size="small"
                     variant="outlined"
+                    color={provider?.deepgram ? 'success' : 'default'}
                   />
                   <Chip
-                    label={`Calendar: ${(provider?.calendar ?? summary?.calendar_connected) ? 'ready' : '—'}`}
+                    label={
+                      (provider?.calendar ?? summary?.calendar_connected)
+                        ? 'Calendar ready'
+                        : 'Calendar not connected'
+                    }
                     size="small"
                     variant="outlined"
+                    color={
+                      (provider?.calendar ?? summary?.calendar_connected) ? 'success' : 'default'
+                    }
                   />
                 </Stack>
               )}
@@ -285,24 +354,6 @@ export function DashboardOverview() {
                 </Button>
               </Stack>
             </Stack>
-
-            {summary?.recent_calls && summary.recent_calls.length > 0 ? (
-              <Box>
-                <Typography variant="h3" sx={{ mb: 1 }}>
-                  Recent calls
-                </Typography>
-                <List dense disablePadding>
-                  {summary.recent_calls.slice(0, 4).map((call) => (
-                    <ListItem key={call.call_sid} sx={{ px: 0 }} divider>
-                      <ListItemText
-                        primary={call.from_number ?? call.call_sid}
-                        secondary={call.status ?? '—'}
-                      />
-                    </ListItem>
-                  ))}
-                </List>
-              </Box>
-            ) : null}
           </Stack>
         </Grid>
       </Grid>

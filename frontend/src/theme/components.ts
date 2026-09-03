@@ -21,6 +21,14 @@ export const componentOverrides: Components<Theme> = {
         backgroundColor: designTokens.colors.pureWhite,
         color: designTokens.colors.carbonDark,
       },
+      '@media (prefers-reduced-motion: reduce)': {
+        '*, *::before, *::after': {
+          animationDuration: '0.01ms !important',
+          animationIterationCount: '1 !important',
+          transitionDuration: '0.01ms !important',
+          scrollBehavior: 'auto !important',
+        },
+      },
       a: {
         color: designTokens.colors.pewter,
         textDecoration: 'none',
@@ -40,7 +48,8 @@ export const componentOverrides: Components<Theme> = {
       root: {
         borderRadius: designTokens.radius.button,
         minHeight: designTokens.layout.ctaMinHeight,
-        padding: '4px 16px',
+        minWidth: 44,
+        padding: '8px 16px',
         transition,
         boxShadow: 'none',
         '&:hover': {
@@ -48,7 +57,6 @@ export const componentOverrides: Components<Theme> = {
         },
       },
       contained: {
-        minWidth: designTokens.layout.ctaWidth,
         border: '3px solid transparent',
         '&.MuiButton-colorPrimary:hover': {
           backgroundColor: '#355dc9',
@@ -58,7 +66,6 @@ export const componentOverrides: Components<Theme> = {
         },
       },
       outlined: {
-        minWidth: designTokens.layout.ctaWidth,
         borderWidth: 3,
         borderColor: designTokens.colors.cloudGray,
         color: designTokens.colors.graphite,
@@ -71,7 +78,7 @@ export const componentOverrides: Components<Theme> = {
       },
       text: {
         color: designTokens.colors.carbonDark,
-        minWidth: 'auto',
+        minWidth: 44,
         '&:hover': {
           backgroundColor: 'rgba(23, 26, 32, 0.04)',
         },
@@ -215,6 +222,22 @@ export const componentOverrides: Components<Theme> = {
       root: {
         borderRadius: designTokens.radius.button,
         fontWeight: 500,
+      },
+    },
+  },
+  MuiIconButton: {
+    styleOverrides: {
+      root: {
+        minWidth: 44,
+        minHeight: 44,
+      },
+    },
+  },
+  MuiTableContainer: {
+    styleOverrides: {
+      root: {
+        overflowX: 'auto',
+        WebkitOverflowScrolling: 'touch',
       },
     },
   },

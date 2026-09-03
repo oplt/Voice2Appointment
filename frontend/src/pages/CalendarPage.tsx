@@ -12,6 +12,7 @@ import Stack from '@mui/material/Stack'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link as RouterLink } from 'react-router-dom'
 
 import {
   checkCalendarAvailability,
@@ -23,7 +24,8 @@ import { PageHeader } from '../components/PageHeader'
 import { useSnackbar } from '../components/SnackbarProvider'
 import type { CalendarEvent, CalendarStatus } from '../types'
 
-function formatWhen(iso: string) {
+function formatWhen(iso?: string) {
+  if (!iso) return '—'
   try {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: 'medium',
@@ -41,12 +43,25 @@ function defaultRange() {
   return { timeMin: now.toISOString(), timeMax: end.toISOString() }
 }
 
+function safeExternalUrl(url?: string | null): string | null {
+  if (!url) return null
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return parsed.toString()
+  } catch {
+    return null
+  }
+  return null
+}
+
 export function CalendarPage() {
   const { notify } = useSnackbar()
   const [status, setStatus] = useState<CalendarStatus | null>(null)
   const [events, setEvents] = useState<CalendarEvent[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [eventsLoading, setEventsLoading] = useState(false)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [eventsError, setEventsError] = useState<string | null>(null)
 
   const [availStart, setAvailStart] = useState('')
   const [availEnd, setAvailEnd] = useState('')
@@ -56,19 +71,32 @@ export function CalendarPage() {
   const range = useMemo(() => defaultRange(), [])
 
   const load = useCallback(() => {
-    setLoading(true)
-    setError(null)
-    Promise.all([getCalendarStatus(), listCalendarEvents(range)])
-      .then(([nextStatus, nextEvents]) => {
+    setStatusLoading(true)
+    setStatusError(null)
+    setEventsError(null)
+    getCalendarStatus()
+      .then((nextStatus) => {
         setStatus(nextStatus)
-        setEvents(nextEvents)
+        if (!nextStatus.connected) {
+          setEvents([])
+          setEventsLoading(false)
+          return
+        }
+        setEventsLoading(true)
+        return listCalendarEvents(range)
+          .then((nextEvents) => setEvents(nextEvents))
+          .catch((err: unknown) => {
+            setEvents([])
+            setEventsError(err instanceof ApiError ? err.message : 'Failed to load events')
+          })
+          .finally(() => setEventsLoading(false))
       })
       .catch((err: unknown) => {
         setStatus(null)
         setEvents([])
-        setError(err instanceof ApiError ? err.message : 'Failed to load calendar')
+        setStatusError(err instanceof ApiError ? err.message : 'Failed to load calendar status')
       })
-      .finally(() => setLoading(false))
+      .finally(() => setStatusLoading(false))
   }, [range])
 
   useEffect(() => {
@@ -107,6 +135,7 @@ export function CalendarPage() {
   }
 
   const embedUrl = status?.embedded_link
+  const loading = statusLoading || eventsLoading
 
   return (
     <Stack spacing={3}>
@@ -126,7 +155,7 @@ export function CalendarPage() {
         }
       />
 
-      {error ? (
+      {statusError ? (
         <Alert
           severity="error"
           action={
@@ -135,7 +164,7 @@ export function CalendarPage() {
             </Button>
           }
         >
-          {error}
+          {statusError}
         </Alert>
       ) : null}
 
@@ -145,7 +174,7 @@ export function CalendarPage() {
         useFlexGap
         sx={{ alignItems: 'center', flexWrap: 'wrap' }}
       >
-        {loading ? (
+        {statusLoading ? (
           <Skeleton width={180} height={32} />
         ) : (
           <>
@@ -168,7 +197,7 @@ export function CalendarPage() {
         )}
       </Stack>
 
-      {loading ? (
+      {statusLoading ? (
         <Skeleton variant="rounded" height={420} />
       ) : embedUrl ? (
         <Box
@@ -182,8 +211,17 @@ export function CalendarPage() {
             borderRadius: 1,
           }}
         />
-      ) : !error ? (
-        <Alert severity="info">
+      ) : !statusError ? (
+        <Alert
+          severity="info"
+          action={
+            !status?.connected ? (
+              <Button color="inherit" size="small" component={RouterLink} to="/settings">
+                Open Settings
+              </Button>
+            ) : undefined
+          }
+        >
           {status?.connected
             ? 'No embed link returned. Events still appear below.'
             : 'Connect Google Calendar in Settings to see your schedule.'}
@@ -192,34 +230,51 @@ export function CalendarPage() {
 
       <Stack spacing={1.5}>
         <Typography variant="h3">Events (next 14 days)</Typography>
-        {loading ? (
+        {eventsError ? (
+          <Alert
+            severity="warning"
+            action={
+              <Button color="inherit" size="small" onClick={load}>
+                Retry
+              </Button>
+            }
+          >
+            {eventsError}
+          </Alert>
+        ) : null}
+        {eventsLoading ? (
           <Stack spacing={1}>
             <Skeleton variant="rounded" height={48} />
             <Skeleton variant="rounded" height={48} />
           </Stack>
-        ) : events.length === 0 && !error ? (
+        ) : !status?.connected && !statusLoading ? (
+          <Alert severity="info">Connect Google Calendar to load events.</Alert>
+        ) : events.length === 0 && !eventsError ? (
           <Alert severity="info">No events in this range.</Alert>
         ) : (
           <List disablePadding>
-            {events.map((ev) => (
-              <ListItem key={ev.id} divider sx={{ px: 0 }}>
-                <ListItemText
-                  primary={ev.summary || '(No title)'}
-                  secondary={`${formatWhen(ev.start)} – ${formatWhen(ev.end)}`}
-                />
-                {ev.html_link ? (
-                  <Button
-                    href={ev.html_link}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    size="small"
-                    variant="text"
-                  >
-                    Open
-                  </Button>
-                ) : null}
-              </ListItem>
-            ))}
+            {events.map((ev) => {
+              const link = safeExternalUrl(ev.url)
+              const when = ev.allDay
+                ? `${formatWhen(ev.start)} (all day)`
+                : `${formatWhen(ev.start)}${ev.end ? ` – ${formatWhen(ev.end)}` : ''}`
+              return (
+                <ListItem key={ev.id} divider sx={{ px: 0 }}>
+                  <ListItemText primary={ev.title || '(No title)'} secondary={when} />
+                  {link ? (
+                    <Button
+                      href={link}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      size="small"
+                      variant="text"
+                    >
+                      Open
+                    </Button>
+                  ) : null}
+                </ListItem>
+              )
+            })}
           </List>
         )}
       </Stack>
@@ -254,6 +309,7 @@ export function CalendarPage() {
           variant="contained"
           startIcon={<EventAvailableOutlinedIcon />}
           loading={availLoading}
+          disabled={!status?.connected}
           sx={{ alignSelf: 'flex-start' }}
         >
           Check

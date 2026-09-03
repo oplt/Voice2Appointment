@@ -25,6 +25,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # One-shot schema migration (P3-08). Runtime services never run Alembic.
+  migrate:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.backend
+    env_file:
+      - .env
+    environment:
+      RUN_DB_MIGRATE: "1"
+      MIGRATE_ONLY: "1"
+      DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   # Production web process (HTTP API via Gunicorn + UvicornWorker). No voice WS.
   web:
     build:
@@ -33,19 +49,21 @@ services:
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       DEBUG: "false"
       DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
-      CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000
-      COOKIE_SECURE: "false"
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://localhost:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
+      TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,127.0.0.1/32}
     ports:
       - "8000:8000"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -63,17 +81,19 @@ services:
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       DEBUG: "false"
       DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
     expose:
       - "8001"
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -90,15 +110,17 @@ services:
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       DEBUG: "false"
       DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 
@@ -110,15 +132,17 @@ services:
     env_file:
       - .env
     environment:
-      APP_ENV: production
+      APP_ENV: ${APP_ENV:-production}
       DEBUG: "false"
       DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from sqlalchemy import text
 
-from app.core.config import Settings
+from app.core.config import Settings, settings
 from app.core.crypto import decrypt_secret, encrypt_secret
 from app.core.redirects import safe_next_path
 from app.core.security import hash_password
@@ -151,8 +151,9 @@ def test_login_rate_limit(client) -> None:
     assert limited.status_code == 429
 
 
-def test_twilio_webhook_csrf_exempt(client) -> None:
-    # Webhook must succeed without CSRF (recording route is exempt).
+def test_twilio_webhook_csrf_exempt(client, monkeypatch) -> None:
+    # Webhooks stay CSRF-exempt; Twilio signature is enforced separately (403 if missing).
+    monkeypatch.setattr(settings, "twilio_auth_token", "tok")
     response = client.post(
         "/api/v1/telephony/twilio/recording",
         data={
@@ -162,5 +163,6 @@ def test_twilio_webhook_csrf_exempt(client) -> None:
             "RecordingUrl": "https://api.twilio.com/rec",
         },
     )
-    # May be 200 with form body; if validation differs, at least not CSRF 403
-    assert response.status_code != 403
+    # Missing Twilio signature → 403 Forbidden (not CSRF cookie failure message)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "Forbidden"

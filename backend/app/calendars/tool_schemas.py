@@ -24,6 +24,7 @@ Safety rules:
 - For create/reschedule/cancel: first call with confirmed=false (or omit confirmed) to get a confirmation prompt; only call again with confirmed=true after the caller agrees.
 - Always convert relative dates (today, tomorrow, next Friday, this evening) to absolute ISO datetimes using CURRENT DATE CONTEXT before tool calls.
 - Confirm critical details (title, date, time, duration) before mutations.
+- Use request_human_handoff only when the caller asks for a person or you cannot complete the request safely; require confirmed=true after they agree.
 
 CURRENT DATE CONTEXT:
 {current_date_context}
@@ -138,6 +139,28 @@ VOICE_TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 },
             },
             "required": ["event_id"],
+        },
+    },
+    {
+        "name": "request_human_handoff",
+        "description": (
+            "Transfer the live call to a human when the caller asks or the assistant "
+            "cannot safely continue. Call first with confirmed=false; only confirmed=true "
+            "after the caller agrees. Never include transcript content."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "Short category, e.g. billing, complex_request, caller_request",
+                },
+                "confirmed": {
+                    "type": "boolean",
+                    "description": "Must be true to perform the transfer",
+                },
+            },
+            "required": [],
         },
     },
 ]

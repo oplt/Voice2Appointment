@@ -248,10 +248,16 @@ def log_event(
     event: str,
     *,
     level: int = logging.INFO,
-    **fields: Any,
+    fields: dict[str, Any] | None = None,
+    **extra: Any,
 ) -> None:
-    """Emit a structured event without putting secrets in the message."""
-    safe = {k: sanitize_for_log(v) for k, v in fields.items()}
+    """Emit a structured event without putting secrets in the message.
+
+    Prefer ``fields=`` when unpacking typed metric dicts so values are not
+    checked against the ``level`` keyword (mypy).
+    """
+    merged = {**(fields or {}), **extra}
+    safe = {k: sanitize_for_log(v) for k, v in merged.items()}
     logger.log(level, event, extra={"event": event, **safe})
 
 

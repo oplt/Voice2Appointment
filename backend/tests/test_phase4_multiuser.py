@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 
+from twilio.request_validator import RequestValidator
+
+from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models import CallSession, GoogleCalendarAuth, User
 from app.telephony import service as telephony_service
+from app.telephony.stream_tokens import issue_stream_token
 from app.voice.context import CallContext, bind_call_context, current_call_context
 from app.voice.session import load_voice_config
+
+
+def _sign(auth_token: str, url: str, params: dict[str, str]) -> str:
+    return RequestValidator(auth_token).compute_signature(url, params)
 
 
 def test_resolve_inbound_user_by_phone_not_first_user(db_session) -> None:
@@ -53,33 +61,42 @@ def test_resolve_inbound_user_by_account_sid(db_session) -> None:
     assert resolved.id == user.id
 
 
-def test_inbound_voice_creates_callsession_and_twiml(client, db_session) -> None:
+def test_inbound_voice_creates_callsession_and_twiml(client, db_session, monkeypatch) -> None:
+    token = "voicetok"
+    monkeypatch.setattr(settings, "twilio_auth_token", token)
+    monkeypatch.setattr(settings, "public_base_url", "http://localhost:8000")
     user = User(
         username="voiceuser",
         email="voice@example.com",
         password=hash_password("password123"),
         twilio_phone_number="+19253965839",
         twilio_account_sid="ACvoice",
+        twilio_auth_token=token,
     )
     db_session.add(user)
     db_session.commit()
     db_session.refresh(user)
 
+    params = {
+        "CallSid": "CAphase4test",
+        "AccountSid": "ACvoice",
+        "To": "+19253965839",
+        "From": "+15551234567",
+    }
+    url = "http://localhost:8000/api/v1/telephony/twilio/voice"
     response = client.post(
         "/api/v1/telephony/twilio/voice",
-        data={
-            "CallSid": "CAphase4test",
-            "AccountSid": "ACvoice",
-            "To": "+19253965839",
-            "From": "+15551234567",
-        },
+        data=params,
+        headers={"X-Twilio-Signature": _sign(token, url, params)},
     )
     assert response.status_code == 200
     assert "application/xml" in response.headers.get("content-type", "")
     body = response.text
     assert "/ws/voice" in body
-    assert f'value="{user.id}"' in body
+    assert "stream_token=" in body
     assert "CAphase4test" in body
+    # user_id must not be trusted via TwiML parameters
+    assert 'name="user_id"' not in body
 
     from sqlalchemy import select
 
@@ -88,23 +105,30 @@ def test_inbound_voice_creates_callsession_and_twiml(client, db_session) -> None
     )
     assert cs is not None
     assert cs.user_id == user.id
+    assert cs.stream_token_hash is not None
 
 
-def test_inbound_voice_unknown_number(client) -> None:
+def test_inbound_voice_unknown_number(client, monkeypatch) -> None:
+    token = "voicetok"
+    monkeypatch.setattr(settings, "twilio_auth_token", token)
+    monkeypatch.setattr(settings, "public_base_url", "http://localhost:8000")
+    params = {
+        "CallSid": "CAunknown",
+        "AccountSid": "ACmissing",
+        "To": "+10000000000",
+        "From": "+15551234567",
+    }
+    url = "http://localhost:8000/api/v1/telephony/twilio/voice"
     response = client.post(
         "/api/v1/telephony/twilio/voice",
-        data={
-            "CallSid": "CAunknown",
-            "AccountSid": "ACmissing",
-            "To": "+10000000000",
-            "From": "+15551234567",
-        },
+        data=params,
+        headers={"X-Twilio-Signature": _sign(token, url, params)},
     )
     assert response.status_code == 200
     assert "not configured" in response.text.lower()
 
 
-def test_resolve_call_context_from_custom_params(db_session) -> None:
+def test_resolve_call_context_from_stream_token(db_session) -> None:
     user = User(
         username="ctxuser",
         email="ctx@example.com",
@@ -123,10 +147,22 @@ def test_resolve_call_context_from_custom_params(db_session) -> None:
     db_session.add(auth)
     db_session.commit()
 
+    cs = CallSession.create(
+        call_sid="CActx",
+        from_number="+1",
+        to_number="+2",
+        user_id=user.id,
+        session=db_session,
+    )
+    raw = issue_stream_token(db_session, cs)
     ctx = telephony_service.resolve_call_context_from_start(
         db_session,
         call_sid="CActx",
-        custom_parameters={"user_id": str(user.id), "call_sid": "CActx"},
+        custom_parameters={
+            "user_id": "99999",  # forged — ignored
+            "call_sid": "CActx",
+            "stream_token": raw,
+        },
     )
     assert isinstance(ctx, CallContext)
     assert ctx.user_id == user.id

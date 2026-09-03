@@ -15,6 +15,8 @@ from app.calendars.service import get_auth_record
 from app.core.config import settings
 from app.db.models import CallSession, User
 from app.telephony.providers.twilio import TwilioProvider
+from app.telephony.security import assert_valid_twilio_sid, twilio_recording_api_url
+from app.telephony.stream_tokens import issue_stream_token
 from app.voice.context import CallContext
 from app.workers.tasks import download_and_archive_recording
 
@@ -35,16 +37,12 @@ def find_user_by_twilio_account(db: Session, account_sid: str) -> User | None:
 
 
 def find_user_by_twilio_phone(db: Session, phone: str | None) -> User | None:
-    normalized = _normalize_phone(phone)
-    if not normalized:
+    from app.telephony.phones import canonical_e164
+
+    e164 = canonical_e164(phone)
+    if not e164:
         return None
-    users = db.scalars(
-        select(User).where(User.twilio_phone_number.is_not(None))
-    ).all()
-    for user in users:
-        if _normalize_phone(user.twilio_phone_number) == normalized:
-            return user
-    return None
+    return db.scalar(select(User).where(User.twilio_phone_e164 == e164))
 
 
 def resolve_inbound_user(
@@ -83,38 +81,41 @@ def resolve_call_context_from_start(
     *,
     call_sid: str | None,
     custom_parameters: dict[str, str] | None = None,
+    stream_token: str | None = None,
 ) -> CallContext:
-    """Resolve CallContext from a Twilio media-stream start event."""
+    """Resolve CallContext from a verified media-stream start.
+
+    Caller-supplied ``user_id`` is ignored. Ownership comes only from CallSession
+    after a valid single-use ``stream_token``.
+    """
+    from app.telephony.stream_tokens import consume_stream_token
+
     params = custom_parameters or {}
-    user_id_raw = params.get("user_id")
     call_sid = (call_sid or params.get("call_sid") or "").strip()
+    token = (stream_token or params.get("stream_token") or "").strip()
     if not call_sid:
         raise ValueError("call_sid is required to resolve CallContext")
+    if not token:
+        raise ValueError("stream_token is required")
 
-    user_id: int | None = None
-    if user_id_raw:
-        try:
-            user_id = int(user_id_raw)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("invalid user_id custom parameter") from exc
-
-    if user_id is None:
-        cs = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
-        if cs is None:
-            raise ValueError(f"No CallSession for call_sid={call_sid}")
-        user_id = cs.user_id
-
-    return build_call_context(db, call_sid=call_sid, user_id=user_id)
+    cs = consume_stream_token(db, call_sid=call_sid, raw_token=token)
+    return build_call_context(db, call_sid=cs.call_sid, user_id=cs.user_id)
 
 
-def _media_stream_wss_url() -> str:
+def _media_stream_wss_url(*, call_sid: str, stream_token: str) -> str:
     base = (settings.public_base_url or "").rstrip("/")
     if not base:
         raise RuntimeError("PUBLIC_BASE_URL is required for Twilio media streams")
     parsed = urlparse(base)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     host = parsed.netloc or parsed.path
-    return f"{scheme}://{host}/ws/voice"
+    from urllib.parse import quote
+
+    return (
+        f"{scheme}://{host}/ws/voice"
+        f"?call_sid={quote(call_sid, safe='')}"
+        f"&stream_token={quote(stream_token, safe='')}"
+    )
 
 
 def process_inbound_voice(
@@ -152,7 +153,7 @@ def process_inbound_voice(
 
     existing = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
     if existing is None:
-        CallSession.create(
+        existing = CallSession.create(
             call_sid=call_sid,
             from_number=from_number,
             to_number=to_number,
@@ -167,9 +168,19 @@ def process_inbound_voice(
             existing.user_id,
             user.id,
         )
+        return Response(
+            content=(
+                "<?xml version='1.0' encoding='UTF-8'?>"
+                "<Response><Say>Call ownership mismatch.</Say><Hangup/></Response>"
+            ),
+            media_type="application/xml",
+            status_code=200,
+        )
+
+    stream_token = issue_stream_token(db, existing)
 
     try:
-        stream_url = _media_stream_wss_url()
+        stream_url = _media_stream_wss_url(call_sid=call_sid, stream_token=stream_token)
     except RuntimeError as exc:
         logger.error("%s", exc)
         return Response(
@@ -181,14 +192,27 @@ def process_inbound_voice(
             status_code=500,
         )
 
+    # Do not put user_id in TwiML — ownership is token-bound server state only.
+    # statusCallback on <Connect> is not supported; configure the Twilio number's
+    # Status Callback URL to PUBLIC_BASE_URL/api/v1/telephony/twilio/status.
     twiml = (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response><Connect><Stream url=\"{url}\">"
-        '<Parameter name="user_id" value="{user_id}"/>'
         '<Parameter name="call_sid" value="{call_sid}"/>'
+        '<Parameter name="stream_token" value="{token}"/>'
         "</Stream></Connect></Response>"
-    ).format(url=stream_url, user_id=user.id, call_sid=call_sid)
+    ).format(url=stream_url, call_sid=call_sid, token=stream_token)
     return Response(content=twiml, media_type="application/xml")
+
+
+def process_status_callback(
+    db: Session,
+    payload: dict[str, str],
+) -> dict[str, Any]:
+    """Apply signed Twilio call-status updates to CallSession (P2-01)."""
+    from app.telephony.lifecycle import apply_twilio_status_callback
+
+    return apply_twilio_status_callback(db, payload)
 
 
 def process_recording_webhook(
@@ -197,10 +221,9 @@ def process_recording_webhook(
     *,
     enqueue: bool = True,
 ) -> dict[str, Any]:
-    """Handle Twilio recording callback.
+    """Handle Twilio recording callback after signature validation.
 
-    Looks up the user by ``User.twilio_account_sid`` (not ``account_sid``).
-    Safe when the user row is missing.
+    Reconstructs the Twilio API URL from verified SIDs; rejects ownership mismatch.
     """
     account_sid = (payload.get("AccountSid") or "").strip()
     user = find_user_by_twilio_account(db, account_sid)
@@ -210,47 +233,60 @@ def process_recording_webhook(
             "Twilio recording webhook: no user for AccountSid=%s",
             account_sid or "(empty)",
         )
-    elif not user.twilio_account_sid or not user.twilio_auth_token:
+        return {"status": "forbidden", "ok": False, "enqueued": False}
+
+    if not user.twilio_account_sid or not user.twilio_auth_token:
         logger.warning(
             "Twilio recording webhook: user id=%s missing twilio credentials",
             user.id,
         )
+        return {"status": "forbidden", "ok": False, "enqueued": False}
 
-    # Parsing the webhook body does not need live Twilio API credentials.
     result = TwilioProvider.parse_recording_webhook(payload)
     if not result.get("ok"):
         return result
 
-    call_sid = result["call_sid"]
-    recording_sid = result["recording_sid"]
-    recording_url = result["recording_url"]
+    try:
+        call_sid = assert_valid_twilio_sid(result["call_sid"], prefix="CA")
+        recording_sid = assert_valid_twilio_sid(result["recording_sid"], prefix="RE")
+        account_sid = assert_valid_twilio_sid(account_sid, prefix="AC")
+    except ValueError:
+        return {"status": "invalid sid", "ok": False, "enqueued": False}
+
+    # Never fetch the webhook-supplied host; rebuild from SIDs.
+    recording_url = twilio_recording_api_url(
+        account_sid=account_sid, recording_sid=recording_sid
+    )
 
     cs = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
-    if cs is not None:
-        cs.recording_sid = recording_sid
-        cs.recording_url = recording_url
-        if user is not None and cs.user_id != user.id:
-            logger.warning(
-                "CallSession user_id=%s does not match AccountSid user id=%s",
-                cs.user_id,
-                user.id,
-            )
-        db.commit()
+    if cs is None:
+        return {"status": "unknown call", "ok": False, "enqueued": False}
+    if cs.user_id != user.id:
+        logger.warning(
+            "Recording webhook ownership mismatch call_sid=%s cs.user=%s account.user=%s",
+            call_sid,
+            cs.user_id,
+            user.id,
+        )
+        return {"status": "forbidden", "ok": False, "enqueued": False}
 
-    # Only enqueue download when we have a user with credentials.
-    if (
-        enqueue
-        and user is not None
-        and user.twilio_account_sid
-        and user.twilio_auth_token
-    ):
+    # Idempotent: same recording_sid already stored → no re-enqueue side effect.
+    already = cs.recording_sid == recording_sid and cs.recording_url == recording_url
+    cs.recording_sid = recording_sid
+    cs.recording_url = recording_url
+    db.commit()
+
+    if enqueue and not already:
         try:
             download_and_archive_recording.delay(
                 recording_sid=recording_sid,
                 recording_url=recording_url,
                 call_sid=call_sid,
+                account_sid=account_sid,
+                user_id=user.id,
             )
         except Exception:
             logger.exception("Failed to enqueue recording download for %s", call_sid)
+            return {"status": "ok", "ok": True, "enqueued": False}
 
-    return {"status": "ok", "ok": True, "enqueued": bool(user and enqueue)}
+    return {"status": "ok", "ok": True, "enqueued": bool(enqueue and not already)}

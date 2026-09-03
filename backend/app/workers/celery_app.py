@@ -20,6 +20,9 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Single default queue (P8-02). Do not enable task_routes until
+    # docs/phase8-decisions.md contention threshold is met.
+    task_default_queue="celery",
     beat_schedule={
         # Phase 10.4 — periodic Twilio incremental sync (not real-time voice).
         "sync-all-twilio-analytics": {
@@ -30,6 +33,18 @@ celery_app.conf.update(
             "task": "send_appointment_reminders",
             "schedule": crontab(minute="*/30"),
         },
+        "purge-expired-retained-content": {
+            "task": "purge_expired_retained_content",
+            "schedule": crontab(minute=20, hour="*/6"),
+        },
+        "reconcile-pending-appointments": {
+            "task": "reconcile_pending_appointments",
+            "schedule": crontab(minute="*/10"),
+        },
+        "reconcile-expired-call-sessions": {
+            "task": "reconcile_expired_call_sessions",
+            "schedule": crontab(minute="*/5"),
+        },
         "precompute-analytics-summaries": {
             "task": "precompute_analytics_summaries",
             "schedule": crontab(minute=5),
@@ -38,3 +53,7 @@ celery_app.conf.update(
 )
 
 celery_app.autodiscover_tasks(["app.workers"])
+
+from app.workers.instrumentation import register_celery_metrics  # noqa: E402
+
+register_celery_metrics(celery_app)

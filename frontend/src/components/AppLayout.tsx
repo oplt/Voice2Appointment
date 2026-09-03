@@ -45,7 +45,7 @@ export function AppLayout() {
   const handleLogout = async () => {
     await logout()
     notify('Signed out', 'info')
-    navigate('/login')
+    navigate('/')
   }
 
   const drawer = (

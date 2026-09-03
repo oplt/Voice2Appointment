@@ -29,8 +29,7 @@ export const designTokens = {
   },
   layout: {
     maxWidth: 1383,
-    ctaWidth: 200,
-    ctaMinHeight: 40,
+    ctaMinHeight: 44,
   },
   fontFamily: {
     display: '"Universal Sans Display", -apple-system, Arial, sans-serif',

@@ -22,7 +22,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.config import settings
 from app.core.types import EncryptedText
@@ -58,10 +58,25 @@ class User(Base):
         String(255), nullable=False, default="default.jpg"
     )
     password: Mapped[str] = mapped_column(String(128), nullable=False)
+    auth_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    password_reset_token_hash: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    password_reset_expires_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    password_reset_consumed_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
 
     twilio_account_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     twilio_auth_token: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
-    twilio_phone_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    twilio_phone_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    twilio_phone_e164: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, unique=True, index=True
+    )
     deepgram_api_key: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     twilio_last_synced_at: Mapped[datetime | None] = mapped_column(
@@ -80,6 +95,14 @@ class User(Base):
         lazy="select",
         uselist=False,
     )
+
+    @validates("twilio_phone_number")
+    def _sync_twilio_phone_e164(self, _key: str, value: str | None) -> str | None:
+        from app.telephony.phones import canonical_e164
+
+        cleaned = (value or "").strip() or None
+        self.twilio_phone_e164 = canonical_e164(cleaned)
+        return cleaned
 
 
 class GoogleCalendarAuth(TimestampMixin, Base):
@@ -111,6 +134,9 @@ class GoogleCalendarAuth(TimestampMixin, Base):
 
 class CallSession(Base):
     __tablename__ = "callsession"
+    __table_args__ = (
+        Index("ix_callsession_user_started", "user_id", "started_at"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
@@ -128,10 +154,17 @@ class CallSession(Base):
     recording_downloaded_at: Mapped[datetime | None] = mapped_column(
         TZDateTime, nullable=True
     )
+    stream_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stream_token_expires_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    stream_token_consumed_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
     from_number: Mapped[str | None] = mapped_column(String(32), index=True)
     to_number: Mapped[str | None] = mapped_column(String(32), index=True)
     status: Mapped[str] = mapped_column(
-        String(16), default="active", server_default="active", index=True
+        String(32), default="active", server_default="active", index=True
     )
     data: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE, nullable=False, server_default=text("'{}'")
@@ -142,6 +175,13 @@ class CallSession(Base):
     ended_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(TZDateTime, index=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
+    outcome: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    terminal_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    content_purged_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    transfer_attempted_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
 
     user: Mapped[User] = relationship("User", back_populates="call_sessions")
     appointment: Mapped[Appointment | None] = relationship(
@@ -216,7 +256,13 @@ class Appointment(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_appointment_idempotency_key"),
         Index("ix_appointment_user_start", "user_id", "start_datetime"),
+        Index("ix_appointment_user_start_id", "user_id", "start_datetime", "id"),
         Index("ix_appointment_user_status_start", "user_id", "status", "start_datetime"),
+        # Overlap-friendly: covers validate_slot conflict query shape.
+        Index(
+            "ix_appointment_overlap",
+            "user_id", "status", "start_datetime", "end_datetime",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -244,6 +290,13 @@ class Appointment(TimestampMixin, Base):
     )
     google_calendar_link: Mapped[str | None] = mapped_column(String(500), nullable=True)
     idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # pending_provider → provider write not finalized; confirmed/cancelled/failed otherwise
+    provider_sync_status: Mapped[str] = mapped_column(
+        String(32),
+        nullable=False,
+        default="confirmed",
+        server_default="confirmed",
+    )
 
     stored_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -256,6 +309,12 @@ class Appointment(TimestampMixin, Base):
 
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     reminder_sent: Mapped[bool] = mapped_column(Boolean, default=False)
+    confirmation_sent_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    transcript_purged_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
 
     user: Mapped[User] = relationship("User", back_populates="appointments")
     callsession: Mapped[CallSession | None] = relationship(
@@ -264,6 +323,42 @@ class Appointment(TimestampMixin, Base):
 
     def __repr__(self) -> str:
         return f"<Appointment {self.summary} on {self.start_datetime}>"
+
+
+class NotificationDelivery(TimestampMixin, Base):
+    """Idempotent notification audit without message body (P6-01)."""
+
+    __tablename__ = "notification_delivery"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_notification_delivery_idem"),
+        Index(
+            "ix_notification_delivery_user_appt",
+            "user_id",
+            "appointment_id",
+            "kind",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("res_user.id"), nullable=False, index=True
+    )
+    appointment_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("appointment.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    channel: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="email", server_default="email"
+    )
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending"
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+
+    def __repr__(self) -> str:
+        return f"<NotificationDelivery {self.kind} appt={self.appointment_id} {self.status}>"
 
 
 class TwilioCallAnalytics(TimestampMixin, Base):
@@ -295,6 +390,7 @@ class TwilioCall(TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("user_id", "sid", name="uq_twilio_call_user_sid"),
         Index("ix_twilio_call_user_start", "user_id", "start_time"),
+        Index("ix_twilio_call_user_status", "user_id", "status"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -309,6 +405,7 @@ class TwilioCall(TimestampMixin, Base):
     price: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
     price_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
     direction: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
     def __repr__(self) -> str:
         return f"<TwilioCall sid={self.sid} user={self.user_id}>"

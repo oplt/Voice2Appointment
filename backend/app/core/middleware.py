@@ -146,4 +146,16 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     status_code=status_code,
                     latency_ms=latency_ms,
                 )
+                try:
+                    from app.core.metrics import metrics
+
+                    class_bucket = f"{(status_code // 100)}xx"
+                    metrics.incr("http_requests", labels={"status": class_bucket})
+                    metrics.observe(
+                        "http_latency_ms",
+                        latency_ms,
+                        labels={"status": class_bucket},
+                    )
+                except Exception:  # noqa: BLE001
+                    pass
             reset_log_context(tokens)

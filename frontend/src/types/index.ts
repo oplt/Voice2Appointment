@@ -11,17 +11,18 @@ export type UserProfile = User & {
   twilio_auth_token_set?: boolean
   twilio_phone_number?: string | null
   deepgram_api_key_set?: boolean
+  has_twilio?: boolean
+  has_deepgram?: boolean
   config_json?: string | null
-  calendar_id?: string | null
-  time_zone?: string | null
+  image_file?: string
 }
 
 export type ApiErrorBody = {
-  detail?: string | { msg: string }[]
+  detail?: string | { msg: string }[] | { code?: string; message?: string }
   message?: string
 }
 
-export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | string
+export type AppointmentStatus = 'pending' | 'confirmed' | 'cancelled' | 'completed' | 'failed' | string
 
 export type Appointment = {
   id: number
@@ -37,13 +38,14 @@ export type Appointment = {
   notes?: string | null
   google_calendar_event_id?: string | null
   google_calendar_link?: string | null
+  transcript?: string | null
 }
 
 export type AppointmentCreate = {
   summary: string
   description?: string | null
   start_datetime: string
-  end_datetime: string
+  end_datetime?: string | null
   timezone?: string
   status?: AppointmentStatus
   client_name?: string | null
@@ -54,15 +56,29 @@ export type AppointmentCreate = {
 
 export type AppointmentUpdate = Partial<AppointmentCreate>
 
-export type RecentCall = {
-  id?: number
+export type CallSession = {
+  id: number
   call_sid: string
   from_number?: string | null
   to_number?: string | null
-  status?: string | null
+  status: string
   started_at?: string | null
+  ended_at?: string | null
   duration_seconds?: number | null
+  outcome?: string | null
+  terminal_reason?: string | null
+  has_transcript?: boolean
+  transcript?: string | null
 }
+
+export type CallSessionList = {
+  items: CallSession[]
+  next_cursor?: string | null
+  limit: number
+}
+
+/** @deprecated use CallSession */
+export type RecentCall = CallSession
 
 export type ProviderStatus = {
   twilio?: boolean
@@ -70,15 +86,51 @@ export type ProviderStatus = {
   calendar?: boolean
 }
 
+export type DashboardKpi = {
+  value: number | null
+  definition: string
+  window: string
+  timezone: string
+  drill_down: string
+  exclusions: string
+  numerator?: number
+  denominator?: number
+}
+
 export type DashboardSummary = {
   appointments_today: number
   appointments_week: number
   upcoming: Appointment[]
   calendar_connected: boolean
-  call_statistics?: Record<string, number | string | null>
-  recent_calls?: RecentCall[]
+  /** Count of call sessions in the last 7 local days. */
+  recent_calls: number
+  call_statistics?: {
+    recent_calls?: number
+    calls_today?: number
+    completed_today?: number
+    attention_today?: number
+    completion_rate?: number | null
+  }
   provider_status?: ProviderStatus
-  embedded_link?: string | null
+  integrations?: ProviderStatus & {
+    twilio_last_synced_at?: string | null
+    calendar_account?: string | null
+  }
+  operational?: {
+    calls_today?: DashboardKpi
+    completion_rate?: DashboardKpi
+    appointments_booked_today?: DashboardKpi
+    attention_needed?: DashboardKpi
+    upcoming_appointments?: DashboardKpi
+    appointments_today?: DashboardKpi
+  }
+  freshness?: {
+    generated_at?: string
+    source_synced_at?: string | null
+    stale?: boolean
+  }
+  timezone?: string
+  generated_at?: string
 }
 
 export type CalendarStatus = {
@@ -93,16 +145,70 @@ export type CalendarStatus = {
 
 export type CalendarEvent = {
   id: string
-  summary: string
+  title: string
   start: string
-  end: string
-  html_link?: string | null
+  end?: string
+  allDay?: boolean
+  url?: string | null
+  description?: string | null
+  location?: string | null
 }
 
 export type AvailabilitySlot = {
   start: string
   end: string
   available: boolean
+}
+
+export type BookingPolicy = {
+  default_service_duration_minutes: number
+  service_durations_minutes: Record<string, number>
+  buffer_before_minutes: number
+  buffer_after_minutes: number
+  business_hours: Record<string, Array<{ start: string; end: string }>>
+}
+
+export type ProductPrefs = {
+  notifications: {
+    channel: 'email'
+    confirmations_enabled: boolean
+    reminders_enabled: boolean
+    consent_at?: string | null
+    quiet_hours_start?: string | null
+    quiet_hours_end?: string | null
+    reminder_hours_before: number
+  }
+  retention: {
+    transcript_days: number
+    recording_days: number
+    legal_hold: boolean
+  }
+  transfer: {
+    enabled: boolean
+    destination_e164?: string | null
+    business_hours_only: boolean
+  }
+  languages: {
+    primary: string
+    enabled: string[]
+  }
+}
+
+export type ReadinessItem = {
+  key: string
+  label: string
+  ok: boolean
+  required: boolean
+  fix_path: string
+  detail: string
+}
+
+export type SetupReadiness = {
+  ready: boolean
+  items: ReadinessItem[]
+  completed_required: number
+  total_required: number
+  test_call_hint: string
 }
 
 export type AnalyticsSeriesBlock = {
@@ -125,11 +231,33 @@ export type AnalyticsPeakHeatmap = {
 }
 
 /** Compact JSON from GET /api/v1/analytics/summary (charts render in-browser). */
+export type AnalyticsFunnelStage = {
+  id: string
+  label: string
+  count: number
+}
+
+export type AnalyticsComparisonMetric = {
+  current: number
+  prior: number
+  delta: number
+  delta_pct: number | null
+}
+
 export type AnalyticsSummary = {
   total_calls: number
   total_duration: number
   avg_duration: number
-  total_cost: number
+  total_cost: number | null
+  currency?: string | null
+  reporting_currency?: string | null
+  totals_by_currency?: Record<string, { calls: number; total_cost: number }>
+  timezone?: string
+  range?: { start: string | null; end: string | null }
+  generated_at?: string | null
+  source_synced_at?: string | null
+  stale?: boolean
+  truncated?: boolean
   calls_over_time: AnalyticsSeriesBlock
   duration_distribution: AnalyticsSeriesBlock
   cost_over_time: AnalyticsSeriesBlock
@@ -137,6 +265,19 @@ export type AnalyticsSummary = {
   peak_hours_days: AnalyticsPeakHeatmap
   top_countries: AnalyticsCountry[]
   geo_country_counts: Array<{ country: string; iso3: string; calls: number }>
+  funnel?: {
+    stages: AnalyticsFunnelStage[]
+    failure_categories: Array<{ code: string; count: number }>
+    definitions?: Record<string, string>
+    timezone?: string
+    range?: { start: string; end: string }
+  } | null
+  comparison?: {
+    range: { start: string; end: string }
+    label: string
+    total_calls: AnalyticsComparisonMetric
+    total_duration: AnalyticsComparisonMetric
+  } | null
 }
 
 export type UserProfileUpdate = {
@@ -145,8 +286,5 @@ export type UserProfileUpdate = {
   twilio_account_sid?: string | null
   twilio_auth_token?: string | null
   twilio_phone_number?: string | null
-  deepgram_api_key?: string | null
   config_json?: string | null
-  calendar_id?: string | null
-  time_zone?: string | null
 }

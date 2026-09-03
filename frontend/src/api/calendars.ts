@@ -11,6 +11,17 @@ export function getCalendarStatus() {
   return api.get<CalendarStatus>('/api/v1/calendars/status')
 }
 
+export function startGoogleCalendarConnect() {
+  return api.get<{ authorization_url: string }>('/api/v1/calendars/google/connect')
+}
+
+export function updateCalendarPreferences(body: {
+  calendar_id?: string | null
+  time_zone?: string | null
+}) {
+  return api.patch<CalendarStatus>('/api/v1/calendars/preferences', body)
+}
+
 export async function listCalendarEvents(params: { timeMin: string; timeMax: string }) {
   const query = new URLSearchParams({
     timeMin: params.timeMin,
@@ -28,8 +39,8 @@ export type AvailabilityResponse =
 
 export function checkCalendarAvailability(params: { start: string; end: string }) {
   const query = new URLSearchParams({
-    start: params.start,
-    end: params.end,
+    datetime_start: params.start,
+    datetime_end: params.end,
   })
   return api.get<AvailabilityResponse>(`/api/v1/calendars/availability?${query.toString()}`)
 }

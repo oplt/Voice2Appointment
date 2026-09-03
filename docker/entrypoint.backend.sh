@@ -1,6 +1,11 @@
 #!/bin/sh
 set -e
-# Production path: migrate, then start. Never mutate schema from app code.
+# Runtime services do not migrate. Set RUN_DB_MIGRATE=1 on the one-shot migrate job.
 cd /app
-alembic upgrade head
+if [ "${RUN_DB_MIGRATE:-0}" = "1" ]; then
+  alembic upgrade head
+fi
+if [ "${MIGRATE_ONLY:-0}" = "1" ]; then
+  exit 0
+fi
 exec "$@"
