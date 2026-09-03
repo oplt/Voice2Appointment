@@ -1,0 +1,2670 @@
+# Codex Implementation Prompt — Voice2Appointment Modernization
+
+You are a **Senior Python Engineer, Senior Flask Backend Engineer, Senior Frontend Engineer, Database Engineer, DevOps Engineer, Security Engineer, and AI Voice Systems Engineer**.
+
+Work directly on this repository:
+
+**Repository:**
+https://github.com/oplt/Voice2Appointment
+
+Your objective is to incrementally modernize Voice2Appointment into a:
+
+* reliable
+* secure
+* fast
+* maintainable
+* production-ready
+* commercially viable
+
+voice appointment platform.
+
+This is an **implementation task**, not only an audit.
+
+You must inspect the current repository before modifying files and implement improvements phase by phase.
+
+---
+
+# Core Development Principles
+
+Follow these rules throughout the entire modernization.
+
+## 1. Prefer minimal code
+
+Always prefer the simplest implementation that solves the problem correctly.
+
+Do not introduce:
+
+* unnecessary abstractions
+* unnecessary classes
+* unnecessary helper functions
+* unnecessary dependencies
+* unnecessary background workers
+* unnecessary microservices
+* unnecessary state management
+* unnecessary framework migrations
+* unnecessary design patterns
+
+Prefer:
+
+```text
+small functions
+clear modules
+explicit dependencies
+simple data flow
+few moving parts
+```
+
+Use the principle:
+
+> The best code is the smallest amount of code that clearly and reliably solves the problem.
+
+---
+
+# 2. Delete unused code
+
+Actively search for and remove:
+
+* dead code
+* unused functions
+* unused imports
+* commented-out implementations
+* duplicate functions
+* duplicate imports
+* obsolete TODO code
+* experimental code no longer used
+* empty files that have no purpose
+* abandoned modules
+* unused templates
+* unused CSS
+* unused JavaScript
+* unused assets
+* unused backend folders
+* stale configuration
+* deprecated dependencies
+
+Do not retain code merely because it might theoretically be useful later.
+
+Git history already preserves deleted code.
+
+Before deleting something, verify that it is not referenced elsewhere.
+
+---
+
+# 3. Remove commented-out implementations
+
+Examples such as:
+
+```python
+# calendar_service = ...
+# appointment = ...
+# db.session.add(...)
+```
+
+should not remain indefinitely.
+
+Choose one implementation.
+
+Either:
+
+```text
+implement it
+```
+
+or:
+
+```text
+delete it
+```
+
+Do not leave large blocks of commented-out application logic.
+
+---
+
+# 4. Avoid premature microservices
+
+Keep Voice2Appointment primarily as a:
+
+```text
+MODULAR MONOLITH
+```
+
+Separate processes are acceptable only when runtime requirements justify them.
+
+Examples:
+
+```text
+Flask web application
+Async voice gateway
+Celery worker
+Optional NVIDIA STT worker
+```
+
+Do NOT introduce:
+
+* Kubernetes
+* Kafka
+* RabbitMQ
+* service mesh
+* complex orchestration
+
+unless there is a concrete requirement.
+
+---
+
+# 5. Preserve working functionality
+
+After every phase:
+
+1. run tests
+2. run linting
+3. verify application imports
+4. verify database migrations
+5. verify critical workflows
+6. fix regressions before starting the next phase
+
+Do not stack broken changes across phases.
+
+---
+
+# 6. Make small commits / logical changes
+
+Each task should represent one understandable change.
+
+Avoid giant rewrites.
+
+Prefer:
+
+```text
+fix bug
+test bug
+commit
+```
+
+before moving to another problem.
+
+---
+
+# 7. Remove dependencies when standard library can do the job
+
+Examples:
+
+Prefer:
+
+```python
+zoneinfo
+```
+
+over:
+
+```python
+pytz
+```
+
+when possible.
+
+Prefer simple Python structures over adding large frameworks.
+
+Every new dependency must have a clear reason.
+
+---
+
+# PHASE 0 — Repository Cleanup and Reproducibility
+
+Start with the easiest and safest changes.
+
+---
+
+## [x] Task 0.1 — Remove dead code
+
+Inspect the repository for:
+
+* unused imports
+* duplicate imports
+* unreachable functions
+* old compatibility functions
+* commented-out blocks
+* experimental files
+* empty modules
+* duplicate code
+* unused assets
+* unused templates
+* unused static files
+
+Delete them when safe.
+
+Pay particular attention to:
+
+```text
+backend/
+flaskapp/
+tests/
+static/
+templates/
+```
+
+Determine whether the legacy:
+
+```text
+backend/google_calendar/
+```
+
+folder is still necessary.
+
+If functionality has been superseded by:
+
+```text
+flaskapp/calendar/
+```
+
+remove the obsolete implementation.
+
+---
+
+## [x] Task 0.2 — Clean imports
+
+Remove:
+
+```python
+unused imports
+duplicate imports
+wildcard imports
+```
+
+Sort imports consistently.
+
+Introduce Ruff later for automated enforcement.
+
+---
+
+## [x] Task 0.3 — Remove unnecessary comments
+
+Keep comments explaining:
+
+```text
+why
+```
+
+not:
+
+```text
+what obvious code does
+```
+
+Delete stale comments such as:
+
+```text
+NEW
+updated
+paste this
+TODO already completed
+temporary workaround
+```
+
+---
+
+## [x] Task 0.4 — Fix dependency management
+
+The root `requirements.txt` is currently empty.
+
+Replace the current dependency setup with a reproducible modern Python configuration.
+
+Preferred:
+
+```text
+pyproject.toml
+uv.lock
+```
+
+If introducing `uv` creates unnecessary complexity, a pinned `requirements.txt` is acceptable.
+
+The important requirement is:
+
+```text
+clean clone
+→ install dependencies
+→ application starts
+```
+
+Use Python 3.12+ unless an existing dependency prevents it.
+
+---
+
+## [x] Task 0.5 — Add basic development tools
+
+Add minimal tooling:
+
+```text
+ruff
+pytest
+mypy
+pre-commit
+```
+
+Do not add overlapping tools unless necessary.
+
+Use Ruff for both:
+
+```text
+linting
+formatting
+```
+
+instead of introducing multiple formatters when unnecessary.
+
+---
+
+# PHASE 1 — Easy Confirmed Bug Fixes
+
+Fix deterministic bugs before architectural changes.
+
+---
+
+## Task 1.1 — Fix Twilio model attribute mismatch
+
+Inspect:
+
+```text
+flaskapp/routes/twilio_routes.py
+```
+
+Current code references fields equivalent to:
+
+```python
+account_sid
+auth_token
+```
+
+while the User model uses:
+
+```python
+twilio_account_sid
+twilio_auth_token
+```
+
+Correct all mismatches.
+
+Add handling for:
+
+```python
+user is None
+```
+
+before accessing the user.
+
+Add tests.
+
+---
+
+## Task 1.2 — Fix Celery recording worker
+
+Inspect:
+
+```text
+flaskapp/twilio/worker.py
+```
+
+Fix:
+
+* Flask application context
+* None checks
+* incorrect model `update()` usage
+* timezone-aware timestamps
+* HTTP timeout handling
+* retries
+* partial file writes
+* cleanup
+
+Use:
+
+```python
+datetime.now(timezone.utc)
+```
+
+instead of naive UTC timestamps.
+
+Keep the implementation small.
+
+---
+
+## Task 1.3 — Fix dashboard JavaScript errors
+
+Inspect:
+
+```text
+flaskapp/static/js/dashboard.js
+```
+
+Remove or implement references to undefined functions such as:
+
+```javascript
+checkGoogleAuth()
+```
+
+Do not leave browser console errors.
+
+---
+
+## Task 1.4 — Fix analytics date filtering
+
+Ensure an analytics filter such as:
+
+```text
+2026-09-01 → 2026-09-03
+```
+
+includes the entire September 3 day.
+
+Prefer a half-open interval:
+
+```text
+start <= timestamp < next_day_after_end
+```
+
+Add a test.
+
+---
+
+## Task 1.5 — Fix password reset
+
+Verify whether:
+
+```python
+get_reset_token()
+verify_reset_token()
+```
+
+exist.
+
+If absent, implement them safely with expiring signed tokens.
+
+Do not reveal whether an email address exists.
+
+Return a generic response such as:
+
+```text
+If an account exists for this email, reset instructions have been sent.
+```
+
+Add tests.
+
+---
+
+# PHASE 2 — Frontend Cleanup and Modernization
+
+Do not rewrite the frontend in React.
+
+Keep:
+
+```text
+Flask
+Jinja
+HTML
+JavaScript
+```
+
+unless a strong technical reason emerges.
+
+The current application does not need a Next.js or React migration.
+
+---
+
+## Task 2.1 — Standardize Bootstrap
+
+The application currently mixes Bootstrap versions.
+
+Standardize the entire frontend on the latest stable Bootstrap 5 version compatible with the project.
+
+Remove old Bootstrap 4 classes.
+
+Convert examples such as:
+
+```text
+mr-* → me-*
+ml-* → ms-*
+font-weight-bold → fw-bold
+```
+
+Remove incompatible CSS/JS imports.
+
+---
+
+# Task 2.2 — Modernize icons and visual components
+
+Replace outdated Font Awesome or inconsistent icons where appropriate.
+
+Use modern component/icon sources.
+
+Preferred options:
+
+```text
+Material UI Icons
+Google Material Symbols
+Bootstrap Icons
+```
+
+If MUI React components cannot be used because the frontend remains Jinja-based, prefer:
+
+```text
+Google Material Symbols
+```
+
+or:
+
+```text
+Bootstrap Icons
+```
+
+instead of adding React solely for MUI.
+
+However, if a small isolated frontend section already uses React or a React component is genuinely justified, MUI components/icons can be used.
+
+Possible replacements:
+
+```text
+calendar → CalendarMonth
+settings → Settings
+analytics → Analytics
+phone → Phone
+microphone → Mic
+user → Person
+logout → Logout
+refresh → Refresh
+delete → Delete
+edit → Edit
+save → Save
+warning → Warning
+success → CheckCircle
+error → Error
+menu → RestaurantMenu
+```
+
+Use consistent sizing and spacing.
+
+---
+
+## Task 2.3 — Replace visually outdated UI elements
+
+Modernize:
+
+```text
+buttons
+cards
+forms
+navigation
+tables
+alerts
+badges
+loading states
+empty states
+modal dialogs
+settings tabs
+calendar controls
+analytics cards
+```
+
+Use consistent:
+
+```text
+spacing
+border radius
+typography
+iconography
+button hierarchy
+```
+
+Avoid decorative complexity.
+
+Prefer clean SaaS-style UI.
+
+---
+
+# Task 2.4 — Split large templates
+
+`dashboard.html` is too large.
+
+Split it into minimal Jinja partials such as:
+
+```text
+templates/dashboard/
+├── index.html
+├── _calendar.html
+├── _appointments.html
+├── _analytics.html
+└── _menu.html
+```
+
+Only create partials where they actually improve readability.
+
+Do not over-fragment templates.
+
+---
+
+# Task 2.5 — Split JavaScript by responsibility
+
+Possible structure:
+
+```text
+static/js/
+├── api.js
+├── dashboard.js
+├── calendar.js
+└── analytics.js
+```
+
+Avoid building a frontend framework.
+
+Use native browser APIs wherever possible.
+
+---
+
+# Task 2.6 — Remove unsafe innerHTML usage
+
+Current appointment rendering inserts external data through HTML strings.
+
+Replace unsafe patterns such as:
+
+```javascript
+container.innerHTML = html
+```
+
+when displaying user/calendar-controlled values.
+
+Prefer:
+
+```javascript
+document.createElement()
+textContent
+appendChild()
+```
+
+Validate external URLs before assigning them.
+
+---
+
+# Task 2.7 — Simplify carousel behavior
+
+Remove unnecessary:
+
+```text
+MutationObserver loops
+recursive setTimeout polling
+multiple setInterval calls
+```
+
+If the carousel provides little product value, consider removing it entirely.
+
+Prefer a simple appointments list if that provides better usability.
+
+Remember:
+
+> simpler is better.
+
+---
+
+# PHASE 3 — Security Hardening
+
+---
+
+# Task 3.1 — Enforce required secrets
+
+Application startup should fail clearly if required secrets are missing.
+
+Especially:
+
+```text
+SECRET_KEY
+FERNET_KEY
+DATABASE_URL
+```
+
+depending on environment.
+
+Do not silently use:
+
+```python
+SECRET_KEY=""
+```
+
+---
+
+# Task 3.2 — Encrypt provider credentials
+
+Protect:
+
+```text
+Twilio Auth Token
+Deepgram API Key
+Google OAuth credentials
+Google OAuth tokens
+```
+
+The repository already contains a Fernet-based encrypted type.
+
+Either:
+
+```text
+use it consistently
+```
+
+or:
+
+```text
+replace it with a simpler secure implementation
+```
+
+Do not maintain unused encryption code.
+
+---
+
+# Task 3.3 — CSRF
+
+Enable global CSRF protection.
+
+Ensure all POST/PUT/DELETE style HTML form operations include valid CSRF tokens.
+
+Check:
+
+```text
+menu routes
+settings routes
+account routes
+calendar actions
+connection tests
+```
+
+---
+
+# Task 3.4 — Safe login redirects
+
+Validate:
+
+```text
+next
+```
+
+before redirecting after authentication.
+
+Prevent external redirects.
+
+---
+
+# Task 3.5 — Harden cookies
+
+Configure production:
+
+```text
+SESSION_COOKIE_SECURE
+SESSION_COOKIE_HTTPONLY
+SESSION_COOKIE_SAMESITE
+```
+
+Use sensible values.
+
+---
+
+# Task 3.6 — Add essential security headers
+
+Add a minimal set:
+
+```text
+Strict-Transport-Security
+Content-Security-Policy
+X-Content-Type-Options
+Referrer-Policy
+```
+
+Keep CSP realistic for the external assets currently required.
+
+---
+
+# Task 3.7 — Rate limit sensitive routes
+
+Add lightweight rate limiting to:
+
+```text
+/login
+/reset_password
+provider connection tests
+```
+
+Do not rate-limit internal application operations unnecessarily.
+
+---
+
+# PHASE 4 — Correct Multi-User Architecture
+
+This is one of the most important phases.
+
+---
+
+# Task 4.1 — Make GoogleCalendarService user-scoped
+
+Current calendar authentication must never use:
+
+```python
+GoogleCalendarAuth.query.first()
+```
+
+Require:
+
+```python
+user_id
+```
+
+or a user context.
+
+For example:
+
+```python
+class GoogleCalendarService:
+    def __init__(self, user_id: int):
+        self.user_id = user_id
+```
+
+Authentication must select:
+
+```text
+current user's
+non-revoked
+latest/active
+calendar credentials
+```
+
+No calendar service should exist without tenant context.
+
+---
+
+# Task 4.2 — Introduce CallContext
+
+Create a small immutable context representing the active caller.
+
+Example:
+
+```python
+@dataclass(frozen=True)
+class CallContext:
+    call_sid: str
+    user_id: int
+    timezone: str
+    calendar_id: str
+```
+
+Do not put unnecessary values into it.
+
+Use this context throughout:
+
+```text
+Twilio
+→ voice handler
+→ Deepgram
+→ tool execution
+→ calendar service
+```
+
+---
+
+# Task 4.3 — Resolve user from the Twilio call
+
+Determine the tenant using:
+
+```text
+called Twilio number
+CallSid
+signed custom parameters
+```
+
+depending on current Twilio configuration.
+
+Never use:
+
+```text
+first user
+first calendar
+global provider configuration
+```
+
+---
+
+# Task 4.4 — Remove global config.json runtime behavior
+
+Do not write individual user voice settings into:
+
+```text
+flaskapp/utils/config.json
+```
+
+Store user-specific configuration in the database.
+
+Load it when the call starts.
+
+Optional:
+
+```text
+short TTL cache
+```
+
+for performance.
+
+Do not use a shared mutable source file as tenant configuration.
+
+---
+
+# Task 4.5 — Tenant-scope restaurant/menu functionality
+
+Current menu-related models appear to be global.
+
+Add organization/user ownership if this feature stays.
+
+If restaurant functionality is experimental and not used by Voice2Appointment:
+
+```text
+remove it
+```
+
+instead of maintaining unrelated application complexity.
+
+Choose based on actual usage.
+
+---
+
+# PHASE 5 — Database Correctness
+
+---
+
+# Task 5.1 — Reconcile models and migrations
+
+Compare:
+
+```text
+SQLAlchemy models
+vs
+Alembic migrations
+```
+
+Find every mismatch.
+
+Examples may include:
+
+```text
+recording_path
+recording_downloaded_at
+embedded_link / embeded_link
+new tables
+new indexes
+```
+
+Generate proper migrations.
+
+Do not depend on:
+
+```python
+db.create_all()
+```
+
+for production schema evolution.
+
+---
+
+# Task 5.2 — Remove db.create_all from production startup
+
+Production startup should be:
+
+```text
+run migration
+→ start application
+```
+
+not:
+
+```text
+application starts
+→ mutates schema
+```
+
+---
+
+# Task 5.3 — Standardize timezone-aware database columns
+
+Use:
+
+```python
+DateTime(timezone=True)
+```
+
+where timestamps represent real-world instants.
+
+Store appointments using:
+
+```text
+UTC instant
++
+IANA timezone name
+```
+
+Example:
+
+```text
+2026-09-15T12:00:00Z
+Europe/Brussels
+```
+
+---
+
+# Task 5.4 — Add appointment indexes
+
+Based on query patterns, likely add:
+
+```text
+(user_id, start_datetime)
+
+(user_id, status, start_datetime)
+
+google_calendar_event_id
+
+idempotency_key
+```
+
+Do not add indexes without actual query value.
+
+---
+
+# Task 5.5 — Add idempotency
+
+Appointment creation must not create duplicate Google events if:
+
+```text
+LLM retries
+provider retries
+network timeout occurs
+WebSocket reconnects
+user repeats confirmation
+```
+
+Create an idempotency key based on stable request information.
+
+Example concept:
+
+```text
+user_id
++
+calendar_id
++
+start UTC
++
+end UTC
++
+normalized title
++
+call_sid
+```
+
+Hash it.
+
+Store it with a unique constraint.
+
+---
+
+# PHASE 6 — Appointment Safety and Business Logic
+
+---
+
+# Task 6.1 — Never cancel by approximate timestamp
+
+Current behavior that searches near a datetime and selects the closest event is unsafe.
+
+Change cancellation to operate on:
+
+```text
+verified Google event ID
+```
+
+Flow:
+
+```text
+find candidate events
+→ 0 results: ask again
+→ 1 result: confirm
+→ multiple results: ask user
+→ receive confirmation
+→ delete exact event ID
+```
+
+---
+
+# Task 6.2 — Never reschedule the first matching event
+
+Do not:
+
+```python
+event = events[0]
+```
+
+unless identity is already verified.
+
+Require exact event identity.
+
+---
+
+# Task 6.3 — Structured appointment schemas
+
+Introduce Pydantic models.
+
+Keep them minimal.
+
+Example:
+
+```python
+class AppointmentIntent(BaseModel):
+    operation: Literal["create", "reschedule", "cancel"]
+    title: str | None = None
+    start: datetime | None = None
+    end: datetime | None = None
+    timezone: str
+    event_id: str | None = None
+```
+
+Only include fields used by the application.
+
+---
+
+# Task 6.4 — Match AI function schemas with Python functions
+
+Inspect:
+
+```text
+flaskapp/utils/config.json
+```
+
+and compare every tool/function schema against actual Python functions.
+
+Remove unsupported arguments.
+
+Do not allow:
+
+```text
+schema says parameter exists
+Python function does not accept it
+```
+
+Generate or centralize function schemas if doing so reduces duplication.
+
+---
+
+# Task 6.5 — Add explicit confirmation before mutations
+
+Before:
+
+```text
+create
+reschedule
+cancel
+```
+
+the assistant should confirm critical details.
+
+Example:
+
+```text
+"I found Tuesday September 15 at 2 PM for one hour.
+Would you like me to book it?"
+```
+
+Mutation occurs only after confirmation.
+
+---
+
+# Task 6.6 — Fix relative date interpretation
+
+Standardize handling of:
+
+```text
+today
+tomorrow
+next Friday
+this evening
+next week
+```
+
+Replace `pytz` with:
+
+```python
+zoneinfo.ZoneInfo
+```
+
+where practical.
+
+Test DST boundaries.
+
+---
+
+# PHASE 7 — Real-Time Voice Performance
+
+---
+
+# Task 7.1 — Remove the 400 ms audio buffer
+
+Inspect:
+
+```python
+BUFFER_SIZE = 20 * 160
+```
+
+The Twilio stream is μ-law 8 kHz.
+
+This creates approximately:
+
+```text
+400 ms
+```
+
+of avoidable buffering.
+
+Forward Twilio media chunks to the speech provider with minimal buffering.
+
+Benchmark before and after.
+
+---
+
+# Task 7.2 — Add queue backpressure
+
+Use bounded queues.
+
+Example:
+
+```python
+asyncio.Queue(maxsize=50)
+```
+
+Do not allow memory usage to grow indefinitely if a speech provider becomes slow.
+
+---
+
+# Task 7.3 — Fix WebSocket task lifecycle
+
+Replace indefinite `asyncio.wait()` behavior with proper task cancellation.
+
+Preferred:
+
+```text
+TaskGroup
+```
+
+or:
+
+```text
+FIRST_COMPLETED
++
+cancel pending tasks
+```
+
+When Twilio disconnects:
+
+```text
+all Deepgram tasks must terminate
+all queues must be released
+WebSocket must close
+```
+
+---
+
+# Task 7.4 — Handle partial final audio
+
+Do not discard buffered audio when Twilio sends:
+
+```text
+stop
+```
+
+Flush remaining relevant audio safely.
+
+---
+
+# Task 7.5 — Do not block async event loop
+
+Google Calendar currently uses synchronous API calls.
+
+Do not directly run them inside the voice event loop.
+
+Minimal initial solution:
+
+```python
+await asyncio.to_thread(...)
+```
+
+Do not rewrite the entire Google client unless benchmarks justify it.
+
+---
+
+# PHASE 8 — Deepgram Modernization
+
+Do this before replacing Deepgram.
+
+---
+
+# Task 8.1 — Correct Deepgram handshake
+
+For raw WebSocket usage:
+
+```text
+connect
+→ receive Welcome
+→ send Settings
+→ receive SettingsApplied
+→ process audio
+```
+
+Do not send configuration prematurely.
+
+---
+
+# Task 8.2 — Make Deepgram endpoint configurable
+
+Configuration example:
+
+```env
+DEEPGRAM_REGION=eu
+```
+
+Support:
+
+```text
+EU endpoint
+US/global endpoint
+```
+
+For EU production deployments default to the appropriate EU endpoint.
+
+---
+
+# Task 8.3 — Benchmark Deepgram Flux
+
+Current configuration uses Nova-3.
+
+Benchmark:
+
+```text
+Nova-3
+vs
+Flux multilingual
+```
+
+on actual Voice2Appointment recordings.
+
+Test:
+
+```text
+English
+Dutch
+French
+German
+Turkish
+```
+
+and especially:
+
+```text
+names
+dates
+times
+addresses
+appointment vocabulary
+```
+
+Do not replace Nova unless benchmark results justify it.
+
+---
+
+# Task 8.4 — Add speech-provider configuration
+
+Do not hardcode Deepgram settings throughout the application.
+
+Centralize them.
+
+Example:
+
+```python
+@dataclass
+class DeepgramSettings:
+    model: str
+    language: str
+    endpoint: str
+```
+
+Keep configuration small.
+
+---
+
+# PHASE 9 — Google Calendar Performance and Caching
+
+---
+
+# Task 9.1 — Reuse calendar authentication appropriately
+
+Avoid repeatedly:
+
+```text
+loading credentials
+refreshing credentials
+building Google service objects
+```
+
+within one request/call where unnecessary.
+
+Do not create unsafe global Google clients.
+
+---
+
+# Task 9.2 — Replace repeated availability API calls
+
+Current alternative-slot generation can make several Google API calls.
+
+Instead:
+
+```text
+fetch busy interval once
+→ calculate candidate slots locally
+```
+
+---
+
+# Task 9.3 — Consolidate dashboard calendar calls
+
+Current dashboard may separately request:
+
+```text
+today counts
+week counts
+upcoming events
+auth status
+```
+
+Create one endpoint such as:
+
+```http
+GET /api/dashboard/summary
+```
+
+Return only required data.
+
+---
+
+# Task 9.4 — Add Redis caching only where valuable
+
+Redis is already part of the architecture.
+
+Use it selectively.
+
+Good candidates:
+
+```text
+Google dashboard summary: 30–60 sec
+Google event window: 30–60 sec
+user settings: few minutes
+provider metadata: ~1 hour
+analytics aggregation: several minutes
+```
+
+Invalidate calendar caches when Voice2Appointment:
+
+```text
+creates
+updates
+deletes
+```
+
+an appointment.
+
+---
+
+# Task 9.5 — Remove unsafe permanent lru_cache
+
+Do not use an unlimited or indefinitely stale:
+
+```python
+@lru_cache
+```
+
+for mutable user settings such as timezone.
+
+Use:
+
+```text
+TTL cache
+```
+
+or explicit invalidation.
+
+---
+
+# PHASE 10 — Twilio Analytics Modernization
+
+---
+
+# Task 10.1 — Stop storing Twilio records in Flask session
+
+Do not store large call datasets in:
+
+```python
+session["twilio_data"]
+```
+
+Persist normalized call information in PostgreSQL.
+
+Remember:
+
+Flask's default session is a browser-side signed cookie.
+
+---
+
+# Task 10.2 — Tenant-scope analytics
+
+Every analytics record must belong to:
+
+```text
+user
+or
+organization
+```
+
+Add the appropriate foreign key.
+
+---
+
+# Task 10.3 — Incremental synchronization
+
+Instead of repeatedly retrieving the latest 100 calls:
+
+```text
+store last synchronized timestamp/SID
+→ fetch newer records
+→ upsert
+```
+
+Make synchronization idempotent.
+
+---
+
+# Task 10.4 — Move periodic sync to Celery
+
+Use Celery for:
+
+```text
+Twilio call synchronization
+recording download
+reminder email
+post-call processing
+analytics precomputation
+```
+
+Do not use Celery for real-time voice interactions.
+
+---
+
+# PHASE 11 — Analytics Frontend Performance
+
+---
+
+# Task 11.1 — Reduce server-side Matplotlib rendering
+
+Current dashboard performs expensive:
+
+```text
+Pandas
+Matplotlib
+Folium
+base64 PNG rendering
+```
+
+during requests.
+
+Prefer returning compact JSON and rendering charts in the browser.
+
+Possible libraries:
+
+```text
+Chart.js
+Plotly.js
+```
+
+Use whichever requires less code given current dependencies.
+
+---
+
+# Task 11.2 — Remove unused analytics libraries
+
+If migration eliminates:
+
+```text
+Matplotlib
+Folium
+Pandas
+```
+
+from some code paths, remove dependencies that are no longer needed.
+
+Do not retain libraries "just in case."
+
+---
+
+# Task 11.3 — Optimize geographic data
+
+Avoid repeatedly loading a huge world GeoJSON file.
+
+If geographic analytics remain:
+
+```text
+load once
+or
+serve static data efficiently
+or
+replace with lighter map data
+```
+
+Choose the simplest option.
+
+---
+
+# PHASE 12 — Production Runtime
+
+---
+
+# Task 12.1 — Create production Flask entry point
+
+Example:
+
+```python
+# wsgi.py
+
+from flaskapp import create_app
+
+app = create_app()
+```
+
+Run using Gunicorn.
+
+---
+
+# Task 12.2 — Separate async voice gateway
+
+Do not run:
+
+```text
+Flask dev server
++
+WebSocket server
+```
+
+inside one development process/thread in production.
+
+Create:
+
+```text
+web process
+voice gateway process
+```
+
+from the same repository.
+
+They can share domain code.
+
+This is still a modular monolith.
+
+---
+
+# Task 12.3 — Remove debug production behavior
+
+Do not run:
+
+```python
+debug=True
+```
+
+in production.
+
+Configuration must be environment-specific.
+
+---
+
+# Task 12.4 — Add health endpoints
+
+Minimal:
+
+```text
+/health/live
+/health/ready
+```
+
+Readiness may validate:
+
+```text
+database
+Redis
+```
+
+Do not make every readiness request contact all third-party providers.
+
+---
+
+# PHASE 13 — Observability
+
+---
+
+# Task 13.1 — Structured logging
+
+Introduce structured logs containing identifiers such as:
+
+```text
+request_id
+call_sid
+user_id
+operation
+```
+
+Never log:
+
+```text
+API keys
+auth tokens
+full transcripts
+full phone numbers
+calendar descriptions
+```
+
+unless explicitly required in secured debugging.
+
+---
+
+# Task 13.2 — Record latency
+
+Measure:
+
+```text
+Twilio audio → STT
+STT final result
+LLM response
+TTS first audio
+calendar lookup
+calendar create
+full interaction latency
+```
+
+---
+
+# Task 13.3 — Capture Deepgram latency events
+
+If available from the provider, record:
+
+```text
+STT latency
+LLM latency
+TTS latency
+```
+
+---
+
+# Task 13.4 — Error monitoring
+
+Add:
+
+```text
+Sentry
+```
+
+or equivalent if production deployment requires it.
+
+Keep this optional via environment configuration.
+
+---
+
+# PHASE 14 — Testing Expansion
+
+---
+
+# Task 14.1 — Unit tests
+
+Cover:
+
+```text
+date normalization
+appointment validation
+idempotency
+tenant lookup
+alternative slot calculation
+```
+
+---
+
+# Task 14.2 — Integration tests
+
+Cover:
+
+```text
+PostgreSQL
+Redis
+Celery
+calendar repository
+```
+
+Mock external providers where appropriate.
+
+---
+
+# Task 14.3 — WebSocket tests
+
+Test:
+
+```text
+connect
+start
+media
+barge-in
+tool call
+stop
+disconnect
+provider error
+slow provider
+```
+
+Ensure no orphan tasks remain.
+
+---
+
+# Task 14.4 — Multilingual appointment tests
+
+At minimum:
+
+```text
+Book a dentist appointment tomorrow at 3 PM.
+
+Maak morgen om half drie een afspraak met de tandarts.
+
+Prends rendez-vous chez le médecin mardi prochain à 14 heures.
+
+Nächsten Montag um neun Uhr einen Termin vereinbaren.
+
+Yarın saat üçte dişçi randevusu oluştur.
+```
+
+Assert:
+
+```text
+normalized date
+normalized time
+timezone
+operation
+```
+
+not only transcription text.
+
+---
+
+# Task 14.5 — Browser E2E tests
+
+Use Playwright for only important workflows:
+
+```text
+register/login
+settings
+calendar page
+dashboard
+logout
+```
+
+Do not create hundreds of brittle UI tests.
+
+---
+
+# PHASE 15 — CI/CD
+
+Create a minimal GitHub Actions pipeline.
+
+Order:
+
+```text
+checkout
+↓
+install locked dependencies
+↓
+ruff
+↓
+mypy
+↓
+pytest
+↓
+migration test
+↓
+dependency/security audit
+↓
+Docker build
+```
+
+Avoid complex CI workflows.
+
+---
+
+# PHASE 16 — Commercial Product Improvements
+
+Implement only after reliability foundations are complete.
+
+Possible high-value features:
+
+```text
+organization accounts
+staff calendars
+service durations
+business hours
+buffer times
+conflict detection
+reminders
+multi-calendar selection
+Microsoft Outlook calendar
+CalDAV / Nextcloud
+webhooks
+API keys
+usage tracking
+audit history
+billing readiness
+```
+
+Do not implement all at once.
+
+Prioritize by customer value.
+
+---
+
+# PHASE 17 — FINAL TASK: Hybrid Deepgram + NVIDIA Speech Architecture
+
+**THIS MUST BE THE LAST MAJOR TASK.**
+
+Do not begin this phase until the existing Deepgram implementation is stable, tested and abstracted.
+
+The objective is **NOT to replace Deepgram completely**.
+
+Implement a:
+
+# HYBRID SPEECH ARCHITECTURE
+
+where the application supports both:
+
+```text
+Deepgram
+```
+
+and:
+
+```text
+NVIDIA self-hosted speech recognition
+```
+
+as configurable providers.
+
+---
+
+# Task 17.1 — Add provider abstraction
+
+Create a minimal interface.
+
+Example:
+
+```python
+class SpeechToTextProvider(Protocol):
+    async def transcribe_stream(self, audio):
+        ...
+```
+
+Do not over-engineer it.
+
+Only include methods actually required.
+
+---
+
+# Task 17.2 — Keep Deepgram as the default
+
+Configuration:
+
+```env
+STT_PROVIDER=deepgram
+```
+
+Deepgram should remain the default production provider initially.
+
+Do not break the existing voice-agent path.
+
+---
+
+# Task 17.3 — Add NVIDIA speech library
+
+Add NVIDIA's current streaming speech-recognition stack as an alternative.
+
+Preferred candidate:
+
+```text
+NVIDIA Nemotron 3.5 ASR Streaming 0.6B
+```
+
+using the appropriate NVIDIA NeMo / NVIDIA speech libraries required by the current official implementation.
+
+Before integration:
+
+1. verify the current official NVIDIA package
+2. verify model compatibility
+3. verify license requirements
+4. verify CUDA requirements
+5. verify Python version compatibility
+6. verify supported sample rates
+7. verify supported languages
+
+Target languages:
+
+```text
+English
+Dutch
+French
+German
+Turkish
+```
+
+Do not assume the API from old NeMo versions.
+
+Use current official NVIDIA documentation.
+
+---
+
+# Task 17.4 — Add provider configuration
+
+Support:
+
+```env
+STT_PROVIDER=deepgram
+```
+
+and:
+
+```env
+STT_PROVIDER=nvidia
+```
+
+Possible model configuration:
+
+```env
+NVIDIA_STT_MODEL=nemotron-3.5-asr-streaming-0.6b
+```
+
+Do not hardcode provider selection.
+
+---
+
+# Task 17.5 — Audio conversion layer
+
+Twilio provides:
+
+```text
+μ-law
+8 kHz
+```
+
+Deepgram can consume that directly.
+
+NVIDIA may require a different format.
+
+Create a tiny normalization layer only for providers requiring it:
+
+```text
+Twilio μ-law 8 kHz
+        ↓
+decode
+        ↓
+PCM
+        ↓
+resample if necessary
+        ↓
+NVIDIA STT
+```
+
+Avoid converting Deepgram audio unnecessarily.
+
+---
+
+# Task 17.6 — NVIDIA runtime isolation
+
+Do NOT load a large NVIDIA model inside every Flask worker.
+
+Preferred architecture:
+
+```text
+Twilio
+  ↓
+Async Voice Gateway
+  ↓
+NVIDIA STT runtime
+```
+
+The NVIDIA model may run in:
+
+```text
+same voice process
+```
+
+if memory/concurrency permits.
+
+Otherwise:
+
+```text
+separate GPU worker/service
+```
+
+is acceptable.
+
+Only separate it when resource constraints justify it.
+
+---
+
+# Task 17.7 — NVIDIA model warmup
+
+Load the model once.
+
+Perform optional warmup during startup.
+
+Do not reload the model per call.
+
+Monitor:
+
+```text
+GPU memory
+model initialization time
+concurrent sessions
+latency
+```
+
+---
+
+# Task 17.8 — Do not pretend NVIDIA replaces Deepgram Voice Agent
+
+Deepgram currently handles more than STT.
+
+It also participates in:
+
+```text
+turn detection
+LLM orchestration
+function calling
+TTS
+barge-in
+conversation state
+```
+
+NVIDIA STT only replaces the speech-recognition part.
+
+Therefore the hybrid architecture must explicitly separate:
+
+```text
+Speech recognition
+Conversation orchestration
+LLM
+Appointment tools
+Text-to-speech
+```
+
+---
+
+# Task 17.9 — Add local orchestration path
+
+For:
+
+```env
+STT_PROVIDER=nvidia
+```
+
+implement:
+
+```text
+Twilio
+↓
+NVIDIA STT
+↓
+LLM
+↓
+Appointment tools
+↓
+TTS
+↓
+Twilio
+```
+
+Reuse existing business logic.
+
+Do not duplicate:
+
+```text
+calendar code
+appointment code
+validation code
+```
+
+between Deepgram and NVIDIA implementations.
+
+---
+
+# Task 17.10 — Hybrid runtime mode
+
+Add:
+
+```env
+VOICE_PIPELINE=deepgram_agent
+```
+
+and:
+
+```env
+VOICE_PIPELINE=hybrid
+```
+
+The hybrid pipeline should allow:
+
+```text
+Deepgram
+or
+NVIDIA STT
+```
+
+without rewriting the application.
+
+Longer-term configuration could support:
+
+```text
+STT_PROVIDER
+LLM_PROVIDER
+TTS_PROVIDER
+```
+
+but only add those abstractions if currently needed.
+
+---
+
+# Task 17.11 — Fallback behavior
+
+Do not implement naive mid-sentence switching.
+
+Initial fallback should work at:
+
+```text
+call startup
+```
+
+or:
+
+```text
+new conversational turn
+```
+
+not arbitrarily halfway through one audio frame.
+
+Example:
+
+```text
+Call starts
+↓
+configured provider available?
+├── Deepgram available → Deepgram
+└── unavailable → NVIDIA hybrid pipeline
+```
+
+If provider switching mid-call is implemented later, preserve:
+
+```text
+conversation state
+tool state
+appointment context
+```
+
+---
+
+# Task 17.12 — Benchmark NVIDIA vs Deepgram
+
+Create a benchmark suite using representative Twilio audio.
+
+Evaluate:
+
+```text
+Deepgram Nova-3
+Deepgram Flux
+NVIDIA Nemotron 3.5
+```
+
+Test:
+
+```text
+English
+Dutch
+French
+German
+Turkish
+```
+
+Test difficult entities:
+
+```text
+names
+email addresses
+phone numbers
+street names
+dates
+times
+company names
+```
+
+Measure:
+
+```text
+WER
+entity accuracy
+date/time accuracy
+first partial latency
+final transcript latency
+GPU utilization
+RAM
+cost/minute
+```
+
+---
+
+# Task 17.13 — Provider selection strategy
+
+After benchmarking, document recommended modes.
+
+Example:
+
+```text
+Default SaaS:
+Deepgram
+
+EU privacy-sensitive deployment:
+NVIDIA self-hosted
+
+Development:
+NVIDIA or faster-whisper
+
+Low infrastructure environment:
+Deepgram
+
+High-volume GPU-equipped environment:
+NVIDIA
+```
+
+Do not claim NVIDIA is automatically better.
+
+Make selection evidence-based.
+
+---
+
+# FINAL TARGET ARCHITECTURE
+
+The final application should approximately become:
+
+```text
+                    ┌─────────────────────┐
+                    │       Twilio        │
+                    └──────────┬──────────┘
+                               │
+                         μ-law 8 kHz
+                               │
+                    ┌──────────▼──────────┐
+                    │ Async Voice Gateway │
+                    └──────────┬──────────┘
+                               │
+                 ┌─────────────┴─────────────┐
+                 │                           │
+        ┌────────▼────────┐        ┌─────────▼─────────┐
+        │ Deepgram Agent  │        │ NVIDIA Nemotron   │
+        │                 │        │ Streaming STT     │
+        └────────┬────────┘        └─────────┬─────────┘
+                 │                           │
+                 │                   ┌───────▼───────┐
+                 │                   │      LLM      │
+                 │                   └───────┬───────┘
+                 │                           │
+                 └──────────────┬────────────┘
+                                │
+                    ┌───────────▼───────────┐
+                    │ Appointment Service   │
+                    │ Validation            │
+                    │ Idempotency           │
+                    │ Conflict detection    │
+                    └───────────┬───────────┘
+                                │
+                    ┌───────────▼───────────┐
+                    │ Calendar Providers    │
+                    │ Google                │
+                    │ Outlook / CalDAV later│
+                    └───────────────────────┘
+```
+
+---
+
+# FINAL CODE QUALITY RULES
+
+Before finishing the modernization, perform another cleanup pass.
+
+Remove:
+
+```text
+unused code
+unused files
+unused routes
+unused imports
+obsolete configuration
+unused dependencies
+old frontend libraries
+duplicate CSS
+duplicate JS
+stale TODO comments
+temporary debugging
+print statements
+development-only code
+```
+
+Run:
+
+```text
+ruff
+mypy
+pytest
+migration tests
+security checks
+```
+
+---
+
+# Minimal-Code Requirement
+
+For every implementation decision ask:
+
+```text
+Can this be done correctly with less code?
+```
+
+Prefer:
+
+```python
+small pure function
+```
+
+over:
+
+```python
+large service hierarchy
+```
+
+when appropriate.
+
+Prefer:
+
+```text
+one query
+```
+
+over:
+
+```text
+multiple cached queries
+```
+
+when possible.
+
+Prefer:
+
+```text
+one reusable business function
+```
+
+over duplicated provider-specific implementations.
+
+Prefer:
+
+```text
+existing framework capability
+```
+
+over adding another package.
+
+Prefer:
+
+```text
+deleting unnecessary functionality
+```
+
+over maintaining unused features.
+
+---
+
+# What Not To Do
+
+Do NOT:
+
+* migrate everything to FastAPI merely because it is newer
+* migrate frontend to React solely to use MUI
+* create microservices unnecessarily
+* introduce Kafka
+* introduce Kubernetes
+* introduce RabbitMQ without need
+* duplicate appointment logic for Deepgram and NVIDIA
+* store user configuration in source files
+* store large analytics datasets in browser sessions
+* load an NVIDIA model per request
+* cache sensitive audio unnecessarily
+* blindly cache every endpoint
+* silently swallow exceptions
+* use broad bare `except:`
+* leave unused commented code
+* leave old implementations beside new implementations
+* create abstractions before they have two real use cases
+
+---
+
+# Definition of Done
+
+At completion:
+
+1. A clean clone can install reproducibly.
+2. Tests pass.
+3. Database migrations reproduce the schema.
+4. Multi-user calendar access is isolated.
+5. Twilio authentication is verified.
+6. Appointment mutations are safe.
+7. Duplicate appointments are prevented.
+8. WebSocket tasks terminate correctly.
+9. Voice latency is significantly lower.
+10. Dashboard Google API traffic is reduced.
+11. Redis is used only for justified caches/tasks.
+12. Credentials are protected.
+13. Frontend is visually modernized.
+14. Bootstrap/components/icons are consistent.
+15. Dead code and obsolete files are removed.
+16. Production deployment no longer depends on Flask's development server.
+17. Deepgram remains fully supported.
+18. NVIDIA Nemotron is available as an alternative STT backend.
+19. Hybrid Deepgram/NVIDIA mode is documented and configurable.
+20. The final architecture remains understandable by one developer or a small engineering team.
+
+---
+
+# Execution Order
+
+Implement strictly in this order:
+
+```text
+PHASE 0
+Repository cleanup
+
+↓
+PHASE 1
+Easy bugs
+
+↓
+PHASE 2
+Frontend modernization
+
+↓
+PHASE 3
+Security
+
+↓
+PHASE 4
+Multi-user correctness
+
+↓
+PHASE 5
+Database correctness
+
+↓
+PHASE 6
+Appointment safety
+
+↓
+PHASE 7
+Voice performance
+
+↓
+PHASE 8
+Deepgram modernization
+
+↓
+PHASE 9
+Caching + Calendar performance
+
+↓
+PHASE 10
+Twilio analytics
+
+↓
+PHASE 11
+Analytics frontend performance
+
+↓
+PHASE 12
+Production runtime
+
+↓
+PHASE 13
+Observability
+
+↓
+PHASE 14
+Testing
+
+↓
+PHASE 15
+CI/CD
+
+↓
+PHASE 16
+Commercial capabilities
+
+↓
+PHASE 17
+HYBRID DEEPGRAM + NVIDIA NEMOTRON
+```
+
+**Do not start the NVIDIA hybrid implementation before the previous architecture is stable.**
+
+The final NVIDIA task must be an **addition beside Deepgram**, not a destructive replacement of Deepgram.

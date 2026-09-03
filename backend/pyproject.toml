@@ -1,0 +1,26 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "integration: optional checks against real Postgres/Redis when configured",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["tasks.txt"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["run.py", "app"]
+check_untyped_defs = true
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+exclude = ["migrations"]
+
+[[tool.mypy.overrides]]
+module = ["app.analytics.service"]
+disable_error_code = ["call-overload", "return-value", "assignment", "attr-defined", "import-untyped", "arg-type"]

@@ -190,6 +190,14 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python,linux
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
 # Google API credentials and tokens
 credentials.json
-backend/google_calendar/token.json
+
+# Uploaded profile pictures (keep default only if present)
+backend/app/static/profile_pics/*
+!backend/app/static/profile_pics/default.jpg

@@ -1,0 +1,50 @@
+{
+  "agent": {
+    "greeting": "Hello! I'm your appointment assistant. How can I help you with scheduling today?",
+    "language": "en",
+    "listen": {
+      "provider": {
+        "keyterms": [
+          "appointment",
+          "schedule",
+          "cancel",
+          "reschedule",
+          "today",
+          "tomorrow",
+          "available",
+          "time",
+          "date"
+        ],
+        "model": "nova-3",
+        "type": "deepgram"
+      }
+    },
+    "speak": {
+      "provider": {
+        "model": "aura-2-thalia-en",
+        "type": "deepgram"
+      }
+    },
+    "think": {
+      "functions": [],
+      "prompt": "PLACEHOLDER — overwritten at runtime from app.calendars.tool_schemas",
+      "provider": {
+        "model": "gpt-4o-mini",
+        "temperature": 0.7,
+        "type": "open_ai"
+      }
+    }
+  },
+  "audio": {
+    "input": {
+      "encoding": "mulaw",
+      "sample_rate": 8000
+    },
+    "output": {
+      "container": "none",
+      "encoding": "mulaw",
+      "sample_rate": 8000
+    }
+  },
+  "type": "Settings"
+}
