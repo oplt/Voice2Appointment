@@ -4,41 +4,76 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.appointments.idempotency import build_appointment_idempotency_key
+from app.db.dialect_compat import datetime_comparison_value
 from app.db.models import Appointment
 
 Scope = Literal["upcoming", "history", "all"]
 
 
-def _encode_cursor(start: datetime, appointment_id: int, *, descending: bool) -> str:
+@dataclass(frozen=True)
+class _PageCursor:
+    start: datetime
+    appointment_id: int
+    scope: Scope
+    snapshot_at: datetime
+    reference_now: datetime
+    status: str | None
+
+
+def _encode_cursor(cursor: _PageCursor) -> str:
+    start = cursor.start
     if start.tzinfo is None:
         start = start.replace(tzinfo=timezone.utc)
     else:
         start = start.astimezone(timezone.utc)
     payload = {
+        "v": 1,
         "s": start.isoformat(),
-        "i": appointment_id,
-        "d": descending,
+        "i": cursor.appointment_id,
+        "scope": cursor.scope,
+        "snapshot": cursor.snapshot_at.astimezone(timezone.utc).isoformat(),
+        "now": cursor.reference_now.astimezone(timezone.utc).isoformat(),
+        "status": cursor.status,
     }
     return base64.urlsafe_b64encode(
         json.dumps(payload, separators=(",", ":")).encode()
     ).decode()
 
 
-def _decode_cursor(raw: str) -> tuple[datetime, int, bool]:
+def _decode_cursor(raw: str) -> _PageCursor:
     try:
-        data = json.loads(base64.urlsafe_b64decode(raw.encode()).decode())
+        data = json.loads(
+            base64.b64decode(raw.encode(), altchars=b"-_", validate=True).decode()
+        )
+        if data.get("v") != 1 or data.get("scope") not in {
+            "upcoming",
+            "history",
+            "all",
+        }:
+            raise ValueError
         start = datetime.fromisoformat(str(data["s"]).replace("Z", "+00:00"))
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        return start, int(data["i"]), bool(data.get("d", False))
+        snapshot = datetime.fromisoformat(str(data["snapshot"]).replace("Z", "+00:00"))
+        reference_now = datetime.fromisoformat(str(data["now"]).replace("Z", "+00:00"))
+        if any(value.tzinfo is None for value in (start, snapshot, reference_now)):
+            raise ValueError
+        status = data.get("status")
+        if status is not None and not isinstance(status, str):
+            raise ValueError
+        return _PageCursor(
+            start=start.astimezone(timezone.utc),
+            appointment_id=int(data["i"]),
+            scope=data["scope"],
+            snapshot_at=snapshot.astimezone(timezone.utc),
+            reference_now=reference_now.astimezone(timezone.utc),
+            status=status,
+        )
     except Exception as exc:  # noqa: BLE001
         raise ValueError("invalid cursor") from exc
 
@@ -67,7 +102,15 @@ def list_appointments_page(
 ) -> tuple[list[Appointment], str | None]:
     limit = max(1, min(int(limit), 100))
     now = datetime.now(timezone.utc)
+    snapshot_at = now
+    decoded = _decode_cursor(cursor) if cursor else None
+    if decoded is not None:
+        if decoded.scope != scope or decoded.status != status:
+            raise ValueError("cursor does not match filters")
+        now = decoded.reference_now
+        snapshot_at = decoded.snapshot_at
     stmt = select(Appointment).where(Appointment.user_id == user_id)
+    stmt = stmt.where(Appointment.created_at <= snapshot_at)
     if status:
         stmt = stmt.where(Appointment.status == status)
 
@@ -81,25 +124,23 @@ def list_appointments_page(
     else:
         stmt = stmt.order_by(Appointment.start_datetime.asc(), Appointment.id.asc())
 
-    if cursor:
-        c_start, c_id, c_desc = _decode_cursor(cursor)
-        if c_desc != descending and scope != "all":
-            raise ValueError("cursor does not match scope")
-        # Compare using UTC-naive literals so SQLite and PostgreSQL agree.
-        c_start_naive = c_start.astimezone(timezone.utc).replace(tzinfo=None)
+    if decoded is not None:
+        c_start = decoded.start
+        c_id = decoded.appointment_id
+        comparison_start = datetime_comparison_value(db, c_start)
         if descending:
             stmt = stmt.where(
-                (Appointment.start_datetime < c_start_naive)
+                (Appointment.start_datetime < comparison_start)
                 | (
-                    (Appointment.start_datetime == c_start_naive)
+                    (Appointment.start_datetime == comparison_start)
                     & (Appointment.id < c_id)
                 )
             )
         else:
             stmt = stmt.where(
-                (Appointment.start_datetime > c_start_naive)
+                (Appointment.start_datetime > comparison_start)
                 | (
-                    (Appointment.start_datetime == c_start_naive)
+                    (Appointment.start_datetime == comparison_start)
                     & (Appointment.id > c_id)
                 )
             )
@@ -109,7 +150,14 @@ def list_appointments_page(
     if len(rows) > limit:
         last = rows[limit - 1]
         next_cursor = _encode_cursor(
-            last.start_datetime, last.id, descending=descending
+            _PageCursor(
+                start=last.start_datetime,
+                appointment_id=last.id,
+                scope=scope,
+                snapshot_at=snapshot_at,
+                reference_now=now,
+                status=status,
+            )
         )
         rows = rows[:limit]
     return rows, next_cursor
@@ -155,55 +203,27 @@ def create_appointment(
     idempotency_key: str | None = None,
     **extra: Any,
 ) -> Appointment:
-    start_datetime = _ensure_aware(start_datetime)
-    end_datetime = _ensure_aware(end_datetime)
+    """Compatibility entry point routed through the locked booking service."""
+    from app.appointments.booking import book_appointment
 
-    key = idempotency_key or build_appointment_idempotency_key(
-        user_id=user_id,
-        calendar_id=calendar_id,
-        start_utc=start_datetime,
-        end_utc=end_datetime,
+    return book_appointment(
+        db,
+        user_id,
         summary=summary,
-        call_sid=call_sid,
-    )
-    existing = get_by_idempotency_key(db, key)
-    if existing is not None and existing.user_id == user_id:
-        return existing
-
-    allowed_extra = {
-        k: v
-        for k, v in extra.items()
-        if hasattr(Appointment, k) and k not in {"idempotency_key", "user_id"}
-    }
-    row = Appointment(
-        user_id=user_id,
-        summary=summary,
-        description=description,
         start_datetime=start_datetime,
         end_datetime=end_datetime,
-        timezone=timezone,
+        timezone_name=timezone,
+        description=description,
         client_name=client_name,
         client_phone=client_phone,
         client_email=client_email,
         notes=notes,
         status=status,
-        idempotency_key=key,
-        **allowed_extra,
+        calendar_id=calendar_id,
+        call_sid=call_sid,
+        idempotency_key=idempotency_key,
+        **extra,
     )
-    db.add(row)
-    try:
-        db.commit()
-    except IntegrityError:
-        db.rollback()
-        existing = get_by_idempotency_key(db, key)
-        if existing is not None and existing.user_id == user_id:
-            return existing
-        raise
-    db.refresh(row)
-    from app.core.cache import invalidate_user_calendar_caches
-
-    invalidate_user_calendar_caches(user_id)
-    return row
 
 
 def update_appointment(
@@ -250,9 +270,6 @@ def update_appointment(
         setattr(row, key, value)
     db.commit()
     db.refresh(row)
-    from app.core.cache import invalidate_user_calendar_caches
-
-    invalidate_user_calendar_caches(user_id)
     return row
 
 
@@ -263,7 +280,4 @@ def delete_appointment(db: Session, user_id: int, appointment_id: int) -> bool:
         return False
     db.delete(row)
     db.commit()
-    from app.core.cache import invalidate_user_calendar_caches
-
-    invalidate_user_calendar_caches(user_id)
     return True

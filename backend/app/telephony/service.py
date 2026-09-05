@@ -10,13 +10,14 @@ from urllib.parse import urlparse
 from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from twilio.twiml.voice_response import Connect, Stream, VoiceResponse
 
 from app.calendars.service import get_auth_record
 from app.core.config import settings
 from app.db.models import CallSession, User
 from app.telephony.providers.twilio import TwilioProvider
 from app.telephony.security import assert_valid_twilio_sid, twilio_recording_api_url
-from app.telephony.stream_tokens import issue_stream_token
+from app.telephony.stream_tokens import get_or_issue_stream_token
 from app.voice.context import CallContext
 from app.workers.tasks import download_and_archive_recording
 
@@ -107,14 +108,15 @@ def _media_stream_wss_url(*, call_sid: str, stream_token: str) -> str:
     if not base:
         raise RuntimeError("PUBLIC_BASE_URL is required for Twilio media streams")
     parsed = urlparse(base)
+    if settings.is_production and parsed.scheme != "https":
+        raise RuntimeError("PUBLIC_BASE_URL must be https for Twilio media streams")
     scheme = "wss" if parsed.scheme == "https" else "ws"
     host = parsed.netloc or parsed.path
     from urllib.parse import quote
 
     return (
-        f"{scheme}://{host}/ws/voice"
-        f"?call_sid={quote(call_sid, safe='')}"
-        f"&stream_token={quote(stream_token, safe='')}"
+        f"{scheme}://{host}/ws/voice/"
+        f"{quote(call_sid, safe='')}/{quote(stream_token, safe='')}"
     )
 
 
@@ -177,7 +179,12 @@ def process_inbound_voice(
             status_code=200,
         )
 
-    stream_token = issue_stream_token(db, existing)
+    try:
+        stream_token = get_or_issue_stream_token(db, existing)
+    except ValueError:
+        response = VoiceResponse()
+        response.hangup()
+        return Response(content=str(response), media_type="application/xml")
 
     try:
         stream_url = _media_stream_wss_url(call_sid=call_sid, stream_token=stream_token)
@@ -192,17 +199,16 @@ def process_inbound_voice(
             status_code=500,
         )
 
-    # Do not put user_id in TwiML — ownership is token-bound server state only.
+    # Do not put user_id/token in custom parameters — ownership is path-token-bound.
     # statusCallback on <Connect> is not supported; configure the Twilio number's
     # Status Callback URL to PUBLIC_BASE_URL/api/v1/telephony/twilio/status.
-    twiml = (
-        '<?xml version="1.0" encoding="UTF-8"?>'
-        "<Response><Connect><Stream url=\"{url}\">"
-        '<Parameter name="call_sid" value="{call_sid}"/>'
-        '<Parameter name="stream_token" value="{token}"/>'
-        "</Stream></Connect></Response>"
-    ).format(url=stream_url, call_sid=call_sid, token=stream_token)
-    return Response(content=twiml, media_type="application/xml")
+    voice_response = VoiceResponse()
+    connect = Connect()
+    stream = Stream(url=stream_url)
+    stream.parameter(name="call_sid", value=call_sid)
+    connect.append(stream)
+    voice_response.append(connect)
+    return Response(content=str(voice_response), media_type="application/xml")
 
 
 def process_status_callback(
@@ -212,7 +218,14 @@ def process_status_callback(
     """Apply signed Twilio call-status updates to CallSession (P2-01)."""
     from app.telephony.lifecycle import apply_twilio_status_callback
 
-    return apply_twilio_status_callback(db, payload)
+    account_sid = (payload.get("AccountSid") or "").strip()
+    user = find_user_by_twilio_account(db, account_sid)
+    if user is None:
+        # Keep the response deliberately neutral: callers cannot use this
+        # endpoint to discover account or call ownership.
+        logger.warning("Twilio status webhook: unknown AccountSid")
+        return {"ok": False, "error": "unknown call"}
+    return apply_twilio_status_callback(db, payload, user_id=user.id)
 
 
 def process_recording_webhook(

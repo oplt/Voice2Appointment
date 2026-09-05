@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -36,6 +37,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [isReady, setIsReady] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
   const [bootTick, setBootTick] = useState(0)
+  const bootstrapAttempt = useRef(0)
 
   const clearSession = useCallback(() => {
     setUser(null)
@@ -43,6 +45,8 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     let cancelled = false
+    const attempt = ++bootstrapAttempt.current
+    const controller = new AbortController()
     setIsReady(false)
     setAuthError(null)
 
@@ -51,23 +55,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
         clearSession()
         setAuthError('Sign-in check timed out. Check your connection and retry.')
         setIsReady(true)
+        controller.abort()
       }
     }, AUTH_BOOTSTRAP_MS)
 
-    meRequest()
+    meRequest(controller.signal)
       .then((nextUser) => {
-        if (!cancelled) {
+        if (!cancelled && attempt === bootstrapAttempt.current) {
           setUser(nextUser)
           setAuthError(null)
         }
       })
-      .catch(() => {
-        if (!cancelled) {
+      .catch((error: unknown) => {
+        if (!cancelled && attempt === bootstrapAttempt.current && !controller.signal.aborted) {
           clearSession()
+          if (!(error instanceof ApiError && error.status === 401)) {
+            setAuthError(error instanceof ApiError ? error.message : 'Unable to check sign-in. Check your connection and retry.')
+          }
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!cancelled && attempt === bootstrapAttempt.current) {
           window.clearTimeout(timeout)
           setIsReady(true)
         }
@@ -77,6 +85,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     window.addEventListener('auth:unauthorized', onUnauthorized)
     return () => {
       cancelled = true
+      controller.abort()
       window.clearTimeout(timeout)
       window.removeEventListener('auth:unauthorized', onUnauthorized)
     }

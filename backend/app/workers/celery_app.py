@@ -33,6 +33,10 @@ celery_app.conf.update(
             "task": "send_appointment_reminders",
             "schedule": crontab(minute="*/30"),
         },
+        "retry-pending-notifications": {
+            "task": "retry_pending_notifications",
+            "schedule": crontab(minute="*/5"),
+        },
         "purge-expired-retained-content": {
             "task": "purge_expired_retained_content",
             "schedule": crontab(minute=20, hour="*/6"),

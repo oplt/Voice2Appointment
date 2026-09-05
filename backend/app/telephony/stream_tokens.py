@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -26,13 +27,18 @@ def _as_aware(value: datetime | None) -> datetime | None:
 
 
 def hash_stream_token(raw: str) -> str:
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+    return hmac.new(
+        settings.secret_key.encode("utf-8"),
+        raw.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
 
 
 def issue_stream_token(db: Session, call_session: CallSession) -> str:
     """Mint a new single-use token for this CallSession; returns raw token."""
     raw = secrets.token_urlsafe(32)
     call_session.stream_token_hash = hash_stream_token(raw)
+    call_session.stream_token_ciphertext = raw
     call_session.stream_token_expires_at = _utcnow() + timedelta(
         seconds=settings.stream_token_ttl_seconds
     )
@@ -41,6 +47,25 @@ def issue_stream_token(db: Session, call_session: CallSession) -> str:
     db.commit()
     db.refresh(call_session)
     return raw
+
+
+def get_or_issue_stream_token(db: Session, call_session: CallSession) -> str:
+    """Return the current replay-safe token, rotating only an unused expired token."""
+    raw = call_session.stream_token_ciphertext
+    expires = _as_aware(call_session.stream_token_expires_at)
+    if raw and call_session.stream_token_hash:
+        digest_matches = secrets.compare_digest(
+            call_session.stream_token_hash,
+            hash_stream_token(raw),
+        )
+        if digest_matches and (
+            call_session.stream_token_consumed_at is not None
+            or (expires is not None and expires >= _utcnow())
+        ):
+            return raw
+    if call_session.stream_token_consumed_at is not None:
+        raise ValueError("media stream already started")
+    return issue_stream_token(db, call_session)
 
 
 def consume_stream_token(
@@ -55,21 +80,36 @@ def consume_stream_token(
     if not call_sid or not raw_token:
         raise ValueError("call_sid and stream_token are required")
 
-    cs = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
-    if cs is None:
-        raise ValueError("unknown call")
-    if not cs.stream_token_hash:
-        raise ValueError("no stream token issued")
-    if cs.stream_token_consumed_at is not None:
-        raise ValueError("stream token already used")
-    expires = _as_aware(cs.stream_token_expires_at)
-    if expires is None or expires < _utcnow():
-        raise ValueError("stream token expired")
-    if not secrets.compare_digest(cs.stream_token_hash, hash_stream_token(raw_token)):
+    now = _utcnow()
+    consumed_id = db.execute(
+        update(CallSession)
+        .where(
+            CallSession.call_sid == call_sid,
+            CallSession.stream_token_hash == hash_stream_token(raw_token),
+            CallSession.stream_token_consumed_at.is_(None),
+            CallSession.stream_token_expires_at.is_not(None),
+            CallSession.stream_token_expires_at >= now,
+        )
+        .values(stream_token_consumed_at=now)
+        .returning(CallSession.id)
+        .execution_options(synchronize_session=False)
+    ).scalar_one_or_none()
+    if consumed_id is None:
+        db.rollback()
+        cs = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
+        if cs is None:
+            raise ValueError("unknown call")
+        if not cs.stream_token_hash:
+            raise ValueError("no stream token issued")
+        if cs.stream_token_consumed_at is not None:
+            raise ValueError("stream token already used")
+        expires = _as_aware(cs.stream_token_expires_at)
+        if expires is None or expires < now:
+            raise ValueError("stream token expired")
         raise ValueError("invalid stream token")
 
-    cs.stream_token_consumed_at = _utcnow()
-    db.add(cs)
     db.commit()
-    db.refresh(cs)
+    cs = db.get(CallSession, consumed_id)
+    if cs is None:  # pragma: no cover - protected by UPDATE target
+        raise ValueError("unknown call")
     return cs

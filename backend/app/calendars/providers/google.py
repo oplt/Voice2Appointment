@@ -17,6 +17,7 @@ from googleapiclient.errors import HttpError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.calendars.providers.google_idempotency import http_status, insert_event
 from app.core.config import settings
 from app.core.security import create_oauth_state, verify_oauth_state
 from app.db.models import GoogleCalendarAuth
@@ -122,9 +123,6 @@ def exchange_authorization_code(db: Session, *, state: str, code: str) -> Google
         record.time_zone = settings.default_timezone
     db.commit()
     db.refresh(record)
-    from app.core.cache import invalidate_user_calendar_caches
-
-    invalidate_user_calendar_caches(user_id)
     return record
 
 
@@ -252,14 +250,11 @@ class GoogleCalendarService:
                 "start": {"dateTime": datetime_start, "timeZone": timezone},
                 "end": {"dateTime": datetime_end, "timeZone": timezone},
             }
-            if idempotency_key:
-                event["extendedProperties"] = {
-                    "private": {"idempotency_key": idempotency_key}
-                }
-            return (
-                self.service.events()
-                .insert(calendarId=calendar_id, body=event)
-                .execute()
+            return insert_event(
+                self.service.events(),
+                calendar_id=calendar_id,
+                event=event,
+                idempotency_key=idempotency_key,
             )
         except HttpError as error:
             logger.error("Google create_event error: %s", type(error).__name__)
@@ -307,6 +302,8 @@ class GoogleCalendarService:
             ).execute()
             return True
         except HttpError as error:
+            if http_status(error) in {404, 410}:
+                return True
             logger.error("Google delete_event error: %s", type(error).__name__)
             raise
 

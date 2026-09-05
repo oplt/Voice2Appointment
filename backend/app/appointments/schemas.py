@@ -6,7 +6,7 @@ from datetime import datetime
 from enum import Enum
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class AppointmentStatus(str, Enum):
@@ -81,6 +81,13 @@ class AppointmentUpdate(BaseModel):
     notes: str | None = None
     status: AppointmentStatus | None = None
 
+    @model_validator(mode="after")
+    def reject_null_required_fields(self) -> AppointmentUpdate:
+        for field in ("summary", "start_datetime", "end_datetime", "timezone", "status"):
+            if field in self.model_fields_set and getattr(self, field) is None:
+                raise ValueError(f"{field} cannot be null")
+        return self
+
     @field_validator("timezone")
     @classmethod
     def tz_ok(cls, value: str | None) -> str | None:
@@ -116,11 +123,26 @@ class AppointmentOut(BaseModel):
     notes: str | None = None
     google_calendar_event_id: str | None = None
     google_calendar_link: str | None = None
+    provider_sync_status: str
     transcript: str | None = None
 
 
+class AppointmentListItemOut(BaseModel):
+    """Non-sensitive appointment fields safe for paginated list views."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    summary: str
+    start_datetime: datetime
+    end_datetime: datetime
+    timezone: str
+    status: str
+    provider_sync_status: str
+
+
 class AppointmentListOut(BaseModel):
-    items: list[AppointmentOut]
+    items: list[AppointmentListItemOut]
     next_cursor: str | None = None
     scope: str = "upcoming"
     limit: int = 50

@@ -63,17 +63,24 @@ def _kpi(
     return payload
 
 
-def dashboard_summary(db: Session, user_id: int) -> dict[str, Any]:
-    from app.core.cache import CACHE_TTL_DASHBOARD, cache_get, cache_set, versioned_key
+def dashboard_summary(
+    db: Session, user_id: int, *, now: datetime | None = None
+) -> dict[str, Any]:
+    from app.core.cache import (
+        CACHE_TTL_DASHBOARD,
+        cache_get,
+        cache_set,
+        durable_versioned_key,
+    )
 
-    cache_key = versioned_key(user_id, "dashboard", "summary")
+    cache_key = durable_versioned_key(db, user_id, "dashboard", "summary")
     cached = cache_get(cache_key)
     if isinstance(cached, dict):
         return cached
 
     zone = _tenant_zone(db, user_id)
     tz_name = str(zone)
-    now = datetime.now(timezone.utc)
+    now = now or datetime.now(timezone.utc)
     local_now = now.astimezone(zone)
     local_midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_start = local_midnight.astimezone(timezone.utc)
@@ -81,54 +88,29 @@ def dashboard_summary(db: Session, user_id: int) -> dict[str, Any]:
     week_end = (local_midnight + timedelta(days=7)).astimezone(timezone.utc)
     calls_start = today_start - timedelta(days=7)
 
-    counts = db.execute(
+    start_counts = db.execute(
         select(
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            (Appointment.start_datetime >= today_start)
-                            & (Appointment.start_datetime < today_end)
-                            & _ACTIVE_APPOINTMENT,
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("today"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            (Appointment.start_datetime >= today_start)
-                            & (Appointment.start_datetime < week_end)
-                            & _ACTIVE_APPOINTMENT,
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("week"),
-            func.coalesce(
-                func.sum(
-                    case(
-                        (
-                            (Appointment.created_at >= today_start)
-                            & (Appointment.created_at < today_end)
-                            & Appointment.status.in_(("pending", "confirmed", "completed")),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ),
-                0,
-            ).label("booked_today"),
+            func.count().filter(Appointment.start_datetime < today_end).label("today"),
+            func.count().label("week"),
         )
         .select_from(Appointment)
-        .where(Appointment.user_id == user_id)
+        .where(
+            Appointment.user_id == user_id,
+            Appointment.start_datetime >= today_start,
+            Appointment.start_datetime < week_end,
+            _ACTIVE_APPOINTMENT,
+        )
     ).one()
+    booked_today = db.scalar(
+        select(func.count())
+        .select_from(Appointment)
+        .where(
+            Appointment.user_id == user_id,
+            Appointment.created_at >= today_start,
+            Appointment.created_at < today_end,
+            Appointment.status.in_(("pending", "confirmed", "completed")),
+        )
+    ) or 0
 
     call_stats = db.execute(
         select(
@@ -254,7 +236,7 @@ def dashboard_summary(db: Session, user_id: int) -> dict[str, Any]:
             exclusions="outcome=rejected excluded from denominator; null outcome excluded until lifecycle closes.",
         ),
         "appointments_booked_today": _kpi(
-            value=int(counts.booked_today),
+            value=int(booked_today),
             definition="Appointments created today (tenant-local) with status pending/confirmed/completed.",
             window="local_day",
             timezone_name=tz_name,
@@ -278,7 +260,7 @@ def dashboard_summary(db: Session, user_id: int) -> dict[str, Any]:
             exclusions="cancelled/canceled/failed statuses excluded.",
         ),
         "appointments_today": _kpi(
-            value=int(counts.today),
+            value=int(start_counts.today),
             definition="Active appointments whose start falls in the tenant-local day.",
             window="local_day",
             timezone_name=tz_name,
@@ -288,8 +270,8 @@ def dashboard_summary(db: Session, user_id: int) -> dict[str, Any]:
     }
 
     payload = {
-        "appointments_today": int(counts.today),
-        "appointments_week": int(counts.week),
+        "appointments_today": int(start_counts.today),
+        "appointments_week": int(start_counts.week),
         "upcoming": upcoming,
         "calendar_connected": bool(cal.get("connected")),
         "recent_calls": int(recent_calls),

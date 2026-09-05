@@ -10,6 +10,7 @@ from typing import Any
 import bcrypt
 import jwt
 from fastapi import HTTPException, Request, status
+from sqlalchemy import or_, update
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -131,30 +132,30 @@ def consume_password_reset_token(db: Session, *, token: str, new_password: str) 
 
     from app.db.models import User
 
-    user = db.get(User, user_id)
-    if user is None:
-        return False
-    if not user.password_reset_token_hash:
-        return False
-    if user.password_reset_consumed_at is not None:
-        return False
-    expires = user.password_reset_expires_at
-    if expires is not None:
-        if expires.tzinfo is None:
-            expires = expires.replace(tzinfo=timezone.utc)
-        if expires < datetime.now(timezone.utc):
-            return False
-    if not secrets.compare_digest(user.password_reset_token_hash, hash_token(nonce)):
-        return False
-
-    user.password = hash_password(new_password)
-    user.password_reset_consumed_at = datetime.now(timezone.utc)
-    user.password_reset_token_hash = None
-    user.password_reset_expires_at = None
-    user.auth_version = int(user.auth_version or 0) + 1
-    db.add(user)
+    now = datetime.now(timezone.utc)
+    # The matching predicates and state transition must be one statement: two
+    # independent workers may otherwise both observe an unconsumed token.
+    result = db.execute(
+        update(User)
+        .where(
+            User.id == user_id,
+            User.password_reset_token_hash == hash_token(nonce),
+            User.password_reset_consumed_at.is_(None),
+            or_(
+                User.password_reset_expires_at.is_(None),
+                User.password_reset_expires_at >= now,
+            ),
+        )
+        .values(
+            password=hash_password(new_password),
+            password_reset_consumed_at=now,
+            password_reset_token_hash=None,
+            password_reset_expires_at=None,
+            auth_version=User.auth_version + 1,
+        )
+    )
     db.commit()
-    return True
+    return result.rowcount == 1
 
 
 def create_oauth_state(*, user_id: int, code_verifier: str) -> str:

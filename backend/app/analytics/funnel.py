@@ -1,4 +1,4 @@
-"""Call booking-funnel aggregation from CallSession + Appointment (P5-02)."""
+"""Call booking-funnel aggregation from CallSession + Appointment (P5-02/P5-V06)."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from sqlalchemy import select
+from sqlalchemy import case, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Appointment, CallSession
+from app.db.models import Appointment, BookingFunnelEvent, CallSession
 
 # Ordered funnel stages — each call counted at most once per stage.
 FUNNEL_STAGES = (
@@ -17,6 +18,7 @@ FUNNEL_STAGES = (
     "engaged",
     "booking_attempted",
     "booked",
+    "rescheduled",
     "cancelled",
     "failed",
     "unknown",
@@ -32,6 +34,7 @@ _FAILED_OUTCOMES = frozenset({"failed", "expired", "rejected"})
 _FAILED_STATUSES = frozenset({"provider_error", "expired", "rejected"})
 _BOOKED_APPT = frozenset({"pending", "confirmed", "completed"})
 _CANCELLED_APPT = frozenset({"cancelled", "canceled"})
+_PUBLIC_FAILURE_CODES = frozenset({"failed", "expired", "rejected", "provider_error"})
 
 
 def _inclusive_start(start: date, zone: ZoneInfo) -> datetime:
@@ -45,13 +48,37 @@ def _exclusive_end(end: date, zone: ZoneInfo) -> datetime:
 
 
 def _failure_category(terminal_reason: str | None, outcome: str | None) -> str:
-    if terminal_reason:
-        prefix = terminal_reason.split(":", 1)[0].strip().lower()
-        if prefix:
-            return prefix[:32]
-    if outcome in _FAILED_OUTCOMES:
+    if outcome in _PUBLIC_FAILURE_CODES:
         return outcome
     return "unknown"
+
+
+def record_funnel_event(
+    db: Session,
+    *,
+    user_id: int,
+    call_session_id: int | None,
+    stage: str,
+    idempotency_key: str,
+    reason_code: str = "unknown",
+) -> None:
+    """Append one public, idempotent event in the caller transaction."""
+    if stage not in FUNNEL_STAGES:
+        raise ValueError("invalid funnel stage")
+    public_reason = reason_code if reason_code in _PUBLIC_FAILURE_CODES else "unknown"
+    try:
+        with db.begin_nested():
+            db.add(
+                BookingFunnelEvent(
+                    user_id=user_id,
+                    call_session_id=call_session_id,
+                    stage=stage,
+                    reason_code=public_reason,
+                    idempotency_key=idempotency_key,
+                )
+            )
+    except IntegrityError:
+        pass
 
 
 def link_call_session_on_book(
@@ -75,6 +102,20 @@ def link_call_session_on_book(
     appointment.callsession_id = cs.id
     if cs.outcome in (None, "completed", "unknown", ""):
         cs.outcome = "booked"
+    record_funnel_event(
+        db,
+        user_id=user_id,
+        call_session_id=cs.id,
+        stage="booking_attempted",
+        idempotency_key=f"book-attempt:{appointment.id}",
+    )
+    record_funnel_event(
+        db,
+        user_id=user_id,
+        call_session_id=cs.id,
+        stage="booked",
+        idempotency_key=f"booked:{appointment.id}",
+    )
 
 
 def funnel_summary(
@@ -85,7 +126,7 @@ def funnel_summary(
     end: date,
     timezone_name: str = "UTC",
 ) -> dict[str, Any]:
-    """Aggregate funnel counts for CallSessions started in [start, end] local dates."""
+    """SQL-aggregated funnel counts for CallSessions started in [start, end]."""
     try:
         zone = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
@@ -95,67 +136,121 @@ def funnel_summary(
     bound_start = _inclusive_start(start, zone)
     bound_end = _exclusive_end(end, zone)
 
-    stmt = (
-        select(
-            CallSession.id,
-            CallSession.outcome,
-            CallSession.status,
-            CallSession.terminal_reason,
-            CallSession.duration_seconds,
-            Appointment.status.label("appt_status"),
-            Appointment.id.label("appt_id"),
-        )
-        .select_from(CallSession)
-        .outerjoin(Appointment, Appointment.callsession_id == CallSession.id)
+    # Prefer durable BookingFunnelEvent counts when events exist for the window.
+    event_rows = db.execute(
+        select(BookingFunnelEvent.stage, func.count().label("n"))
         .where(
-            CallSession.user_id == user_id,
-            CallSession.started_at >= bound_start,
-            CallSession.started_at < bound_end,
+            BookingFunnelEvent.user_id == user_id,
+            BookingFunnelEvent.occurred_at >= bound_start,
+            BookingFunnelEvent.occurred_at < bound_end,
+            BookingFunnelEvent.stage.in_(
+                ("booking_attempted", "booked", "rescheduled", "cancelled", "failed")
+            ),
         )
+        .group_by(BookingFunnelEvent.stage)
+    ).all()
+    event_counts = {str(r.stage): int(r.n) for r in event_rows}
+    use_events = bool(event_counts)
+
+    appt = Appointment
+    cs = CallSession
+    engaged = case(
+        (
+            cs.outcome.in_(tuple(_ENGAGED_OUTCOMES))
+            | cs.status.in_(tuple(_ENGAGED_STATUSES))
+            | (func.coalesce(cs.duration_seconds, 0) > 0)
+            | appt.id.is_not(None),
+            1,
+        ),
+        else_=0,
     )
-    rows = list(db.execute(stmt).all())
+    booking_attempted = case(
+        (appt.id.is_not(None) | (cs.outcome == "booked"), 1),
+        else_=0,
+    )
+    booked = case(
+        (
+            (
+                appt.status.in_(tuple(_BOOKED_APPT))
+                & ~appt.status.in_(tuple(_CANCELLED_APPT))
+            )
+            | (cs.outcome == "booked"),
+            1,
+        ),
+        else_=0,
+    )
+    cancelled = case((appt.status.in_(tuple(_CANCELLED_APPT)), 1), else_=0)
+    failed = case(
+        (
+            cs.outcome.in_(tuple(_FAILED_OUTCOMES))
+            | cs.status.in_(tuple(_FAILED_STATUSES)),
+            1,
+        ),
+        else_=0,
+    )
+    unknown = case(
+        (
+            (
+                cs.outcome.is_(None)
+                & appt.id.is_(None)
+                & (
+                    cs.status.is_(None)
+                    | cs.status.in_(("active", "connected"))
+                )
+            )
+            | (cs.outcome.is_(None) & (engaged == 0)),
+            1,
+        ),
+        else_=0,
+    )
 
-    counts = {stage: 0 for stage in FUNNEL_STAGES}
-    failure_buckets: dict[str, int] = {}
-
-    for row in rows:
-        counts["started"] += 1
-        outcome = (row.outcome or "").strip() or None
-        status = (row.status or "").strip() or None
-        appt_status = (row.appt_status or "").strip() or None
-        has_appt = row.appt_id is not None
-        duration = row.duration_seconds or 0
-
-        engaged = (
-            outcome in _ENGAGED_OUTCOMES
-            or status in _ENGAGED_STATUSES
-            or duration > 0
-            or has_appt
+    agg = db.execute(
+        select(
+            func.count(cs.id).label("started"),
+            func.coalesce(func.sum(engaged), 0).label("engaged"),
+            func.coalesce(func.sum(booking_attempted), 0).label("booking_attempted"),
+            func.coalesce(func.sum(booked), 0).label("booked"),
+            func.coalesce(func.sum(cancelled), 0).label("cancelled"),
+            func.coalesce(func.sum(failed), 0).label("failed"),
+            func.coalesce(func.sum(unknown), 0).label("unknown"),
         )
-        if engaged:
-            counts["engaged"] += 1
+        .select_from(cs)
+        .outerjoin(appt, appt.callsession_id == cs.id)
+        .where(
+            cs.user_id == user_id,
+            cs.started_at >= bound_start,
+            cs.started_at < bound_end,
+        )
+    ).one()
 
-        booking_attempted = has_appt or outcome == "booked"
-        if booking_attempted:
-            counts["booking_attempted"] += 1
+    counts = {
+        "started": int(agg.started or 0),
+        "engaged": int(agg.engaged or 0),
+        "booking_attempted": int(agg.booking_attempted or 0),
+        "booked": int(agg.booked or 0),
+        "rescheduled": int(event_counts.get("rescheduled", 0)) if use_events else 0,
+        "cancelled": int(agg.cancelled or 0),
+        "failed": int(agg.failed or 0),
+        "unknown": int(agg.unknown or 0),
+    }
+    if use_events:
+        for stage in ("booking_attempted", "booked", "cancelled", "failed"):
+            if stage in event_counts:
+                counts[stage] = max(counts[stage], event_counts[stage])
 
-        booked = (appt_status in _BOOKED_APPT) or outcome == "booked"
-        if booked and appt_status not in _CANCELLED_APPT:
-            counts["booked"] += 1
-
-        if appt_status in _CANCELLED_APPT:
-            counts["cancelled"] += 1
-
-        failed = outcome in _FAILED_OUTCOMES or status in _FAILED_STATUSES
-        if failed:
-            counts["failed"] += 1
-            cat = _failure_category(row.terminal_reason, outcome)
-            failure_buckets[cat] = failure_buckets.get(cat, 0) + 1
-
-        if outcome is None and not has_appt and status in (None, "active", "connected"):
-            counts["unknown"] += 1
-        elif outcome is None and not engaged:
-            counts["unknown"] += 1
+    failure_rows = db.execute(
+        select(cs.outcome, func.count().label("n"))
+        .where(
+            cs.user_id == user_id,
+            cs.started_at >= bound_start,
+            cs.started_at < bound_end,
+            cs.outcome.in_(tuple(_PUBLIC_FAILURE_CODES)),
+        )
+        .group_by(cs.outcome)
+    ).all()
+    failure_buckets = {
+        _failure_category(None, str(r.outcome)): int(r.n) for r in failure_rows
+    }
 
     stages = [
         {
@@ -184,8 +279,8 @@ def funnel_summary(
             "booking_attempted": "Call linked to an Appointment or outcome=booked (idempotent link).",
             "booked": "Linked appointment pending/confirmed/completed, or outcome=booked.",
             "cancelled": "Linked appointment cancelled/canceled.",
-            "failed": "outcome in {failed,expired,rejected} or status provider_error/expired/rejected.",
-            "unknown": "No outcome yet and not engaged; historical rows without lifecycle data.",
-            "attribution": "Appointment.callsession_id unique — retries reuse the same appointment via idempotency_key.",
+            "failed": "outcome/status in failed/expired/rejected/provider_error.",
+            "unknown": "No durable outcome and not engaged.",
         },
+        "source": "sql_aggregate",
     }

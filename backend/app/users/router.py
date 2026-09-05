@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic_core import PydanticCustomError
 from sqlalchemy.orm import Session
 
 from app.appointments.policy import BookingPolicy, load_booking_policy, save_booking_policy
 from app.auth.deps import get_current_user, require_db
-from app.core.cache import invalidate_user_settings_cache
 from app.core.errors import ConflictAppError, map_exception, raise_http
 from app.db.models import User
 from app.users import service as users_service
@@ -31,22 +31,30 @@ class UserSettingsOut(BaseModel):
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
-    deepgram_api_key: str | None = None
-    config_json: str | None = None
     has_twilio: bool = False
     has_deepgram: bool = False
     twilio_auth_token_set: bool = False
-    deepgram_api_key_set: bool = False
 
 
 class UserSettingsUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     username: str | None = Field(default=None, min_length=2, max_length=50)
     email: EmailStr | None = None
     twilio_account_sid: str | None = None
     twilio_auth_token: str | None = None
     twilio_phone_number: str | None = None
-    deepgram_api_key: str | None = None
-    config_json: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_legacy_deepgram_key(cls, value: object) -> object:
+        """Reject the removed tenant credential with a stable compatibility error."""
+        if isinstance(value, dict) and "deepgram_api_key" in value:
+            raise PydanticCustomError(
+                "deprecated_credential_source",
+                "deepgram_api_key is no longer accepted; configure DEEPGRAM_API_KEY on the server.",
+            )
+        return value
 
 
 @router.get("/me", response_model=UserSettingsOut)
@@ -97,7 +105,6 @@ def put_booking_policy(
         db.add(current_user)
         db.commit()
         db.refresh(current_user)
-        invalidate_user_settings_cache(current_user.id)
     except Exception as exc:
         db.rollback()
         raise_http(map_exception(exc))
@@ -131,7 +138,6 @@ def put_product_prefs(
         db.add(current_user)
         db.commit()
         db.refresh(current_user)
-        invalidate_user_settings_cache(current_user.id)
     except Exception as exc:
         db.rollback()
         raise_http(map_exception(exc))
@@ -144,3 +150,18 @@ def get_readiness(
     db: Session = Depends(require_db),
 ) -> dict:
     return compute_readiness(db, current_user)
+
+
+@router.get("/me/notifications/deliveries")
+def list_notification_deliveries(
+    appointment_id: int | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(require_db),
+) -> dict:
+    from app.notifications.service import list_delivery_status
+
+    return {
+        "items": list_delivery_status(
+            db, current_user.id, appointment_id=appointment_id
+        )
+    }

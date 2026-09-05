@@ -1,5 +1,10 @@
 """Phase 2: call lifecycle transcript/outcome fields.
 
+Downgrade is intentionally non-destructive: older application versions ignore
+these additive columns, while dropping them would silently destroy collected
+call content. Roll forward again after any rollback; archive/export records
+before a manual schema removal.
+
 Revision ID: a7b8c9d0e1f2
 Revises: f6a7b8c9d0e1
 """
@@ -33,9 +38,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     with op.batch_alter_table("callsession") as batch_op:
-        batch_op.drop_column("terminal_reason")
-        batch_op.drop_column("outcome")
-        batch_op.drop_column("transcript")
         batch_op.alter_column(
             "status",
             existing_type=sa.String(length=32),

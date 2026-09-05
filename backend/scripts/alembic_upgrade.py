@@ -29,8 +29,7 @@ logger = logging.getLogger("alembic_upgrade")
 
 
 def _config() -> Config:
-    cfg = Config(str(_BACKEND / "alembic.ini"))
-    cfg.set_main_option("script_location", str(_BACKEND / "migrations"))
+    cfg = Config(str(_BACKEND.parent / "alembic.ini"))
     if settings.database_url:
         cfg.set_main_option("sqlalchemy.url", settings.database_url.replace("%", "%%"))
     return cfg

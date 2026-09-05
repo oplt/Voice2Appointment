@@ -46,18 +46,32 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 "style-src 'self' 'unsafe-inline'; "
                 "img-src 'self' data: https:; "
                 "font-src 'self' data:; "
-                "connect-src 'self' ws: wss: http://127.0.0.1:8000 http://localhost:8000; "
+                "connect-src 'self' wss: https:; "
                 "frame-src 'self' https://calendar.google.com https://*.google.com; "
                 "base-uri 'self'; "
-                "form-action 'self'"
+                "form-action 'self'; "
+                "frame-ancestors 'none'; "
+                "object-src 'none'"
             ),
         )
-        if settings.cookie_secure:
-            response.headers.setdefault(
-                "Strict-Transport-Security",
-                "max-age=31536000; includeSubDomains",
-            )
+        response.headers.setdefault(
+            "Permissions-Policy", "camera=(), microphone=(), geolocation=()"
+        )
         return response
+
+
+class ContentLengthLimitMiddleware(BaseHTTPMiddleware):
+    """Reject known oversized direct requests before route/body parsing."""
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        raw_length = request.headers.get("content-length")
+        try:
+            content_length = int(raw_length) if raw_length else 0
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length"})
+        if content_length > settings.request_max_body_bytes:
+            return JSONResponse(status_code=413, content={"detail": "Request body too large"})
+        return await call_next(request)
 
 
 class CSRFMiddleware(BaseHTTPMiddleware):

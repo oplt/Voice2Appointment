@@ -8,11 +8,9 @@ from contextvars import ContextVar
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.calendars.providers.google import GoogleCalendarService
-from app.db.models import Appointment
 from app.db.session import SessionLocal
 from app.voice.context import current_call_context
 
@@ -53,7 +51,7 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return bool(value)
 
 
-def _resolve_service() -> tuple[GoogleCalendarService, Session | None, str, str]:
+def _resolve_service() -> tuple[GoogleCalendarService | None, Session | None, str, str]:
     """Build a GoogleCalendarService using CallContext / voice ContextVars.
 
     Reuses one GoogleCalendarService per voice call when ContextVar is set (Phase 9.1).
@@ -68,10 +66,6 @@ def _resolve_service() -> tuple[GoogleCalendarService, Session | None, str, str]
         timezone_name = ctx.timezone
         calendar_id = ctx.calendar_id
 
-    cached = voice_calendar_service.get()
-    if cached is not None and user_id is not None and cached.user_id == user_id:
-        return cached, None, timezone_name, calendar_id
-
     owns = False
     if db is None:
         if SessionLocal is None:
@@ -82,6 +76,17 @@ def _resolve_service() -> tuple[GoogleCalendarService, Session | None, str, str]
         if owns:
             db.close()
         raise ValueError("user_id is required for calendar tools")
+    # Local-only is the shared disconnected-calendar policy. Read-only calendar
+    # tools still fail safely, while booking mutations pass no provider hook to
+    # the application service and become locally confirmed.
+    from app.calendars.service import get_auth_record
+
+    auth = get_auth_record(db, user_id)
+    if auth is None or not auth.token_json:
+        return None, db if owns else None, timezone_name, calendar_id
+    cached = voice_calendar_service.get()
+    if cached is not None and cached.user_id == user_id:
+        return cached, None, timezone_name, calendar_id
     service = GoogleCalendarService(db, user_id)
     if not owns:
         voice_calendar_service.set(service)
@@ -287,6 +292,7 @@ def create_calendar_event(
             call_transcript = None
 
         def _check_availability(start: datetime, end: datetime) -> None:
+            assert calendar_service is not None
             is_available, _conflicts = calendar_service.check_availability(
                 start.isoformat(), end.isoformat(), calendar_id=calendar_id
             )
@@ -295,8 +301,12 @@ def create_calendar_event(
                     "requested time conflicts with an external calendar event"
                 )
 
+        booking_db = calendar_service.db if calendar_service is not None else (owned or voice_db.get())
+        if booking_db is None:
+            raise RuntimeError("DATABASE_URL is not configured")
+
         appointment = booking_service.book_appointment(
-            calendar_service.db,
+            booking_db,
             user_id,
             summary=summary,
             start_datetime=datetime_start,
@@ -309,8 +319,12 @@ def create_calendar_event(
             calendar_id=calendar_id,
             call_sid=effective_call_sid,
             transcript=call_transcript,
-            provider_create=calendar_service.create_event,
-            check_provider_availability=_check_availability,
+            provider_create=(
+                calendar_service.create_event if calendar_service is not None else None
+            ),
+            check_provider_availability=(
+                _check_availability if calendar_service is not None else None
+            ),
         )
         return {
             "success": True,
@@ -435,9 +449,6 @@ def reschedule_appointment(
             provider_update=_provider_update,
             check_provider_availability=_check_availability,
         )
-        from app.core.cache import invalidate_user_calendar_caches
-
-        invalidate_user_calendar_caches(user_id)
         return {
             "success": True,
             "event_id": event_id,
@@ -524,9 +535,6 @@ def cancel_appointment(event_id=None, reason=None, confirmed=False, **_kwargs):
             reason=reason,
             provider_delete=_provider_delete,
         )
-        from app.core.cache import invalidate_user_calendar_caches
-
-        invalidate_user_calendar_caches(ctx.user_id)
         result = {
             "success": True,
             "event_id": event_id,
@@ -546,28 +554,6 @@ def cancel_appointment(event_id=None, reason=None, confirmed=False, **_kwargs):
     finally:
         if owned is not None:
             owned.close()
-
-
-def _sync_local_appointment(
-    db: Session,
-    *,
-    event_id: str,
-    start: datetime | None = None,
-    end: datetime | None = None,
-    status: str | None = None,
-) -> None:
-    row = db.scalar(
-        select(Appointment).where(Appointment.google_calendar_event_id == event_id)
-    )
-    if row is None:
-        return
-    if start is not None:
-        row.start_datetime = start
-    if end is not None:
-        row.end_datetime = end
-    if status is not None:
-        row.status = status
-    db.commit()
 
 
 def generate_alternative_slots(

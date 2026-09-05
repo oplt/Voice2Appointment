@@ -1,11 +1,7 @@
 import { api } from './client'
 import type { AvailabilitySlot, CalendarEvent, CalendarStatus } from '../types'
 
-export type CalendarEventsResponse = CalendarEvent[] | { items: CalendarEvent[] }
-
-function normalizeEvents(data: CalendarEventsResponse): CalendarEvent[] {
-  return Array.isArray(data) ? data : (data.items ?? [])
-}
+export type CalendarEventsResponse = { items: CalendarEvent[]; effective_timezone: string }
 
 export function getCalendarStatus() {
   return api.get<CalendarStatus>('/api/v1/calendars/status')
@@ -22,15 +18,19 @@ export function updateCalendarPreferences(body: {
   return api.patch<CalendarStatus>('/api/v1/calendars/preferences', body)
 }
 
-export async function listCalendarEvents(params: { timeMin: string; timeMax: string }) {
+export async function listCalendarEvents(params: { timeMin: string; timeMax: string; timezone?: string }) {
   const query = new URLSearchParams({
     timeMin: params.timeMin,
     timeMax: params.timeMax,
   })
-  const data = await api.get<CalendarEventsResponse>(
+  if (params.timezone) query.set('timezone', params.timezone)
+  return api.get<CalendarEventsResponse>(
     `/api/v1/calendars/events?${query.toString()}`,
   )
-  return normalizeEvents(data)
+}
+
+export function getCalendarEmbed(viewType = 'week') {
+  return api.get<{ embed_url: string }>(`/api/v1/calendars/embed/${viewType}`)
 }
 
 export type AvailabilityResponse =

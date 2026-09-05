@@ -66,6 +66,7 @@ export function DashboardOverview() {
       value: summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today ?? '—',
       to: '/calls',
       hint: summary?.operational?.calls_today?.definition,
+      kpi: summary?.operational?.calls_today,
     },
     {
       label: 'Booked today',
@@ -75,6 +76,7 @@ export function DashboardOverview() {
         '—',
       to: '/appointments',
       hint: summary?.operational?.appointments_booked_today?.definition,
+      kpi: summary?.operational?.appointments_booked_today,
     },
     {
       label: 'Completion',
@@ -86,6 +88,7 @@ export function DashboardOverview() {
             : '—',
       to: '/calls',
       hint: summary?.operational?.completion_rate?.definition,
+      kpi: summary?.operational?.completion_rate,
     },
     {
       label: 'Needs attention',
@@ -95,15 +98,17 @@ export function DashboardOverview() {
         '—',
       to: '/calls',
       hint: summary?.operational?.attention_needed?.definition,
+      kpi: summary?.operational?.attention_needed,
     },
     {
-      label: 'Upcoming',
+      label: 'Next 10 upcoming',
       value:
         summary?.operational?.upcoming_appointments?.value ??
         summary?.upcoming?.length ??
         '—',
       to: '/appointments',
       hint: summary?.operational?.upcoming_appointments?.definition,
+      kpi: summary?.operational?.upcoming_appointments,
     },
   ] as const
 
@@ -169,9 +174,6 @@ export function DashboardOverview() {
         {kpis.map((card) => (
           <Grid key={card.label} size={{ xs: 12, sm: 6, md: 4, lg: 2.4 }}>
             <Card
-              component={RouterLink}
-              to={card.to}
-              title={card.hint}
               sx={{
                 textDecoration: 'none',
                 display: 'block',
@@ -189,6 +191,24 @@ export function DashboardOverview() {
                   ) : (
                     <Typography variant="h3">{card.value}</Typography>
                   )}
+                  {!loading && card.kpi ? (
+                    <details>
+                      <summary>Details</summary>
+                      <Typography variant="body2">{card.kpi.definition}</Typography>
+                      <Typography variant="body2">
+                        Window: {card.kpi.window} ({card.kpi.timezone})
+                      </Typography>
+                      {card.kpi.numerator != null && card.kpi.denominator != null ? (
+                        <Typography variant="body2">
+                          {card.kpi.numerator} of {card.kpi.denominator}
+                        </Typography>
+                      ) : null}
+                      <Typography variant="body2">Exclusions: {card.kpi.exclusions}</Typography>
+                      <Button component={RouterLink} to={card.kpi.drill_down} size="small">
+                        View details
+                      </Button>
+                    </details>
+                  ) : null}
                 </Stack>
               </CardContent>
             </Card>
@@ -290,13 +310,13 @@ export function DashboardOverview() {
               ) : (
                 <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
                   <Chip
-                    label={provider?.twilio ? 'Twilio ready' : 'Twilio not configured'}
+                    label={provider?.twilio ? 'Twilio configured' : 'Twilio not configured'}
                     size="small"
                     variant="outlined"
                     color={provider?.twilio ? 'success' : 'default'}
                   />
                   <Chip
-                    label={provider?.deepgram ? 'Deepgram ready' : 'Deepgram not configured'}
+                    label={provider?.deepgram ? 'Deepgram configured' : 'Deepgram not configured'}
                     size="small"
                     variant="outlined"
                     color={provider?.deepgram ? 'success' : 'default'}
@@ -304,7 +324,7 @@ export function DashboardOverview() {
                   <Chip
                     label={
                       (provider?.calendar ?? summary?.calendar_connected)
-                        ? 'Calendar ready'
+                        ? 'Calendar connected'
                         : 'Calendar not connected'
                     }
                     size="small"
@@ -315,6 +335,13 @@ export function DashboardOverview() {
                   />
                 </Stack>
               )}
+              {!loading ? (
+                <Typography variant="caption" color="text.secondary">
+                  Last Twilio sync: {summary?.integrations?.twilio_last_synced_at
+                    ? formatWhen(summary.integrations.twilio_last_synced_at)
+                    : 'not recorded'}
+                </Typography>
+              ) : null}
             </Stack>
 
             <Stack spacing={1}>

@@ -21,8 +21,8 @@ export function logoutRequest() {
   return api.post<MessageResponse>('/api/v1/auth/logout')
 }
 
-export function meRequest() {
-  return api.get<User>('/api/v1/auth/me')
+export function meRequest(signal?: AbortSignal) {
+  return api.get<User>('/api/v1/auth/me', { signal })
 }
 
 export function healthRequest() {

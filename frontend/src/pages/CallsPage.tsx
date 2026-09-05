@@ -17,7 +17,7 @@ import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { ApiError } from '../api/client'
 import { getCall, listCalls } from '../api/calls'
@@ -49,8 +49,11 @@ export function CallsPage() {
   const [loading, setLoading] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [paginationError, setPaginationError] = useState<string | null>(null)
   const [detail, setDetail] = useState<CallSession | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
+  const [detailError, setDetailError] = useState<string | null>(null)
+  const detailRequest = useRef(0)
 
   const load = useCallback((cursor?: string | null) => {
     const more = Boolean(cursor)
@@ -68,6 +71,8 @@ export function CallsPage() {
         if (!more) {
           setCalls([])
           setError(err instanceof ApiError ? err.message : 'Failed to load calls')
+        } else {
+          setPaginationError(err instanceof ApiError ? err.message : 'Failed to load more calls')
         }
       })
       .finally(() => {
@@ -81,18 +86,17 @@ export function CallsPage() {
   }, [load])
 
   const openDetail = async (call: CallSession) => {
+    const request = ++detailRequest.current
+    setDetail(null)
+    setDetailError(null)
     setDetailLoading(true)
     try {
-      const full = await getCall(call.id, call.has_transcript === true)
-      setDetail(full)
+      const full = await getCall(call.id, call.transcript_available === true)
+      if (request === detailRequest.current) setDetail(full)
     } catch (err: unknown) {
-      setDetail({
-        ...call,
-        transcript:
-          err instanceof ApiError ? `Unable to load details: ${err.message}` : null,
-      })
+      if (request === detailRequest.current) setDetailError(err instanceof ApiError ? err.message : 'Unable to load call details')
     } finally {
-      setDetailLoading(false)
+      if (request === detailRequest.current) setDetailLoading(false)
     }
   }
 
@@ -160,7 +164,7 @@ export function CallsPage() {
               >
                 <Typography variant="subtitle2">{call.call_sid}</Typography>
                 <Typography variant="body2" color="text.secondary">
-                  {call.from_number ?? '—'} · {call.status}
+                  {call.direction ?? 'unknown'} · {call.summary ?? call.status}
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
                   {formatWhen(call.started_at)} · {formatDuration(call.duration_seconds)}
@@ -174,7 +178,7 @@ export function CallsPage() {
               <TableHead>
                 <TableRow>
                   <TableCell>Call SID</TableCell>
-                  <TableCell>From</TableCell>
+                  <TableCell>Direction</TableCell>
                   <TableCell>Status</TableCell>
                   <TableCell>Outcome</TableCell>
                   <TableCell>Started</TableCell>
@@ -186,7 +190,7 @@ export function CallsPage() {
                 {calls.map((call) => (
                   <TableRow key={call.id} hover>
                     <TableCell>{call.call_sid}</TableCell>
-                    <TableCell>{call.from_number ?? '—'}</TableCell>
+                    <TableCell>{call.direction ?? 'unknown'}</TableCell>
                     <TableCell>
                       <Chip size="small" label={call.status} variant="outlined" />
                     </TableCell>
@@ -205,28 +209,26 @@ export function CallsPage() {
           </TableContainer>
 
           {nextCursor ? (
-            <Button
-              variant="outlined"
-              onClick={() => load(nextCursor)}
-              loading={loadingMore}
-              sx={{ alignSelf: 'flex-start' }}
-            >
-              Load more
-            </Button>
+            <Stack spacing={1} sx={{ alignSelf: 'flex-start' }}>
+              {paginationError ? <Alert severity="warning" action={<Button color="inherit" size="small" onClick={() => load(nextCursor)}>Retry</Button>}>{paginationError}</Alert> : null}
+              <Button variant="outlined" onClick={() => { setPaginationError(null); load(nextCursor) }} loading={loadingMore}>Load more</Button>
+            </Stack>
           ) : null}
         </Stack>
       ) : null}
 
       <Dialog
         open={detail != null || detailLoading}
-        onClose={() => setDetail(null)}
+        onClose={() => { detailRequest.current += 1; setDetail(null); setDetailLoading(false); setDetailError(null) }}
         fullWidth
         maxWidth="sm"
       >
         <DialogTitle>Call details</DialogTitle>
         <DialogContent dividers>
-          {detailLoading && !detail ? (
+          {detailLoading ? (
             <Skeleton height={120} />
+          ) : detailError ? (
+            <Alert severity="error">{detailError}</Alert>
           ) : detail ? (
             <Stack spacing={1.5}>
               <Typography variant="body2">SID: {detail.call_sid}</Typography>
@@ -250,6 +252,8 @@ export function CallsPage() {
                     {detail.transcript}
                   </Typography>
                 </Box>
+              ) : detail.transcript_purged ? (
+                <Typography variant="body2" color="text.secondary">Transcript is no longer available under the retention policy.</Typography>
               ) : detail.has_transcript === false ? (
                 <Typography variant="body2" color="text.secondary">
                   No transcript stored for this call.
@@ -259,7 +263,7 @@ export function CallsPage() {
           ) : null}
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setDetail(null)}>Close</Button>
+          <Button onClick={() => { detailRequest.current += 1; setDetail(null); setDetailLoading(false); setDetailError(null) }}>Close</Button>
         </DialogActions>
       </Dialog>
     </Stack>

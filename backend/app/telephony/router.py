@@ -80,3 +80,37 @@ async def twilio_recording(
     )
     validate_twilio_request(db, request, payload)
     return telephony_service.process_recording_webhook(db, payload)
+
+
+@router.post("/transfer-status")
+async def transfer_dial_status(
+    request: Request,
+    db: Session = Depends(require_db),
+    CallSid: str | None = Form(None),
+    DialCallStatus: str | None = Form(None),
+    AccountSid: str | None = Form(None),
+) -> Response:
+    """Twilio Dial action callback — records answered/busy/no-answer/failed."""
+    from app.telephony.transfer import record_transfer_dial_status
+
+    payload = await _form_payload(
+        request,
+        CallSid=CallSid,
+        DialCallStatus=DialCallStatus,
+        AccountSid=AccountSid,
+    )
+    validate_twilio_request(db, request, payload)
+    record_transfer_dial_status(
+        db,
+        call_sid=str(payload.get("CallSid") or ""),
+        dial_call_status=payload.get("DialCallStatus"),
+    )
+    status = (payload.get("DialCallStatus") or "").lower()
+    if status in {"busy", "no-answer", "failed", "canceled"}:
+        xml = (
+            "<Response><Say>Sorry, no one is available right now. "
+            "Please try again later.</Say><Hangup/></Response>"
+        )
+    else:
+        xml = "<Response><Hangup/></Response>"
+    return Response(content=xml, media_type="application/xml")

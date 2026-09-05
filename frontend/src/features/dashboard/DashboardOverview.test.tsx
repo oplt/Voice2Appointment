@@ -1,5 +1,5 @@
 import { ThemeProvider, createTheme } from '@mui/material/styles'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -40,13 +40,32 @@ describe('DashboardOverview states', () => {
       recent_calls: 3,
       call_statistics: { calls_today: 1, recent_calls: 3 },
       provider_status: { twilio: true, deepgram: true, calendar: true },
+      operational: {
+        calls_today: {
+          value: 1,
+          definition: 'Calls started in the local day.',
+          window: 'local_day',
+          timezone: 'UTC',
+          drill_down: '/calls',
+          exclusions: 'None',
+          numerator: 1,
+          denominator: 2,
+        },
+      },
       timezone: 'UTC',
       generated_at: '2026-09-03T12:00:00Z',
     })
     renderPage()
     await waitFor(() => {
-      expect(screen.getByText('2')).toBeInTheDocument()
+      expect(screen.getByText('1')).toBeInTheDocument()
     })
+    fireEvent.click(screen.getByText('Details'))
+    expect(screen.getByText('Calls started in the local day.')).toBeInTheDocument()
+    expect(screen.getByText('Window: local_day (UTC)')).toBeInTheDocument()
+    expect(screen.getByText('1 of 2')).toBeInTheDocument()
+    expect(screen.getByText('Exclusions: None')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'View details' })).toHaveAttribute('href', '/calls')
+    expect(screen.getByText('Twilio configured')).toBeInTheDocument()
   })
 
   it('renders error recovery', async () => {

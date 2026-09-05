@@ -10,10 +10,8 @@ export type UserProfile = User & {
   /** True when a token is stored; never the raw secret. */
   twilio_auth_token_set?: boolean
   twilio_phone_number?: string | null
-  deepgram_api_key_set?: boolean
   has_twilio?: boolean
   has_deepgram?: boolean
-  config_json?: string | null
   image_file?: string
 }
 
@@ -38,7 +36,16 @@ export type Appointment = {
   notes?: string | null
   google_calendar_event_id?: string | null
   google_calendar_link?: string | null
+  provider_sync_status?: string
   transcript?: string | null
+}
+
+/** Non-sensitive fields returned by the paginated appointment list. */
+export type AppointmentListItem = Pick<
+  Appointment,
+  'id' | 'summary' | 'start_datetime' | 'end_datetime' | 'timezone' | 'status'
+> & {
+  provider_sync_status: string
 }
 
 export type AppointmentCreate = {
@@ -56,6 +63,18 @@ export type AppointmentCreate = {
 
 export type AppointmentUpdate = Partial<AppointmentCreate>
 
+/** Bounded delivery status — never includes recipient address or message body. */
+export type NotificationDeliveryStatus = {
+  id: number
+  appointment_id: number
+  kind: 'confirmation' | 'reminder' | string
+  channel: string
+  status: 'scheduled' | 'claimed' | 'sent' | 'failed' | 'skipped' | 'cancelled' | string
+  error_code?: string | null
+  sent_at?: string | null
+  created_at?: string | null
+}
+
 export type CallSession = {
   id: number
   call_sid: string
@@ -68,6 +87,10 @@ export type CallSession = {
   outcome?: string | null
   terminal_reason?: string | null
   has_transcript?: boolean
+  transcript_available?: boolean
+  transcript_purged?: boolean
+  direction?: string
+  summary?: string
   transcript?: string | null
 }
 
@@ -252,12 +275,17 @@ export type AnalyticsSummary = {
   currency?: string | null
   reporting_currency?: string | null
   totals_by_currency?: Record<string, { calls: number; total_cost: number }>
+  cost_over_time_by_currency?: Record<string, AnalyticsSeriesBlock>
   timezone?: string
   range?: { start: string | null; end: string | null }
   generated_at?: string | null
   source_synced_at?: string | null
   stale?: boolean
+  stale_reason?: string | null
+  cache_status?: 'hit' | 'miss' | string
+  cache_age_seconds?: number | null
   truncated?: boolean
+  phone_reidentification_allowed?: boolean
   calls_over_time: AnalyticsSeriesBlock
   duration_distribution: AnalyticsSeriesBlock
   cost_over_time: AnalyticsSeriesBlock
@@ -286,5 +314,4 @@ export type UserProfileUpdate = {
   twilio_account_sid?: string | null
   twilio_auth_token?: string | null
   twilio_phone_number?: string | null
-  config_json?: string | null
 }

@@ -16,6 +16,7 @@ import { Link as RouterLink } from 'react-router-dom'
 
 import {
   checkCalendarAvailability,
+  getCalendarEmbed,
   getCalendarStatus,
   listCalendarEvents,
 } from '../api/calendars'
@@ -24,12 +25,13 @@ import { PageHeader } from '../components/PageHeader'
 import { useSnackbar } from '../components/SnackbarProvider'
 import type { CalendarEvent, CalendarStatus } from '../types'
 
-function formatWhen(iso?: string) {
+function formatWhen(iso: string | undefined, timezone: string | null | undefined) {
   if (!iso) return '—'
   try {
     return new Intl.DateTimeFormat(undefined, {
       dateStyle: 'medium',
       timeStyle: 'short',
+      timeZone: timezone ?? undefined,
     }).format(new Date(iso))
   } catch {
     return iso
@@ -47,7 +49,7 @@ function safeExternalUrl(url?: string | null): string | null {
   if (!url) return null
   try {
     const parsed = new URL(url)
-    if (parsed.protocol === 'https:' || parsed.protocol === 'http:') return parsed.toString()
+    if (parsed.protocol === 'https:' && ['calendar.google.com', 'www.google.com'].includes(parsed.hostname)) return parsed.toString()
   } catch {
     return null
   }
@@ -62,6 +64,8 @@ export function CalendarPage() {
   const [eventsLoading, setEventsLoading] = useState(false)
   const [statusError, setStatusError] = useState<string | null>(null)
   const [eventsError, setEventsError] = useState<string | null>(null)
+  const [embedUrl, setEmbedUrl] = useState<string | null>(null)
+  const [embedError, setEmbedError] = useState<string | null>(null)
 
   const [availStart, setAvailStart] = useState('')
   const [availEnd, setAvailEnd] = useState('')
@@ -74,6 +78,8 @@ export function CalendarPage() {
     setStatusLoading(true)
     setStatusError(null)
     setEventsError(null)
+    setEmbedError(null)
+    setEmbedUrl(null)
     getCalendarStatus()
       .then((nextStatus) => {
         setStatus(nextStatus)
@@ -83,8 +89,11 @@ export function CalendarPage() {
           return
         }
         setEventsLoading(true)
-        return listCalendarEvents(range)
-          .then((nextEvents) => setEvents(nextEvents))
+        void getCalendarEmbed()
+          .then((embed) => setEmbedUrl(safeExternalUrl(embed.embed_url)))
+          .catch((err: unknown) => setEmbedError(err instanceof ApiError ? err.message : 'Failed to load calendar embed'))
+        return listCalendarEvents({ ...range, timezone: nextStatus.time_zone ?? undefined })
+          .then((result) => setEvents(result.items))
           .catch((err: unknown) => {
             setEvents([])
             setEventsError(err instanceof ApiError ? err.message : 'Failed to load events')
@@ -134,7 +143,6 @@ export function CalendarPage() {
     }
   }
 
-  const embedUrl = status?.embedded_link
   const loading = statusLoading || eventsLoading
 
   return (
@@ -223,7 +231,7 @@ export function CalendarPage() {
           }
         >
           {status?.connected
-            ? 'No embed link returned. Events still appear below.'
+            ? embedError ?? 'Calendar embed is unavailable. Events still appear below.'
             : 'Connect Google Calendar in Settings to see your schedule.'}
         </Alert>
       ) : null}
@@ -256,8 +264,8 @@ export function CalendarPage() {
             {events.map((ev) => {
               const link = safeExternalUrl(ev.url)
               const when = ev.allDay
-                ? `${formatWhen(ev.start)} (all day)`
-                : `${formatWhen(ev.start)}${ev.end ? ` – ${formatWhen(ev.end)}` : ''}`
+                ? `${ev.start} (all day)`
+                : `${formatWhen(ev.start, status?.time_zone)}${ev.end ? ` – ${formatWhen(ev.end, status?.time_zone)}` : ''}`
               return (
                 <ListItem key={ev.id} divider sx={{ px: 0 }}>
                   <ListItemText primary={ev.title || '(No title)'} secondary={when} />

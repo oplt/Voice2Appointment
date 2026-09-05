@@ -14,7 +14,30 @@ help:
 	@echo "  make frontend   Start Vite only"
 	@echo "  make migrate    Run Alembic migrations (alembic upgrade head)"
 	@echo "  make install    Install Python + Node deps (incl. honcho)"
-	@echo "  make free-ports Kill processes listening on :$(BACKEND_PORT) and :$(FRONTEND_PORT)"
+	@echo "  make free-ports  Kill processes listening on :$(BACKEND_PORT) and :$(FRONTEND_PORT)"
+	@echo "  make release-gate Run focused Phase 5–8 pytest gates used before release"
+
+.PHONY: release-gate
+release-gate:
+	@test -x $(PYTHON) || $(MAKE) install
+	PYTHONPATH=backend $(PYTHON) backend/scripts/check_openapi_contract.py
+	PYTHONPATH=backend $(PYTHON) backend/scripts/validate_alert_rules.py
+	PYTHONPATH=backend PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 $(PYTHON) -m pytest -p timeout \
+		backend/tests/test_phase5_analytics.py \
+		backend/tests/test_phase5_caching.py \
+		backend/tests/test_phase5_http_contracts.py \
+		backend/tests/test_phase6_product.py \
+		backend/tests/test_phase6_transfer_gaps.py \
+		backend/tests/test_phase7_adversarial.py \
+		backend/tests/test_phase7_postgres.py \
+		backend/tests/test_phase7_e2e.py \
+		backend/tests/test_phase7_observability.py \
+		backend/tests/test_phase7_contract_gate.py \
+		backend/tests/test_phase7_alert_rules.py \
+		backend/tests/test_phase8_capacity.py \
+		-q --timeout=60
+	cd frontend && npm test -- --run src/features/analytics/filters.test.ts src/pages/AnalyticsPage.test.tsx src/components/ChartWithTable.test.tsx src/pages/AppointmentsPage.test.tsx src/pages/ForgotPasswordPage.test.tsx
+
 
 # SIGTERM listeners on PORTS. No-op if a port is already free.
 free-ports: PORTS ?= $(BACKEND_PORT) $(FRONTEND_PORT)

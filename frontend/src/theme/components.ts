@@ -38,6 +38,11 @@ export const componentOverrides: Components<Theme> = {
         color: designTokens.colors.carbonDark,
         textDecoration: 'underline',
       },
+      '& :focus-visible': {
+        outline: `3px solid ${designTokens.colors.electricBlue}`,
+        outlineOffset: 3,
+        boxShadow: `0 0 0 2px ${designTokens.colors.pureWhite}`,
+      },
     },
   },
   MuiButton: {

@@ -1,5 +1,10 @@
 import { api } from './client'
+import type { AnalyticsMeta } from '../features/analytics/filters'
 import type { AnalyticsSummary } from '../types'
+
+export function getAnalyticsMeta() {
+  return api.get<AnalyticsMeta>('/api/v1/analytics/meta')
+}
 
 export function getAnalyticsSummary(params: {
   start: string

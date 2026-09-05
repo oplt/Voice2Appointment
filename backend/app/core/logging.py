@@ -177,21 +177,26 @@ class ContextFilter(logging.Filter):
 
 
 class StructuredFormatter(logging.Formatter):
-    """JSON line formatter with standard observability fields."""
+    """JSON line formatter with standard observability fields.
+
+    The rendered message and exception text are never trusted verbatim:
+    ordinary log call sites and raised exceptions can embed phone numbers or
+    long free-text; sanitize them the same way structured extras are (P7-06).
+    """
 
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
             "ts": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%SZ"),
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
+            "msg": sanitize_for_log(record.getMessage()),
             "request_id": getattr(record, "request_id", "-"),
             "call_sid": getattr(record, "call_sid", "-"),
             "user_id": getattr(record, "user_id", "-"),
             "operation": getattr(record, "operation", "-"),
         }
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = sanitize_for_log(self.formatException(record.exc_info))
         # Attach non-standard extras (latency_ms, event, etc.).
         reserved = {
             "name",
@@ -236,10 +241,10 @@ class TextFormatter(logging.Formatter):
             f"call_sid={getattr(record, 'call_sid', '-')} "
             f"user_id={getattr(record, 'user_id', '-')} "
             f"operation={getattr(record, 'operation', '-')} "
-            f"{record.getMessage()}"
+            f"{sanitize_for_log(record.getMessage())}"
         )
         if record.exc_info:
-            base = f"{base}\n{self.formatException(record.exc_info)}"
+            base = f"{base}\n{sanitize_for_log(self.formatException(record.exc_info))}"
         return base
 
 

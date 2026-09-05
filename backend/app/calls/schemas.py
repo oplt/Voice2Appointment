@@ -23,11 +23,24 @@ class CallSessionOut(BaseModel):
     has_transcript: bool = False
 
 
+class CallSessionListItemOut(BaseModel):
+    id: int
+    call_sid: str
+    status: str
+    started_at: datetime | None = None
+    duration_seconds: int | None = None
+    outcome: str | None = None
+    direction: str = "unknown"
+    summary: str = ""
+    transcript_available: bool = False
+    transcript_purged: bool = False
+
+
 class CallSessionDetailOut(CallSessionOut):
     transcript: str | None = None
 
 
 class CallSessionListOut(BaseModel):
-    items: list[CallSessionOut]
+    items: list[CallSessionListItemOut]
     next_cursor: str | None = None
     limit: int = 50

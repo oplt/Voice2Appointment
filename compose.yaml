@@ -32,9 +32,8 @@ services:
       dockerfile: docker/Dockerfile.backend
     env_file:
       - .env
+    command: ["alembic", "upgrade", "head"]
     environment:
-      RUN_DB_MIGRATE: "1"
-      MIGRATE_ONLY: "1"
       DATABASE_URL: postgresql://${DB_USER:-voice_asst}:${DB_PASSWORD:-voice_asst}@db:5432/${DB_NAME:-voice_asst}
     depends_on:
       db:
@@ -77,7 +76,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    command: ["uvicorn", "voice_asgi:app", "--host", "0.0.0.0", "--port", "8001", "--ws", "websockets"]
+    # Stream credentials live in the path because Twilio forbids query strings on
+    # <Stream>; disable access logs so the short-lived secret is never recorded.
+    command: ["uvicorn", "voice_asgi:app", "--host", "0.0.0.0", "--port", "8001", "--ws", "websockets", "--no-access-log"]
     env_file:
       - .env
     environment:

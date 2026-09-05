@@ -41,6 +41,14 @@ class RetentionPrefs(BaseModel):
     legal_hold: bool = False
 
 
+class TranscriptPrefs(BaseModel):
+    """Explicit tenant consent and redaction policy for stored call text."""
+
+    storage_enabled: bool = False
+    consent_at: str | None = None
+    redact_phone_numbers: bool = True
+
+
 class TransferPrefs(BaseModel):
     enabled: bool = False
     destination_e164: str | None = None
@@ -67,6 +75,7 @@ class LanguagePrefs(BaseModel):
 class ProductPrefs(BaseModel):
     notifications: NotificationPrefs = Field(default_factory=NotificationPrefs)
     retention: RetentionPrefs = Field(default_factory=RetentionPrefs)
+    transcripts: TranscriptPrefs = Field(default_factory=TranscriptPrefs)
     transfer: TransferPrefs = Field(default_factory=TransferPrefs)
     languages: LanguagePrefs = Field(default_factory=LanguagePrefs)
 
@@ -88,13 +97,42 @@ def load_product_prefs(config_json: str | None) -> ProductPrefs:
     if not blob:
         blob = {
             k: data[k]
-            for k in ("notifications", "retention", "transfer", "languages")
+            for k in ("notifications", "retention", "transcripts", "transfer", "languages")
             if k in data
         }
     try:
         return ProductPrefs.model_validate(blob or {})
     except Exception:  # noqa: BLE001
-        return ProductPrefs()
+        # Fail closed: unreadable prefs must not silently enable purge via defaults.
+        return ProductPrefs(
+            retention=RetentionPrefs(legal_hold=True),
+        )
+
+
+def prefs_policy_valid(config_json: str | None) -> bool:
+    """False when product prefs JSON is missing/malformed (fail-closed for purge)."""
+    if not config_json or not str(config_json).strip():
+        return True  # empty → explicit defaults OK
+    try:
+        data = json.loads(config_json)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    blob = data.get("product") if isinstance(data.get("product"), dict) else None
+    if blob is None:
+        blob = {
+            k: data[k]
+            for k in ("notifications", "retention", "transcripts", "transfer", "languages")
+            if k in data
+        }
+    if not blob:
+        return True
+    try:
+        ProductPrefs.model_validate(blob)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def save_product_prefs(user: User, prefs: ProductPrefs) -> ProductPrefs:

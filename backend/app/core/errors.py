@@ -149,11 +149,8 @@ def map_exception(exc: BaseException) -> AppError:
         return ProviderUnavailableError(cause=exc)
 
     if isinstance(exc, ValueError):
-        msg = str(exc)
         if "credential" in text or "authentication" in text or "token" in text:
             return ProviderAuthError(cause=exc)
-        if msg and len(msg) < 200 and "http" not in text and "traceback" not in text:
-            return ValidationAppError(msg, cause=exc)
         return ValidationAppError(cause=exc)
 
     logger.exception("Unmapped error type=%s", name)
@@ -180,9 +177,16 @@ def register_exception_handlers(app: Any) -> None:
     async def validation_exception_handler(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
+        # Pydantic includes the rejected input by default. It can contain a
+        # credential (including the retired tenant Deepgram field), so retain
+        # only structural validation information in the browser response.
+        errors = [
+            {key: value for key, value in error.items() if key != "input"}
+            for error in exc.errors()
+        ]
         return JSONResponse(
             status_code=422,
-            content={"detail": exc.errors()},
+            content={"detail": errors},
         )
 
     @app.exception_handler(Exception)

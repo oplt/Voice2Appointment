@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_db
 from app.calls import service as calls_service
-from app.calls.schemas import CallSessionDetailOut, CallSessionListOut, CallSessionOut
+from app.calls.schemas import CallSessionDetailOut, CallSessionListItemOut, CallSessionListOut
 from app.core.errors import NotFoundError, map_exception, raise_http
 from app.db.models import User
 
@@ -28,7 +28,7 @@ def list_calls(
     except ValueError as exc:
         raise_http(map_exception(exc))
     items = [
-        CallSessionOut.model_validate(calls_service.to_list_item(r)) for r in rows
+        CallSessionListItemOut.model_validate(calls_service.to_list_item(r)) for r in rows
     ]
     return CallSessionListOut(items=items, next_cursor=next_cursor, limit=limit)
 
@@ -60,7 +60,7 @@ def get_call(
     row = calls_service.get_call_session(db, current_user.id, call_id)
     if row is None:
         raise_http(NotFoundError("Call not found"))
-    payload = calls_service.to_list_item(row)
+    payload = calls_service.to_detail_item(row)
     if include_transcript and row.content_purged_at is None:
         payload["transcript"] = row.transcript
     else:

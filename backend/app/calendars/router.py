@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_db
 from app.calendars import service as calendars_service
+from app.calendars.schemas import CalendarEmbedOut, CalendarEventsOut, CalendarStatusOut
 from app.core.errors import NotFoundError, map_exception, raise_http
 from app.db.models import User
 
@@ -20,7 +21,7 @@ class CalendarPreferencesUpdate(BaseModel):
     time_zone: str | None = Field(default=None, max_length=100)
 
 
-@router.get("/status")
+@router.get("/status", response_model=CalendarStatusOut)
 def get_status(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
@@ -72,14 +73,14 @@ def google_callback(
     return RedirectResponse(url=url, status_code=302)
 
 
-@router.get("/events")
+@router.get("/events", response_model=CalendarEventsOut)
 def get_events(
     timeMin: str = Query(...),
     timeMax: str = Query(...),
     timezone: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
-) -> list:
+) -> CalendarEventsOut:
     try:
         return calendars_service.list_events(
             db, current_user.id, timeMin, timeMax, timezone
@@ -103,7 +104,7 @@ def get_availability(
         raise_http(map_exception(exc))
 
 
-@router.get("/embed/{view_type}")
+@router.get("/embed/{view_type}", response_model=CalendarEmbedOut)
 def get_embed(
     view_type: str,
     current_user: User = Depends(get_current_user),

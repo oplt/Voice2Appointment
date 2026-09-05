@@ -1,0 +1,17 @@
+{
+  "app/appointments/booking.py": [
+    "tests/test_phase0_booking_parity.py",
+    "tests/test_phase0_durable_operations.py",
+    "tests/test_phase7_postgres.py"
+  ],
+  "app/voice/session.py": [
+    "tests/test_phase0_voice_context.py",
+    "tests/test_phase2_pipeline.py",
+    "tests/test_phase7_voice_performance.py"
+  ],
+  "app/workers/tasks.py": [
+    "tests/test_phase0_durable_operations.py",
+    "tests/test_phase0_voice_recording.py",
+    "tests/test_phase8_hardening.py"
+  ]
+}

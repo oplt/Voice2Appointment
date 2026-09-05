@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react'
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
 import { ProtectedRoute } from './auth/ProtectedRoute'
 import { AppLayout } from './components/AppLayout'
@@ -33,8 +33,9 @@ const NotFoundPage = lazy(() =>
 )
 
 export default function App() {
+  const location = useLocation()
   return (
-    <RouteErrorBoundary>
+    <RouteErrorBoundary key={location.pathname}>
       <Suspense fallback={<RouteLoadingFallback />}>
         <Routes>
           <Route path="/" element={<HomePage />} />

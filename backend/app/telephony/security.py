@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Mapping
 
 from fastapi import HTTPException, Request
@@ -79,8 +80,8 @@ def twilio_recording_api_url(*, account_sid: str, recording_sid: str) -> str:
 
 def assert_valid_twilio_sid(value: str, *, prefix: str) -> str:
     cleaned = (value or "").strip()
-    if len(cleaned) < 34 or not cleaned.startswith(prefix):
+    if prefix not in {"AC", "CA", "RE"}:
+        raise ValueError("unsupported Twilio SID prefix")
+    if re.fullmatch(rf"{re.escape(prefix)}[0-9a-fA-F]{{32}}", cleaned) is None:
         raise ValueError(f"invalid {prefix} SID")
-    if not cleaned[2:].isalnum():
-        raise ValueError(f"invalid {prefix} SID characters")
     return cleaned

@@ -73,7 +73,7 @@ def csrf_bootstrap(response: Response) -> dict[str, str]:
 @router.post(
     "/login",
     response_model=AuthResponse,
-    dependencies=[Depends(rate_limit(limit=10, window_seconds=60, name="login"))],
+    dependencies=[Depends(rate_limit(limit=10, window_seconds=60, name="login", account_field="email"))],
 )
 def login(
     payload: LoginRequest,
@@ -97,7 +97,7 @@ def login(
     "/register",
     response_model=AuthResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(rate_limit(limit=5, window_seconds=60, name="register"))],
+    dependencies=[Depends(rate_limit(limit=5, window_seconds=60, name="register", account_field="email"))],
 )
 def register(
     payload: RegisterRequest,
@@ -145,14 +145,20 @@ def me(current_user: User = Depends(get_current_user)) -> UserPublic:
     "/password-reset/request",
     response_model=MessageResponse,
     dependencies=[
-        Depends(rate_limit(limit=5, window_seconds=60, name="password-reset-request"))
+        Depends(rate_limit(limit=5, window_seconds=60, name="password-reset-request", account_field="email"))
     ],
 )
 def password_reset_request(
     payload: PasswordResetRequest,
     db: Session = Depends(require_db),
 ) -> MessageResponse:
-    message = auth_service.request_password_reset(db, payload.email)
+    try:
+        message = auth_service.request_password_reset(db, payload.email)
+    except auth_service.ResetDeliveryUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Password reset is temporarily unavailable.",
+        ) from exc
     return MessageResponse(message=message)
 
 

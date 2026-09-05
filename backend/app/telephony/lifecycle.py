@@ -50,24 +50,29 @@ _ALLOWED: dict[str, frozenset[str]] = {
             STATUS_EXPIRED,
         }
     ),
-    # Terminal states only accept identical re-entry (idempotent) or completed
-    # after disconnected when Twilio reports a clean hangup.
-    STATUS_DISCONNECTED: frozenset({STATUS_COMPLETED, STATUS_DISCONNECTED}),
-    STATUS_COMPLETED: frozenset({STATUS_COMPLETED}),
+    # A provider error is the strongest terminal outcome. It may supersede a
+    # generic clean/disconnected/expired result that raced it, but cannot be
+    # erased by a later success callback.
+    STATUS_DISCONNECTED: frozenset(
+        {STATUS_COMPLETED, STATUS_DISCONNECTED, STATUS_PROVIDER_ERROR}
+    ),
+    STATUS_COMPLETED: frozenset({STATUS_COMPLETED, STATUS_PROVIDER_ERROR}),
     STATUS_REJECTED: frozenset({STATUS_REJECTED}),
-    STATUS_PROVIDER_ERROR: frozenset({STATUS_PROVIDER_ERROR, STATUS_COMPLETED}),
-    STATUS_EXPIRED: frozenset({STATUS_EXPIRED, STATUS_COMPLETED}),
+    STATUS_PROVIDER_ERROR: frozenset({STATUS_PROVIDER_ERROR}),
+    STATUS_EXPIRED: frozenset(
+        {STATUS_EXPIRED, STATUS_COMPLETED, STATUS_PROVIDER_ERROR}
+    ),
 }
 
 _MAX_TRANSCRIPT_CHARS = 32_000
 
 _TWILIO_STATUS_MAP = {
-    "completed": STATUS_COMPLETED,
-    "busy": STATUS_COMPLETED,
-    "no-answer": STATUS_COMPLETED,
-    "failed": STATUS_PROVIDER_ERROR,
-    "canceled": STATUS_DISCONNECTED,
-    "cancelled": STATUS_DISCONNECTED,
+    "completed": (STATUS_COMPLETED, "completed"),
+    "busy": (STATUS_COMPLETED, "busy"),
+    "no-answer": (STATUS_COMPLETED, "no_answer"),
+    "failed": (STATUS_PROVIDER_ERROR, "failed"),
+    "canceled": (STATUS_DISCONNECTED, "cancelled"),
+    "cancelled": (STATUS_DISCONNECTED, "cancelled"),
 }
 
 
@@ -94,6 +99,7 @@ def transition_call_session(
     db: Session,
     *,
     call_sid: str,
+    user_id: int | None = None,
     new_status: str,
     terminal_reason: str | None = None,
     outcome: str | None = None,
@@ -102,8 +108,16 @@ def transition_call_session(
     ended_at: datetime | None = None,
     extra_data: dict[str, Any] | None = None,
 ) -> CallSession | None:
-    """Idempotent lifecycle transition. Returns None if CallSession missing."""
-    cs = db.scalar(select(CallSession).where(CallSession.call_sid == call_sid))
+    """Idempotent, serialized lifecycle transition.
+
+    ``user_id`` scopes externally initiated transitions to their authenticated
+    tenant.  The lock makes state validation and the resulting write one
+    critical section on PostgreSQL.
+    """
+    query = select(CallSession).where(CallSession.call_sid == call_sid)
+    if user_id is not None:
+        query = query.where(CallSession.user_id == user_id)
+    cs = db.scalar(query.with_for_update())
     if cs is None:
         return None
 
@@ -120,6 +134,12 @@ def transition_call_session(
         if duration_seconds is not None and cs.duration_seconds is None:
             cs.duration_seconds = max(0, int(duration_seconds))
             changed = True
+        if extra_data:
+            merged = dict(cs.data or {})
+            merged.update(extra_data)
+            if merged != (cs.data or {}):
+                cs.data = merged
+                changed = True
         if changed:
             db.commit()
             db.refresh(cs)
@@ -181,6 +201,7 @@ def finalize_voice_session(
     status: str,
     terminal_reason: str,
     transcript: str | None = None,
+    transcript_metadata: dict[str, Any] | None = None,
     outcome: str | None = None,
 ) -> CallSession | None:
     return transition_call_session(
@@ -190,19 +211,26 @@ def finalize_voice_session(
         terminal_reason=terminal_reason,
         transcript=transcript,
         outcome=outcome or "unknown",
+        extra_data=(
+            {"transcript_capture": transcript_metadata}
+            if transcript_metadata is not None
+            else None
+        ),
     )
 
 
 def apply_twilio_status_callback(
     db: Session,
     payload: dict[str, str],
+    *,
+    user_id: int,
 ) -> dict[str, Any]:
     call_sid = (payload.get("CallSid") or "").strip()
     if not call_sid:
         return {"ok": False, "error": "missing CallSid"}
     raw_status = (payload.get("CallStatus") or "").strip().lower()
-    mapped = _TWILIO_STATUS_MAP.get(raw_status)
-    if mapped is None:
+    mapped_status = _TWILIO_STATUS_MAP.get(raw_status)
+    if mapped_status is None:
         return {"ok": True, "ignored": True, "status": raw_status}
 
     duration_raw = payload.get("CallDuration") or payload.get("Duration")
@@ -213,11 +241,14 @@ def apply_twilio_status_callback(
         except ValueError:
             duration = None
 
+    status, outcome = mapped_status
     cs = transition_call_session(
         db,
         call_sid=call_sid,
-        new_status=mapped,
+        user_id=user_id,
+        new_status=status,
         terminal_reason=f"twilio:{raw_status}",
+        outcome=outcome,
         duration_seconds=duration,
         extra_data={"twilio_call_status": raw_status},
     )

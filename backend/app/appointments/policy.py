@@ -33,10 +33,12 @@ class BusinessHoursWindow(BaseModel):
     @classmethod
     def valid_clock_time(cls, value: str) -> str:
         try:
-            time.fromisoformat(value)
+            parsed = time.fromisoformat(value)
         except ValueError as exc:
             raise ValueError("must be an HH:MM time") from exc
-        return value
+        if parsed.second or parsed.microsecond:
+            raise ValueError("must be an HH:MM time")
+        return parsed.strftime("%H:%M")
 
 
 class BookingPolicy(BaseModel):
@@ -72,11 +74,20 @@ class BookingPolicy(BaseModel):
         unknown = set(value) - set(_DAYS)
         if unknown:
             raise ValueError(f"unknown weekdays: {', '.join(sorted(unknown))}")
-        for windows in value.values():
-            for window in windows:
-                if time.fromisoformat(window.start) >= time.fromisoformat(window.end):
+        canonical: dict[str, list[BusinessHoursWindow]] = {}
+        for day, windows in value.items():
+            ordered = sorted(windows, key=lambda window: window.start)
+            previous_end: time | None = None
+            for window in ordered:
+                start = time.fromisoformat(window.start)
+                end = time.fromisoformat(window.end)
+                if start >= end:
                     raise ValueError("business-hours start must be before end")
-        return value
+                if previous_end is not None and start < previous_end:
+                    raise ValueError("business-hours windows cannot overlap")
+                previous_end = end
+            canonical[day] = ordered
+        return canonical
 
 
 class BookingPolicyError(ValueError):

@@ -18,39 +18,28 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { BarChart } from '@mui/x-charts/BarChart'
 import { LineChart } from '@mui/x-charts/LineChart'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 
-import { fetchTwilioAnalytics, getAnalyticsSummary } from '../api/analytics'
+import { fetchTwilioAnalytics, getAnalyticsMeta, getAnalyticsSummary } from '../api/analytics'
 import { ApiError } from '../api/client'
-import { ChartWithTable } from '../components/ChartWithTable'
+import { ChartWithTable, HeatmapWithTable } from '../components/ChartWithTable'
 import { PageHeader } from '../components/PageHeader'
 import { useSnackbar } from '../components/SnackbarProvider'
+import {
+  type AnalyticsFilterState,
+  type AnalyticsMeta,
+  type FilterFieldErrors,
+  defaultFiltersFromMeta,
+  filterKey,
+  filtersEqual,
+  filtersFromSearchParams,
+  filtersToSearchParams,
+  presetRange,
+  validateFilters,
+} from '../features/analytics/filters'
 import type { AnalyticsPeakHeatmap, AnalyticsSummary } from '../types'
 import { designTokens } from '../theme/tokens'
-
-/** Local calendar YYYY-MM-DD (no UTC shift). */
-function toLocalDateInput(d: Date) {
-  const y = d.getFullYear()
-  const m = String(d.getMonth() + 1).padStart(2, '0')
-  const day = String(d.getDate()).padStart(2, '0')
-  return `${y}-${m}-${day}`
-}
-
-function parseLocalDate(value: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
-  if (!m) return null
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-  if (Number.isNaN(d.getTime())) return null
-  return d
-}
-
-function defaultDates() {
-  const end = new Date()
-  const start = new Date()
-  start.setDate(start.getDate() - 29)
-  return { start: toLocalDateInput(start), end: toLocalDateInput(end) }
-}
 
 function hasSeries(block: { labels: string[]; values: number[] } | undefined) {
   return Boolean(block?.labels?.length && block.values.length)
@@ -65,21 +54,18 @@ function seriesSummary(labels: string[], values: number[], unit: string) {
 
 function PeakHeatmap({ data }: { data: AnalyticsPeakHeatmap }) {
   const max = Math.max(0, ...data.matrix.flat())
-  const [showTable, setShowTable] = useState(false)
   return (
-    <Stack spacing={1}>
-      <Stack direction="row" sx={{ justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="body2" color="text.secondary">
-          Peak cell intensity scales with call count (max {max}). Values are also in the table.
-        </Typography>
-        <Button size="small" variant="text" onClick={() => setShowTable((v) => !v)}>
-          {showTable ? 'Hide table' : 'Show table'}
-        </Button>
-      </Stack>
-      <Box sx={{ overflowX: 'auto' }} aria-hidden={showTable}>
+    <HeatmapWithTable
+      title="Peak hours by weekday"
+      summary={`Peak cell intensity scales with call count (max ${max}). Full matrix including zeros is in the table.`}
+      weekdays={data.weekdays}
+      hours={data.hours}
+      matrix={data.matrix}
+    >
+      <Box sx={{ overflowX: 'auto' }}>
         <Box
           role="img"
-          aria-label="Heatmap of call volume by weekday and hour"
+          aria-label="Heatmap of call volume by weekday and hour; open the data table for exact values"
           sx={{
             display: 'grid',
             gridTemplateColumns: `48px repeat(${data.hours.length}, minmax(14px, 1fr))`,
@@ -110,7 +96,6 @@ function PeakHeatmap({ data }: { data: AnalyticsPeakHeatmap }) {
                   <Box
                     key={`${day}-${hour}`}
                     title={`${day} ${hour}:00 — ${value} calls`}
-                    aria-label={`${day} ${hour}:00, ${value} calls`}
                     sx={{
                       aspectRatio: '1',
                       borderRadius: 0.5,
@@ -128,69 +113,79 @@ function PeakHeatmap({ data }: { data: AnalyticsPeakHeatmap }) {
           ))}
         </Box>
       </Box>
-      {showTable ? (
-        <TableContainer>
-          <Table size="small" aria-label="Peak hours data table">
-            <TableHead>
-              <TableRow>
-                <TableCell>Weekday</TableCell>
-                <TableCell>Hour</TableCell>
-                <TableCell align="right">Calls</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {data.weekdays.flatMap((day, rowIdx) =>
-                data.hours
-                  .map((hour) => ({
-                    day,
-                    hour,
-                    value: data.matrix[rowIdx]?.[hour] ?? 0,
-                  }))
-                  .filter((cell) => cell.value > 0)
-                  .map((cell) => (
-                    <TableRow key={`${cell.day}-${cell.hour}`}>
-                      <TableCell>{cell.day}</TableCell>
-                      <TableCell>{cell.hour}:00</TableCell>
-                      <TableCell align="right">{cell.value}</TableCell>
-                    </TableRow>
-                  )),
-              )}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      ) : null}
-    </Stack>
+    </HeatmapWithTable>
   )
 }
 
-type FilterState = { start: string; end: string; compare: boolean }
+const EMPTY_SUMMARY: AnalyticsSummary | null = null
 
 export function AnalyticsPage() {
   const { notify } = useSnackbar()
-  const defaults = useMemo(() => defaultDates(), [])
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const appliedFromUrl = useMemo<FilterState>(() => {
-    const start = searchParams.get('start') || defaults.start
-    const end = searchParams.get('end') || defaults.end
-    const compare = searchParams.get('compare') === '1'
-    return { start, end, compare }
-  }, [searchParams, defaults])
-
-  const [draft, setDraft] = useState<FilterState>(appliedFromUrl)
-  const [applied, setApplied] = useState<FilterState>(appliedFromUrl)
-  const [filterError, setFilterError] = useState<string | null>(null)
-  const [summary, setSummary] = useState<AnalyticsSummary | null>(null)
+  const [meta, setMeta] = useState<AnalyticsMeta | null>(null)
+  const [metaError, setMetaError] = useState<string | null>(null)
+  const [draft, setDraft] = useState<AnalyticsFilterState | null>(null)
+  const [fieldErrors, setFieldErrors] = useState<FilterFieldErrors | null>(null)
+  const [summary, setSummary] = useState<AnalyticsSummary | null>(EMPTY_SUMMARY)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
 
-  useEffect(() => {
-    setDraft(appliedFromUrl)
-    setApplied(appliedFromUrl)
-  }, [appliedFromUrl])
+  const lastValidAppliedRef = useRef<AnalyticsFilterState | null>(null)
+  const lastFetchedKeyRef = useRef<string | null>(null)
 
-  const load = useCallback((filters: FilterState) => {
+  const defaults = useMemo(
+    () => (meta ? defaultFiltersFromMeta(meta) : null),
+    [meta],
+  )
+
+  const urlParsed = useMemo(() => {
+    if (!defaults) return null
+    return filtersFromSearchParams(searchParams, defaults)
+  }, [searchParams, defaults])
+
+  const candidate = urlParsed?.filters ?? null
+  const urlErrors = useMemo(
+    () => (candidate && meta ? validateFilters(candidate, meta.max_range_days) : null),
+    [candidate, meta],
+  )
+
+  const applied = useMemo(() => {
+    if (!meta) return null
+    if (urlErrors) return lastValidAppliedRef.current
+    return candidate
+  }, [candidate, meta, urlErrors])
+
+  const appliedFetchKey = applied && !urlErrors ? filterKey(applied) : null
+
+  useEffect(() => {
+    let cancelled = false
+    getAnalyticsMeta()
+      .then((next) => {
+        if (cancelled) return
+        setMeta(next)
+        setMetaError(null)
+        setDraft((prev) => prev ?? defaultFiltersFromMeta(next))
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return
+        setMetaError(err instanceof ApiError ? err.message : 'Failed to load analytics settings')
+        setLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Sync draft from URL only when navigation changes applied filters (back/forward / Apply).
+  useEffect(() => {
+    if (!candidate || urlErrors) return
+    setDraft((prev) => (prev && filtersEqual(prev, candidate) ? prev : candidate))
+    setFieldErrors(null)
+  }, [candidate, urlErrors])
+
+  const load = useCallback((filters: AnalyticsFilterState) => {
     setLoading(true)
     setError(null)
     getAnalyticsSummary({
@@ -207,41 +202,34 @@ export function AnalyticsPage() {
   }, [])
 
   useEffect(() => {
+    if (!meta) return
+    if (urlErrors) {
+      setFieldErrors(urlErrors)
+      setLoading(false)
+      return
+    }
+    if (!applied || !appliedFetchKey) return
+    if (lastFetchedKeyRef.current === appliedFetchKey) return
+    lastFetchedKeyRef.current = appliedFetchKey
+    lastValidAppliedRef.current = applied
     load(applied)
-  }, [applied, load])
-
-  const validateDraft = (next: FilterState): string | null => {
-    const start = parseLocalDate(next.start)
-    const end = parseLocalDate(next.end)
-    if (!start || !end) return 'Enter valid start and end dates (YYYY-MM-DD).'
-    if (start > end) return 'Start date must be on or before end date.'
-    const span = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1
-    if (span > 366) return 'Range cannot exceed 366 days.'
-    return null
-  }
+  }, [applied, appliedFetchKey, meta, urlErrors, load])
 
   const onApply = () => {
-    const err = validateDraft(draft)
-    setFilterError(err)
+    if (!draft || !meta) return
+    const err = validateFilters(draft, meta.max_range_days)
+    setFieldErrors(err)
     if (err) return
     const next = { ...draft }
-    setApplied(next)
-    const params = new URLSearchParams()
-    params.set('start', next.start)
-    params.set('end', next.end)
-    if (next.compare) params.set('compare', '1')
-    setSearchParams(params, { replace: true })
+    // Canonical applied source = URL. One setSearchParams → one fetch key change.
+    setSearchParams(filtersToSearchParams(next), { replace: true })
   }
 
   const applyPreset = (days: number) => {
-    const end = new Date()
-    const start = new Date()
-    start.setDate(start.getDate() - (days - 1))
-    setDraft((d) => ({
-      ...d,
-      start: toLocalDateInput(start),
-      end: toLocalDateInput(end),
-    }))
+    if (!meta) return
+    const range = presetRange(meta, days)
+    setDraft((d) => ({ ...(d ?? defaultFiltersFromMeta(meta)), ...range }))
+    setFieldErrors(null)
   }
 
   const hasChartData = Boolean(
@@ -254,10 +242,12 @@ export function AnalyticsPage() {
   )
 
   const onFetchTwilio = async () => {
+    if (!applied) return
     setFetching(true)
     try {
       const result = await fetchTwilioAnalytics()
       notify(result.message ?? 'Twilio data imported', 'success')
+      lastFetchedKeyRef.current = null
       load(applied)
     } catch (err: unknown) {
       notify(err instanceof ApiError ? err.message : 'Twilio fetch failed', 'error')
@@ -268,6 +258,7 @@ export function AnalyticsPage() {
 
   const currency = summary?.currency || summary?.reporting_currency || null
   const costLabel = currency ? `Cost (${currency})` : 'Cost'
+  const appliedLabel = applied ?? lastValidAppliedRef.current
 
   return (
     <Stack spacing={3}>
@@ -279,8 +270,8 @@ export function AnalyticsPage() {
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() => load(applied)}
-              disabled={loading}
+              onClick={() => applied && load(applied)}
+              disabled={loading || !applied}
               aria-label="Refresh analytics"
             >
               Refresh
@@ -297,6 +288,8 @@ export function AnalyticsPage() {
         }
       />
 
+      {metaError ? <Alert severity="error">{metaError}</Alert> : null}
+
       <Stack spacing={1.5}>
         <Stack
           direction={{ xs: 'column', sm: 'row' }}
@@ -307,54 +300,76 @@ export function AnalyticsPage() {
           <TextField
             label="Start date"
             type="date"
-            value={draft.start}
-            onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))}
+            value={draft?.start ?? ''}
+            onChange={(e) =>
+              setDraft((d) => (d ? { ...d, start: e.target.value } : d))
+            }
+            error={Boolean(fieldErrors?.start)}
+            helperText={fieldErrors?.start}
+            disabled={!draft}
             slotProps={{ inputLabel: { shrink: true } }}
           />
           <TextField
             label="End date"
             type="date"
-            value={draft.end}
-            onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))}
+            value={draft?.end ?? ''}
+            onChange={(e) => setDraft((d) => (d ? { ...d, end: e.target.value } : d))}
+            error={Boolean(fieldErrors?.end)}
+            helperText={fieldErrors?.end}
+            disabled={!draft}
             slotProps={{ inputLabel: { shrink: true } }}
           />
           <FormControlLabel
             control={
               <Checkbox
-                checked={draft.compare}
-                onChange={(e) => setDraft((d) => ({ ...d, compare: e.target.checked }))}
+                checked={draft?.compare ?? false}
+                onChange={(e) =>
+                  setDraft((d) => (d ? { ...d, compare: e.target.checked } : d))
+                }
+                disabled={!draft}
               />
             }
             label="Compare prior period"
           />
-          <Button variant="contained" onClick={onApply} disabled={loading}>
+          <Button variant="contained" onClick={onApply} disabled={loading || !draft}>
             Apply
           </Button>
         </Stack>
         <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-          <Button size="small" variant="outlined" onClick={() => applyPreset(7)}>
+          <Button size="small" variant="outlined" onClick={() => applyPreset(7)} disabled={!meta}>
             Last 7 days
           </Button>
-          <Button size="small" variant="outlined" onClick={() => applyPreset(30)}>
+          <Button size="small" variant="outlined" onClick={() => applyPreset(30)} disabled={!meta}>
             Last 30 days
           </Button>
-          <Button size="small" variant="outlined" onClick={() => applyPreset(90)}>
+          <Button size="small" variant="outlined" onClick={() => applyPreset(90)} disabled={!meta}>
             Last 90 days
           </Button>
           <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
-            Applied {applied.start} → {applied.end}
-            {summary?.timezone ? ` (${summary.timezone})` : ''}
+            {urlErrors
+              ? 'URL filters invalid — correct dates to load'
+              : appliedLabel
+                ? `Applied ${appliedLabel.start} → ${appliedLabel.end}`
+                : 'Loading filters…'}
+            {meta?.timezone ? ` (${meta.timezone})` : ''}
+            {meta ? ` · max ${meta.max_range_days}d` : ''}
           </Typography>
         </Stack>
-        {filterError ? <Alert severity="warning">{filterError}</Alert> : null}
+        {fieldErrors?.range ? <Alert severity="warning">{fieldErrors.range}</Alert> : null}
+        {urlErrors && summary ? (
+          <Alert severity="warning">
+            URL filters are invalid. Showing the last valid result until corrected.
+          </Alert>
+        ) : null}
       </Stack>
 
       {summary?.stale ? (
         <Alert severity="warning">
           Analytics may be stale
+          {summary.stale_reason ? ` (${summary.stale_reason})` : ''}
           {summary.source_synced_at
-            ? ` (last Twilio sync ${summary.source_synced_at})`
-            : ' (no Twilio sync recorded)'}
+            ? ` — last Twilio sync ${summary.source_synced_at}`
+            : ' — no Twilio sync recorded'}
           . Fetch Twilio to refresh.
         </Alert>
       ) : null}
@@ -362,6 +377,10 @@ export function AnalyticsPage() {
       {summary?.generated_at ? (
         <Typography variant="caption" color="text.secondary">
           Generated {summary.generated_at}
+          {summary.cache_status ? ` · cache ${summary.cache_status}` : ''}
+          {summary.cache_status === 'hit' && summary.cache_age_seconds != null
+            ? ` (${summary.cache_age_seconds}s old)`
+            : ''}
           {summary.source_synced_at ? ` · source synced ${summary.source_synced_at}` : ''}
         </Typography>
       ) : null}
@@ -370,7 +389,7 @@ export function AnalyticsPage() {
         <Alert
           severity="error"
           action={
-            <Button color="inherit" size="small" onClick={() => load(applied)}>
+            <Button color="inherit" size="small" onClick={() => applied && load(applied)}>
               Retry
             </Button>
           }
@@ -553,6 +572,38 @@ export function AnalyticsPage() {
                 </Grid>
               ) : null}
 
+              {!hasSeries(summary.cost_over_time) &&
+              summary.cost_over_time_by_currency &&
+              Object.keys(summary.cost_over_time_by_currency).length > 0
+                ? Object.entries(summary.cost_over_time_by_currency).map(([unit, series]) =>
+                    hasSeries(series) ? (
+                      <Grid key={unit} size={{ xs: 12, md: 6 }}>
+                        <ChartWithTable
+                          title={`Cost by day (${unit})`}
+                          summary={seriesSummary(series.labels, series.values, unit)}
+                          labels={series.labels}
+                          values={series.values}
+                          valueLabel={`Cost (${unit})`}
+                        >
+                          <LineChart
+                            height={280}
+                            xAxis={[{ data: series.labels, scaleType: 'point' }]}
+                            series={[
+                              {
+                                data: series.values,
+                                label: `Cost (${unit})`,
+                                color: designTokens.colors.carbonDark,
+                                area: false,
+                              },
+                            ]}
+                            margin={{ left: 40, right: 16, top: 24, bottom: 40 }}
+                          />
+                        </ChartWithTable>
+                      </Grid>
+                    ) : null,
+                  )
+                : null}
+
               {hasSeries(summary.duration_distribution) ? (
                 <Grid size={{ xs: 12, md: 6 }}>
                   <ChartWithTable
@@ -653,9 +704,6 @@ export function AnalyticsPage() {
 
               {summary.peak_hours_days?.matrix?.length ? (
                 <Grid size={{ xs: 12, md: 6 }}>
-                  <Typography variant="h3" sx={{ mb: 1 }}>
-                    Peak hours by weekday
-                  </Typography>
                   <PeakHeatmap data={summary.peak_hours_days} />
                 </Grid>
               ) : null}

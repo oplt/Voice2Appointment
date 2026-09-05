@@ -21,7 +21,12 @@ def get_settings(user: User) -> dict[str, Any]:
     from app.core.cache import CACHE_TTL_SETTINGS, cache_get, cache_set, versioned_key
     from app.core.config import settings as app_settings
 
-    cache_key = versioned_key(user.id, "settings", "me")
+    cache_key = versioned_key(
+        user.id,
+        "settings",
+        "me",
+        generation=user.cache_settings_version,
+    )
     cached = cache_get(cache_key)
     if isinstance(cached, dict):
         return cached
@@ -35,12 +40,9 @@ def get_settings(user: User) -> dict[str, Any]:
         "twilio_account_sid": mask_secret(user.twilio_account_sid),
         "twilio_auth_token": None,
         "twilio_phone_number": user.twilio_phone_number,
-        "deepgram_api_key": None,
-        "config_json": user.config_json,
         "has_twilio": bool(user.twilio_account_sid and user.twilio_auth_token),
         "has_deepgram": deepgram_configured,
         "twilio_auth_token_set": bool(user.twilio_auth_token),
-        "deepgram_api_key_set": deepgram_configured,
     }
     cache_set(cache_key, payload, ttl_seconds=CACHE_TTL_SETTINGS)
     return payload
@@ -50,9 +52,14 @@ def update_settings(db: Session, user: User, data: dict[str, Any]) -> User:
     from app.telephony.phones import canonical_e164
 
     # Never overwrite secrets with masked placeholders.
-    # deepgram_api_key is intentionally ignored — voice uses global DEEPGRAM_API_KEY (P2-05).
     secret_fields = ("twilio_account_sid", "twilio_auth_token")
-    ignored = {"deepgram_api_key", "id", "password", "twilio_phone_e164"}
+    if "config_json" in data:
+        raise ValueError("config_json is managed by typed settings endpoints")
+    if "deepgram_api_key" in data:
+        raise ValueError(
+            "deepgram_api_key is no longer accepted; configure DEEPGRAM_API_KEY on the server"
+        )
+    ignored = {"id", "password", "twilio_phone_e164"}
     for key, value in data.items():
         if key in ignored:
             continue
@@ -78,7 +85,4 @@ def update_settings(db: Session, user: User, data: dict[str, Any]) -> User:
         db.rollback()
         raise
     db.refresh(user)
-    from app.core.cache import invalidate_user_settings_cache
-
-    invalidate_user_settings_cache(user.id)
     return user

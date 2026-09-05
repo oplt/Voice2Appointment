@@ -77,10 +77,36 @@ class User(Base):
     twilio_phone_e164: Mapped[str | None] = mapped_column(
         String(20), nullable=True, unique=True, index=True
     )
-    deepgram_api_key: Mapped[str | None] = mapped_column(EncryptedText, nullable=True)
     config_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     twilio_last_synced_at: Mapped[datetime | None] = mapped_column(
         TZDateTime, nullable=True
+    )
+    twilio_sync_page_token: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    twilio_sync_window_started_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    twilio_sync_window_high_water: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    twilio_active_refresh_cursor: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    twilio_active_refresh_due_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    cache_calendar_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    cache_dashboard_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    cache_analytics_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    cache_settings_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
     )
 
     call_sessions: Mapped[list[CallSession]] = relationship(
@@ -101,7 +127,10 @@ class User(Base):
         from app.telephony.phones import canonical_e164
 
         cleaned = (value or "").strip() or None
-        self.twilio_phone_e164 = canonical_e164(cleaned)
+        canonical = canonical_e164(cleaned)
+        if cleaned is not None and canonical is None:
+            raise ValueError("twilio_phone_number must be a valid E.164 number")
+        self.twilio_phone_e164 = canonical
         return cleaned
 
 
@@ -155,6 +184,9 @@ class CallSession(Base):
         TZDateTime, nullable=True
     )
     stream_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stream_token_ciphertext: Mapped[str | None] = mapped_column(
+        EncryptedText, nullable=True
+    )
     stream_token_expires_at: Mapped[datetime | None] = mapped_column(
         TZDateTime, nullable=True
     )
@@ -255,8 +287,14 @@ class Appointment(TimestampMixin, Base):
     __tablename__ = "appointment"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_appointment_idempotency_key"),
+        UniqueConstraint(
+            "user_id",
+            "google_calendar_event_id",
+            name="uq_appointment_user_google_event",
+        ),
         Index("ix_appointment_user_start", "user_id", "start_datetime"),
         Index("ix_appointment_user_start_id", "user_id", "start_datetime", "id"),
+        Index("ix_appointment_user_created", "user_id", "created_at"),
         Index("ix_appointment_user_status_start", "user_id", "status", "start_datetime"),
         # Overlap-friendly: covers validate_slot conflict query shape.
         Index(
@@ -296,6 +334,22 @@ class Appointment(TimestampMixin, Base):
         nullable=False,
         default="confirmed",
         server_default="confirmed",
+    )
+    provider_operation: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    provider_operation_payload: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON_TYPE, nullable=True
+    )
+    provider_attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    provider_last_error_code: Mapped[str | None] = mapped_column(
+        String(64), nullable=True
+    )
+    provider_next_retry_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
+    provider_calendar_id: Mapped[str] = mapped_column(
+        String(255), nullable=False, default="primary", server_default="primary"
     )
 
     stored_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -356,6 +410,10 @@ class NotificationDelivery(TimestampMixin, Base):
     idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    leased_until: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
 
     def __repr__(self) -> str:
         return f"<NotificationDelivery {self.kind} appt={self.appointment_id} {self.status}>"
@@ -406,6 +464,33 @@ class TwilioCall(TimestampMixin, Base):
     price_unit: Mapped[str | None] = mapped_column(String(16), nullable=True)
     direction: Mapped[str | None] = mapped_column(String(32), nullable=True)
     status: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    provider_updated_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
 
     def __repr__(self) -> str:
         return f"<TwilioCall sid={self.sid} user={self.user_id}>"
+
+
+class BookingFunnelEvent(Base):
+    """Append-only, idempotent booking funnel history."""
+
+    __tablename__ = "booking_funnel_event"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_booking_funnel_event_key"),
+        Index("ix_booking_funnel_event_user_time", "user_id", "occurred_at"),
+        Index("ix_booking_funnel_event_call_stage", "call_session_id", "stage"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("res_user.id"), nullable=False)
+    call_session_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("callsession.id"), nullable=True)
+    stage: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
+    occurred_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+from app.core.cache_generation import register_cache_generation_events  # noqa: E402
+
+register_cache_generation_events()

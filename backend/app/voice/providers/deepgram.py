@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import websockets
 from websockets.exceptions import (
@@ -60,7 +61,7 @@ class DeepgramSettings:
             api_key=settings.deepgram_api_key,
             region=region,
             model=settings.deepgram_model,
-            language=settings.deepgram_language,
+            language="en",  # P6-V05 gate: ignore DEEPGRAM_LANGUAGE until multilingual enabled
             endpoint=endpoint,
         )
 
@@ -73,7 +74,22 @@ def classify_deepgram_error(exc: BaseException) -> type[Exception]:
     """Return DeepgramAuthError or DeepgramTransientError class for ``exc``."""
     if isinstance(exc, DeepgramAuthError):
         return DeepgramAuthError
-    if isinstance(exc, (InvalidHandshake, InvalidStatus, InvalidURI)):
+    if isinstance(exc, InvalidURI):
+        return DeepgramAuthError
+    if isinstance(exc, InvalidStatus):
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None) or getattr(
+            response, "status", None
+        )
+        if status in {401, 403}:
+            return DeepgramAuthError
+        if status == 429 or (isinstance(status, int) and status >= 500):
+            return DeepgramTransientError
+        # Other upgrade rejections are malformed endpoint/configuration errors.
+        return DeepgramAuthError
+    if isinstance(exc, InvalidHandshake):
+        return DeepgramTransientError
+    if isinstance(exc, ConnectionClosed) and getattr(exc, "code", None) == 1008:
         return DeepgramAuthError
     text = str(exc).lower()
     if any(
@@ -89,6 +105,9 @@ def sts_connect():
     dg = get_deepgram_settings()
     if not dg.api_key:
         raise DeepgramAuthError("DEEPGRAM_API_KEY not found")
+    parsed = urlparse(dg.endpoint)
+    if parsed.scheme != "wss" or not parsed.netloc:
+        raise DeepgramAuthError("DEEPGRAM_AGENT_URL must be an absolute wss URL")
     logger.info("Connecting Deepgram agent region=%s endpoint=%s", dg.region, dg.endpoint)
     return websockets.connect(  # type: ignore[attr-defined]
         dg.endpoint,
@@ -103,7 +122,17 @@ def is_retryable_disconnect(exc: BaseException | None) -> bool:
         return False
     if classify_deepgram_error(exc) is DeepgramAuthError:
         return False
-    return isinstance(exc, (ConnectionClosed, DeepgramTransientError, OSError, TimeoutError))
+    return isinstance(
+        exc,
+        (
+            ConnectionClosed,
+            DeepgramTransientError,
+            InvalidHandshake,
+            InvalidStatus,
+            OSError,
+            TimeoutError,
+        ),
+    )
 
 
 async def wait_for_message_type(sts_ws, expected_type: str, *, timeout: float = 15.0):

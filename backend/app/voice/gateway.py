@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -19,11 +20,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice"])
 
 
-@router.websocket("/ws/voice")
-async def voice_websocket(websocket: WebSocket) -> None:
-    """Verify stream token from query params before accepting the socket."""
-    call_sid = (websocket.query_params.get("call_sid") or "").strip()
-    stream_token = (websocket.query_params.get("stream_token") or "").strip()
+@router.websocket("/ws/voice/{call_sid}/{stream_token}")
+async def voice_websocket(
+    websocket: WebSocket,
+    call_sid: str,
+    stream_token: str,
+) -> None:
+    """Verify path-bound stream credentials before accepting the socket."""
+    call_sid = (call_sid or "").strip()
+    stream_token = (stream_token or "").strip()
 
     if not call_sid or not stream_token or SessionLocal is None:
         await websocket.close(code=1008)
@@ -44,8 +49,6 @@ async def voice_websocket(websocket: WebSocket) -> None:
             db.close()
 
     try:
-        import asyncio
-
         call_context = await asyncio.to_thread(_verify)
     except ValueError as exc:
         await websocket.close(code=1008)
@@ -53,7 +56,7 @@ async def voice_websocket(websocket: WebSocket) -> None:
             logger,
             "voice_websocket_rejected",
             operation="voice_websocket",
-            reason=str(exc),
+            reason=type(exc).__name__,
         )
         return
     except Exception:
@@ -67,6 +70,25 @@ async def voice_websocket(websocket: WebSocket) -> None:
     admission.configure(max_concurrent=settings.voice_max_concurrent_calls)
 
     if not admission.try_acquire(call_context.call_sid):
+        def _persist_rejection() -> None:
+            from app.telephony.lifecycle import STATUS_REJECTED, finalize_voice_session
+
+            db = SessionLocal()
+            try:
+                finalize_voice_session(
+                    db,
+                    call_sid=call_context.call_sid,
+                    status=STATUS_REJECTED,
+                    terminal_reason="admission:capacity",
+                    outcome="rejected",
+                )
+            finally:
+                db.close()
+
+        try:
+            await asyncio.to_thread(_persist_rejection)
+        except Exception:
+            logger.exception("Failed to persist voice admission rejection")
         metrics.incr("voice_admission", labels={"result": "rejected"})
         log_event(
             logger,

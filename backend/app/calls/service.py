@@ -69,7 +69,7 @@ def get_call_session(
     return row
 
 
-def to_list_item(row: CallSession) -> dict:
+def to_detail_item(row: CallSession) -> dict:
     return {
         "id": row.id,
         "call_sid": row.call_sid,
@@ -82,4 +82,20 @@ def to_list_item(row: CallSession) -> dict:
         "outcome": row.outcome,
         "terminal_reason": row.terminal_reason,
         "has_transcript": bool((row.transcript or "").strip()),
+    }
+
+
+def to_list_item(row: CallSession) -> dict:
+    transcript_available = bool((row.transcript or "").strip()) and row.content_purged_at is None
+    return {
+        "id": row.id,
+        "call_sid": row.call_sid,
+        "status": row.status,
+        "started_at": row.started_at,
+        "duration_seconds": row.duration_seconds,
+        "outcome": row.outcome,
+        "direction": str((row.data or {}).get("direction") or "unknown"),
+        "summary": str(row.outcome or row.terminal_reason or row.status)[:120],
+        "transcript_available": transcript_available,
+        "transcript_purged": row.content_purged_at is not None,
     }

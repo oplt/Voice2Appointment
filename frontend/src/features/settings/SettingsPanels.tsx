@@ -9,6 +9,7 @@ import PolicyOutlinedIcon from '@mui/icons-material/PolicyOutlined'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
 import Chip from '@mui/material/Chip'
+import IconButton from '@mui/material/IconButton'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Tab from '@mui/material/Tab'
@@ -16,6 +17,7 @@ import Tabs from '@mui/material/Tabs'
 import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import { useCallback, useEffect, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 import { disconnectGoogleCalendar, getCalendarStatus, startGoogleCalendarConnect, updateCalendarPreferences } from '../../api/calendars'
 import { ApiError } from '../../api/client'
@@ -28,6 +30,19 @@ import { ProductPrefsPanels } from './ProductPrefsPanels'
 import { SetupChecklist } from './SetupChecklist'
 
 const SECRET_PLACEHOLDER = '••••••••'
+const DAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
+function validTimezone(value: string) {
+  try { Intl.DateTimeFormat(undefined, { timeZone: value }); return true } catch { return false }
+}
+
+function validPolicy(policy: BookingPolicy): string | null {
+  if (Object.entries(policy.service_durations_minutes).some(([name, minutes]) => !name.trim() || !Number.isInteger(minutes) || minutes < 5 || minutes > 480)) return 'Each service needs a name and a duration between 5 and 480 minutes.'
+  for (const [day, windows] of Object.entries(policy.business_hours)) {
+    if (windows.some((window) => !/^\d{2}:\d{2}$/.test(window.start) || !/^\d{2}:\d{2}$/.test(window.end) || window.start >= window.end)) return `${day} business hours must have an end after the start.`
+  }
+  return null
+}
 
 type AccountForm = {
   username: string
@@ -52,6 +67,9 @@ export function SettingsPanels() {
   const [error, setError] = useState<string | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [calStatus, setCalStatus] = useState<CalendarStatus | null>(null)
+  const [calendarError, setCalendarError] = useState<string | null>(null)
+  const [policyError, setPolicyError] = useState<string | null>(null)
+  const [policyLoaded, setPolicyLoaded] = useState(false)
 
   const [account, setAccount] = useState<AccountForm>({ username: '', email: '' })
   const [calendar, setCalendar] = useState<CalendarForm>({ calendar_id: '', time_zone: '' })
@@ -67,18 +85,21 @@ export function SettingsPanels() {
     buffer_after_minutes: 0,
     business_hours: {},
   })
-  const [serviceDurationsText, setServiceDurationsText] = useState('{}')
   const [saving, setSaving] = useState(false)
   const [disconnectOpen, setDisconnectOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const applyProfile = (next: UserProfile, status: CalendarStatus | null) => {
     setProfile(next)
     setAccount({ username: next.username, email: next.email })
-    setCalendar({
-      calendar_id: status?.calendar_id ?? '',
-      time_zone: status?.time_zone ?? '',
-    })
+    if (status) {
+      setCalendar({
+        calendar_id: status.calendar_id ?? '',
+        time_zone: status.time_zone ?? '',
+      })
+    }
     setTelephony({
       twilio_account_sid: next.twilio_account_sid ?? '',
       twilio_auth_token: next.twilio_auth_token_set ? SECRET_PLACEHOLDER : '',
@@ -89,30 +110,49 @@ export function SettingsPanels() {
   const load = useCallback(() => {
     setLoading(true)
     setError(null)
-    Promise.all([
-      getMe(),
-      getCalendarStatus().catch(() => null),
-      getBookingPolicy().catch(() => null),
-    ])
-      .then(([me, status, booking]) => {
-        setCalStatus(status)
-        applyProfile(me, status)
-        if (booking) {
-          setPolicy(booking)
-          setServiceDurationsText(
-            JSON.stringify(booking.service_durations_minutes || {}, null, 2),
-          )
-        }
-      })
+    getMe()
+      .then((me) => applyProfile(me, null))
       .catch((err: unknown) => {
         setError(err instanceof ApiError ? err.message : 'Failed to load settings')
       })
       .finally(() => setLoading(false))
+    setCalendarError(null)
+    getCalendarStatus()
+      .then((status) => {
+        setCalStatus(status)
+        setCalendar({ calendar_id: status.calendar_id ?? '', time_zone: status.time_zone ?? '' })
+      })
+      .catch((err: unknown) => {
+        setCalendarError(err instanceof ApiError ? err.message : 'Failed to load calendar settings')
+      })
+    setPolicyError(null)
+    setPolicyLoaded(false)
+    getBookingPolicy()
+      .then((booking) => {
+        setPolicy(booking)
+        setPolicyLoaded(true)
+      })
+      .catch((err: unknown) => {
+        setPolicyError(err instanceof ApiError ? err.message : 'Failed to load booking policy')
+      })
   }, [])
 
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    const outcome = new URLSearchParams(location.search).get('google')
+    if (!outcome) return
+    const messages: Record<string, string> = {
+      connected: 'Google Calendar connected',
+      denied: 'Google Calendar connection was denied',
+      error: 'Google Calendar connection failed',
+    }
+    notify(messages[outcome] ?? messages.error, outcome === 'connected' ? 'success' : 'error')
+    navigate(location.pathname, { replace: true })
+    load()
+  }, [load, location.pathname, location.search, navigate, notify])
 
   const savePatch = async (body: Parameters<typeof updateMe>[0], successMsg: string) => {
     setSaving(true)
@@ -220,6 +260,11 @@ export function SettingsPanels() {
 
           {tab === 1 ? (
             <Stack spacing={2} sx={{ maxWidth: 480 }}>
+              {calendarError ? (
+                <Alert severity="error" action={<Button color="inherit" size="small" onClick={load}>Retry</Button>}>
+                  {calendarError}
+                </Alert>
+              ) : null}
               <Stack direction="row" spacing={1} sx={{ alignItems: 'center' }}>
                 <Chip
                   label={calStatus?.connected ? 'Connected' : 'Not connected'}
@@ -261,7 +306,7 @@ export function SettingsPanels() {
                   color="error"
                   startIcon={<LinkOffOutlinedIcon />}
                   onClick={() => setDisconnectOpen(true)}
-                  disabled={!calStatus?.connected}
+                  disabled={!calStatus?.connected || Boolean(calendarError)}
                 >
                   Disconnect
                 </Button>
@@ -272,7 +317,7 @@ export function SettingsPanels() {
                 onChange={(e) => setCalendar((c) => ({ ...c, calendar_id: e.target.value }))}
                 fullWidth
                 placeholder="primary"
-                disabled={!calStatus?.connected}
+                disabled={!calStatus?.connected || Boolean(calendarError)}
               />
               <TextField
                 label="Time zone"
@@ -284,14 +329,19 @@ export function SettingsPanels() {
               />
               <Button
                 variant="contained"
-                disabled={saving || !calStatus?.connected}
+                disabled={saving || !calStatus?.connected || Boolean(calendarError)}
                 loading={saving}
                 sx={{ alignSelf: 'flex-start' }}
                 onClick={() => {
+                  const timezone = calendar.time_zone.trim()
+                  if (timezone && !validTimezone(timezone)) {
+                    notify('Time zone must be a valid IANA name, for example Europe/Brussels.', 'error')
+                    return
+                  }
                   setSaving(true)
                   updateCalendarPreferences({
                     calendar_id: calendar.calendar_id.trim() || 'primary',
-                    time_zone: calendar.time_zone.trim() || undefined,
+                    time_zone: timezone || undefined,
                   })
                     .then((status) => {
                       setCalStatus(status)
@@ -351,6 +401,11 @@ export function SettingsPanels() {
                 loading={saving}
                 sx={{ alignSelf: 'flex-start' }}
                 onClick={() => {
+                  const phone = telephony.twilio_phone_number.trim()
+                  if (phone && !/^\+[1-9]\d{6,14}$/.test(phone)) {
+                    notify('Phone number must use E.164 format, for example +32470123456.', 'error')
+                    return
+                  }
                   const body: Parameters<typeof updateMe>[0] = {
                     twilio_account_sid: telephony.twilio_account_sid.trim() || null,
                     twilio_phone_number: telephony.twilio_phone_number.trim() || null,
@@ -429,45 +484,36 @@ export function SettingsPanels() {
                   slotProps={{ htmlInput: { min: 0, max: 240 } }}
                 />
               </Stack>
-              <TextField
-                label="Named service durations (JSON)"
-                helperText='Example: {"Consultation": 45, "Follow-up": 20}'
-                multiline
-                minRows={4}
-                fullWidth
-                value={serviceDurationsText}
-                onChange={(e) => setServiceDurationsText(e.target.value)}
-                slotProps={{
-                  input: { sx: { fontFamily: 'ui-monospace, monospace', fontSize: 13 } },
-                }}
-              />
+              {policyError ? <Alert severity="error" action={<Button color="inherit" size="small" onClick={load}>Retry</Button>}>{policyError}</Alert> : null}
+              <Typography variant="subtitle2">Named service durations</Typography>
+              {Object.entries(policy.service_durations_minutes).map(([name, minutes]) => (
+                <Stack key={name} direction="row" spacing={1}>
+                  <TextField label="Service" value={name} fullWidth onChange={(e) => setPolicy((p) => { const next = { ...p.service_durations_minutes }; delete next[name]; next[e.target.value] = minutes; return { ...p, service_durations_minutes: next } })} />
+                  <TextField label="Minutes" type="number" value={minutes} sx={{ width: 130 }} slotProps={{ htmlInput: { min: 5, max: 480 } }} onChange={(e) => setPolicy((p) => ({ ...p, service_durations_minutes: { ...p.service_durations_minutes, [name]: Number(e.target.value) || 0 } }))} />
+                  <IconButton aria-label={`Remove ${name}`} onClick={() => setPolicy((p) => { const next = { ...p.service_durations_minutes }; delete next[name]; return { ...p, service_durations_minutes: next } })}>×</IconButton>
+                </Stack>
+              ))}
+              <Button sx={{ alignSelf: 'flex-start' }} onClick={() => setPolicy((p) => ({ ...p, service_durations_minutes: { ...p.service_durations_minutes, 'New service': 30 } }))}>Add service</Button>
+              <Typography variant="subtitle2">Business hours</Typography>
+              {DAYS.map((day) => {
+                const window = policy.business_hours[day]?.[0]
+                return <Stack key={day} direction={{ xs: 'column', sm: 'row' }} spacing={1}><Button variant={window ? 'text' : 'outlined'} sx={{ width: 110, textTransform: 'capitalize' }} onClick={() => !window && setPolicy((p) => ({ ...p, business_hours: { ...p.business_hours, [day]: [{ start: '09:00', end: '17:00' }] } }))}>{day}</Button>{window ? <><TextField label="Start" type="time" value={window.start} onChange={(e) => setPolicy((p) => ({ ...p, business_hours: { ...p.business_hours, [day]: [{ ...window, start: e.target.value }] } }))} /><TextField label="End" type="time" value={window.end} onChange={(e) => setPolicy((p) => ({ ...p, business_hours: { ...p.business_hours, [day]: [{ ...window, end: e.target.value }] } }))} /><IconButton aria-label={`Remove ${day} hours`} onClick={() => setPolicy((p) => { const next = { ...p.business_hours }; delete next[day]; return { ...p, business_hours: next } })}>×</IconButton></> : null}</Stack>
+              })}
               <Button
                 variant="contained"
-                disabled={saving}
+                disabled={saving || !policyLoaded}
                 loading={saving}
                 sx={{ alignSelf: 'flex-start' }}
                 onClick={() => {
-                  let services: Record<string, number> = {}
-                  try {
-                    const parsed = JSON.parse(serviceDurationsText || '{}') as unknown
-                    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-                      throw new Error('must be an object')
-                    }
-                    services = parsed as Record<string, number>
-                  } catch {
-                    notify('Service durations must be valid JSON object', 'error')
+                  const invalid = validPolicy(policy)
+                  if (invalid) {
+                    notify(invalid, 'error')
                     return
                   }
                   setSaving(true)
-                  putBookingPolicy({
-                    ...policy,
-                    service_durations_minutes: services,
-                  })
+                  putBookingPolicy(policy)
                     .then((saved) => {
                       setPolicy(saved)
-                      setServiceDurationsText(
-                        JSON.stringify(saved.service_durations_minutes || {}, null, 2),
-                      )
                       notify('Booking policy saved', 'success')
                     })
                     .catch((err: unknown) => {
@@ -492,7 +538,7 @@ export function SettingsPanels() {
       <ConfirmDialog
         open={disconnectOpen}
         title="Disconnect Google Calendar?"
-        description="Stored OAuth tokens will be revoked for this account."
+        description="This disconnect clears the stored calendar credentials for this account."
         confirmLabel="Disconnect"
         confirmColor="error"
         loading={disconnecting}

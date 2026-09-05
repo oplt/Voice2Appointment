@@ -47,11 +47,17 @@ class MetricsRegistry:
     def _series_key(labels: dict[str, str] | None) -> str:
         if not labels:
             return ""
+        from app.core.logging import redact_phones
+
         parts: list[str] = []
         for key in sorted(labels):
             if key not in _ALLOWED_LABEL_KEYS:
                 continue
-            value = str(labels[key])[:48]
+            # Allowlisting the *key* does not vet the value: redact phone
+            # numbers before truncation so an accidental PII-bearing value
+            # under an allowed key cannot appear verbatim in a metric series
+            # (P7-06).
+            value = redact_phones(str(labels[key]))[:48]
             parts.append(f"{key}={value}")
         return ",".join(parts)
 

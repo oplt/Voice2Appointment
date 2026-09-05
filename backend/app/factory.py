@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.analytics.router import router as analytics_router
 from app.appointments.router import router as appointments_router
@@ -17,6 +18,7 @@ from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
 from app.core.middleware import (
     CSRF_HEADER_NAME,
+    ContentLengthLimitMiddleware,
     CSRFMiddleware,
     RequestContextMiddleware,
     SecurityHeadersMiddleware,
@@ -68,9 +70,11 @@ def create_app(
     )
 
     register_exception_handlers(application)
+    application.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
     if include_api:
         # Applied outermost-last among these: CORS → security → CSRF → app.
+        application.add_middleware(ContentLengthLimitMiddleware)
         application.add_middleware(CSRFMiddleware)
         application.add_middleware(SecurityHeadersMiddleware)
         application.add_middleware(

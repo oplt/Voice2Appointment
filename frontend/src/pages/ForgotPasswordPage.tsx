@@ -11,6 +11,8 @@ import { requestPasswordReset } from '../api/auth'
 import { ApiError } from '../api/client'
 import { useSnackbar } from '../components/SnackbarProvider'
 
+const RESET_REQUEST_CONFIRMATION = 'If an account exists for this email, reset instructions have been sent.'
+
 export function ForgotPasswordPage() {
   const { notify } = useSnackbar()
   const [email, setEmail] = useState('')
@@ -28,8 +30,8 @@ export function ForgotPasswordPage() {
     }
     setLoading(true)
     try {
-      const res = await requestPasswordReset(email.trim())
-      setMessage(res.message)
+      await requestPasswordReset(email.trim())
+      setMessage(RESET_REQUEST_CONFIRMATION)
       notify('If an account exists, reset instructions were sent', 'info')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Request failed')

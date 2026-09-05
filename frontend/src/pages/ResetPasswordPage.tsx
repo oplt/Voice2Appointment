@@ -21,6 +21,7 @@ export function ResetPasswordPage() {
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [terminalTokenError, setTerminalTokenError] = useState(false)
   const [loading, setLoading] = useState(false)
 
   // Capture token once, then scrub it from the URL/history.
@@ -48,6 +49,7 @@ export function ResetPasswordPage() {
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault()
     setError(null)
+    setTerminalTokenError(false)
     if (!token) {
       setError('Reset link is missing or expired. Request a new one.')
       return
@@ -63,14 +65,21 @@ export function ResetPasswordPage() {
     setLoading(true)
     try {
       await confirmPasswordReset(token, password)
+      setToken('')
+      setPassword('')
+      setConfirm('')
       notify('Password updated. You can sign in.', 'success')
       navigate('/', { replace: true })
     } catch (err) {
-      setError(
-        err instanceof ApiError
-          ? err.message
-          : 'Invalid or expired reset link. Request a new one.',
-      )
+      if (err instanceof ApiError && [400, 401, 404, 422].includes(err.status)) {
+        setToken('')
+        setPassword('')
+        setConfirm('')
+        setTerminalTokenError(true)
+        setError('This reset link is invalid, expired, or has already been used.')
+      } else {
+        setError('Unable to update your password. Check your connection and try again.')
+      }
     } finally {
       setLoading(false)
     }
@@ -100,9 +109,9 @@ export function ResetPasswordPage() {
         </Stack>
 
         {error ? <Alert severity="error">{error}</Alert> : null}
-        {!token ? (
+        {!token || terminalTokenError ? (
           <Alert severity="warning">
-            No reset token found.{' '}
+            {terminalTokenError ? 'This link can no longer be used. ' : 'No reset token found. '}
             <Button component={RouterLink} to="/forgot-password" size="small">
               Request a new link
             </Button>

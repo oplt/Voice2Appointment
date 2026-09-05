@@ -8,16 +8,27 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.analytics import service as analytics_service
+from app.analytics.schemas import AnalyticsMetaResponse, AnalyticsSummaryResponse
 from app.analytics.service import AnalyticsRangeError
 from app.auth.deps import get_current_user, require_db
 from app.core.config import settings
+from app.core.errors import ProviderUnavailableError, ValidationAppError, raise_http
 from app.core.rate_limit import rate_limit
 from app.db.models import User
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
-@router.get("/summary")
+@router.get("/meta", response_model=AnalyticsMetaResponse)
+def get_meta(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(require_db),
+) -> dict:
+    """Tenant timezone and range limits for analytics filter defaults."""
+    return analytics_service.analytics_meta(db, current_user.id)
+
+
+@router.get("/summary", response_model=AnalyticsSummaryResponse)
 def get_summary(
     start: date | None = Query(None),
     end: date | None = Query(None),
@@ -46,7 +57,7 @@ def fetch_twilio(
     account_sid = current_user.twilio_account_sid or settings.twilio_account_sid
     auth_token = current_user.twilio_auth_token or settings.twilio_auth_token
     if not account_sid or not auth_token:
-        raise HTTPException(status_code=400, detail="Twilio credentials not configured")
+        raise_http(ValidationAppError("Twilio credentials not configured"))
     try:
         return analytics_service.fetch_and_store_twilio(
             db,
@@ -55,4 +66,4 @@ def fetch_twilio(
             auth_token=auth_token,
         )
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise_http(ProviderUnavailableError(cause=exc))

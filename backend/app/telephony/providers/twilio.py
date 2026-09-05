@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Iterator
+from urllib.parse import parse_qs, urlparse
 
 import twilio.rest
 from twilio.base.exceptions import TwilioRestException
@@ -25,7 +27,27 @@ def _call_to_dict(c: Any) -> dict[str, Any]:
         "direction": getattr(c, "direction", None),
         "from_formatted": getattr(c, "from_formatted", None),
         "status": getattr(c, "status", None),
+        "provider_updated_at": (
+            c.date_updated.isoformat()
+            if getattr(c, "date_updated", None)
+            else None
+        ),
     }
+
+
+@dataclass(frozen=True)
+class CallPage:
+    records: list[dict[str, Any]]
+    next_page_token: str | None
+    exhausted: bool
+
+
+def _page_token(next_page_url: str | None) -> str | None:
+    if not next_page_url:
+        return None
+    query = parse_qs(urlparse(next_page_url).query)
+    values = query.get("PageToken") or query.get("pageToken")
+    return values[0] if values else None
 
 
 class TwilioProvider:
@@ -33,6 +55,24 @@ class TwilioProvider:
         self.account_sid = account_sid
         self.auth_token = auth_token
         self._client = twilio.rest.Client(account_sid, auth_token)
+
+    def fetch_call_page(
+        self,
+        *,
+        start_time_after: datetime | None,
+        page_size: int,
+        page_token: str | None = None,
+    ) -> CallPage:
+        """Fetch exactly one SDK page and expose its opaque continuation token."""
+        kwargs: dict[str, Any] = {"page_size": page_size}
+        if start_time_after is not None:
+            kwargs["start_time_after"] = start_time_after
+        if page_token:
+            kwargs["page_token"] = page_token
+        page = self._client.calls.page(**kwargs)
+        records = [_call_to_dict(call) for call in page]
+        token = _page_token(page.next_page_url)
+        return CallPage(records=records, next_page_token=token, exhausted=token is None)
 
     def fetch_calls(
         self,
@@ -42,20 +82,22 @@ class TwilioProvider:
         page_size: int | None = None,
         max_pages: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Fetch calls with optional page budget. ``limit`` is a hard max records."""
+        """Compatibility wrapper over explicit page traversal."""
         size = page_size or min(limit, 100)
-        kwargs: dict[str, Any] = {"page_size": size}
-        if start_time_after is not None:
-            kwargs["start_time_after"] = start_time_after
-        max_records = limit
-        if max_pages is not None:
-            max_records = min(limit, size * max_pages)
-        call_data: list[dict[str, Any]] = []
-        for c in self._client.calls.stream(**kwargs):
-            call_data.append(_call_to_dict(c))
-            if len(call_data) >= max_records:
+        page_budget = max_pages or max(1, (limit + size - 1) // size)
+        records: list[dict[str, Any]] = []
+        token: str | None = None
+        for _ in range(page_budget):
+            page = self.fetch_call_page(
+                start_time_after=start_time_after,
+                page_size=size,
+                page_token=token,
+            )
+            records.extend(page.records[: max(0, limit - len(records))])
+            token = page.next_page_token
+            if page.exhausted or len(records) >= limit:
                 break
-        return call_data
+        return records
 
     def fetch_call(self, sid: str) -> dict[str, Any] | None:
         try:

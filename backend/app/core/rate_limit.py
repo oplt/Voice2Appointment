@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
 import logging
 import time
@@ -71,11 +73,30 @@ def client_ip(request: Request) -> str:
     direct = request.client.host if request.client else None
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded and direct and _ip_in_trusted(direct):
-        # Right-most / first hop after trusted proxy: take left-most client.
-        return forwarded.split(",")[0].strip() or direct or "unknown"
+        try:
+            hops = [item.strip() for item in forwarded.split(",")] + [direct]
+            if not all(hops):
+                return direct
+            parsed = [str(ipaddress.ip_address(item)) for item in hops]
+        except ValueError:
+            return direct
+        # Work inward from the connected trusted edge. A client-injected left
+        # prefix is ignored when nginx appends the actual client address.
+        for hop in reversed(parsed):
+            if not _ip_in_trusted(hop):
+                return hop
+        return direct
     if direct:
         return direct
     return "unknown"
+
+
+_REDIS_WINDOW_LUA = """
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+local ttl = redis.call('TTL', KEYS[1])
+return {count, ttl}
+"""
 
 
 def _redis_allow(key: str, *, limit: int, window_seconds: int) -> bool | None:
@@ -87,9 +108,9 @@ def _redis_allow(key: str, *, limit: int, window_seconds: int) -> bool | None:
         if client is None:
             return None
         redis_key = f"rl:{key}"
-        count = client.incr(redis_key)
-        if count == 1:
-            client.expire(redis_key, max(1, int(window_seconds)))
+        count, _ttl = client.eval(
+            _REDIS_WINDOW_LUA, 1, redis_key, max(1, int(window_seconds))
+        )
         return int(count) <= limit
     except Exception as exc:  # noqa: BLE001
         logger.warning("Redis rate-limit unavailable: %s", type(exc).__name__)
@@ -105,13 +126,30 @@ def allow_request(key: str, *, limit: int, window_seconds: int) -> bool:
     return limiter.allow(key, limit=limit, window_seconds=window_seconds)
 
 
-def rate_limit(*, limit: int, window_seconds: int, name: str):
+def _account_bucket(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip() or not settings.secret_key:
+        return None
+    normalized = value.strip().casefold().encode("utf-8")
+    return hmac.new(
+        settings.secret_key.encode("utf-8"), normalized, hashlib.sha256
+    ).hexdigest()
+
+
+def rate_limit(*, limit: int, window_seconds: int, name: str, account_field: str | None = None):
     """FastAPI dependency factory for sensitive routes."""
 
-    def _dep(request: Request) -> None:
+    async def _dep(request: Request) -> None:
         ip = client_ip(request)
-        key = f"{name}:{ip}"
-        if not allow_request(key, limit=limit, window_seconds=window_seconds):
+        keys = [f"{name}:ip:{ip}"]
+        if account_field:
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            account = _account_bucket(body.get(account_field) if isinstance(body, dict) else None)
+            if account:
+                keys.append(f"{name}:account:{account}")
+        if any(not allow_request(key, limit=limit, window_seconds=window_seconds) for key in keys):
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail={
