@@ -1,15 +1,9 @@
 import AddIcon from '@mui/icons-material/Add'
-import AnalyticsOutlinedIcon from '@mui/icons-material/AnalyticsOutlined'
-import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined'
-import EventOutlinedIcon from '@mui/icons-material/EventOutlined'
-import PhoneInTalkOutlinedIcon from '@mui/icons-material/PhoneInTalkOutlined'
 import RefreshIcon from '@mui/icons-material/Refresh'
-import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import Alert from '@mui/material/Alert'
+import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
-import Card from '@mui/material/Card'
-import CardContent from '@mui/material/CardContent'
-import Chip from '@mui/material/Chip'
+import Divider from '@mui/material/Divider'
 import Grid from '@mui/material/Grid'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
@@ -17,15 +11,14 @@ import ListItemText from '@mui/material/ListItemText'
 import Skeleton from '@mui/material/Skeleton'
 import Stack from '@mui/material/Stack'
 import Typography from '@mui/material/Typography'
-import { useCallback, useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Link as RouterLink } from 'react-router-dom'
 
 import { ApiError } from '../../api/client'
 import { getDashboardSummary } from '../../api/dashboard'
+import { queryKeys } from '../../api/queryKeys'
 import { PageHeader } from '../../components/PageHeader'
 import { useApiHealth } from '../../hooks/useApiHealth'
-import type { DashboardSummary } from '../../types'
-import { designTokens } from '../../theme/tokens'
 
 function formatWhen(iso: string) {
   try {
@@ -38,112 +31,159 @@ function formatWhen(iso: string) {
   }
 }
 
+function formatTodayLabel(timezone?: string) {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      timeZone: timezone || undefined,
+    }).format(new Date())
+  } catch {
+    return new Intl.DateTimeFormat(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    }).format(new Date())
+  }
+}
+
+function Metric({
+  label,
+  value,
+  to,
+  loading,
+}: {
+  label: string
+  value: string | number
+  to: string
+  loading: boolean
+}) {
+  return (
+    <Box
+      component={RouterLink}
+      to={to}
+      sx={{
+        textDecoration: 'none',
+        color: 'inherit',
+        display: 'block',
+        p: 1.5,
+        borderRadius: 1,
+        border: '1px solid var(--border-subtle)',
+        bgcolor: 'var(--surface-secondary)',
+        minHeight: 88,
+        transition: 'background-color 0.2s',
+        '&:hover': { bgcolor: 'var(--surface-primary)' },
+        '&:focus-visible': {
+          outline: '3px solid var(--action-primary)',
+          outlineOffset: 2,
+        },
+      }}
+    >
+      <Typography variant="caption" color="text.secondary">
+        {label}
+      </Typography>
+      {loading ? (
+        <Skeleton width={48} height={36} />
+      ) : (
+        <Typography variant="h2" sx={{ mt: 0.5, lineHeight: 1.2 }}>
+          {value}
+        </Typography>
+      )}
+    </Box>
+  )
+}
+
+function HealthRow({ label, ok, detail }: { label: string; ok: boolean | null; detail?: string }) {
+  const tone =
+    ok === null ? 'var(--text-secondary)' : ok ? 'var(--status-success)' : 'var(--status-warning)'
+  return (
+    <Stack
+      direction="row"
+      spacing={1.5}
+      sx={{ alignItems: 'baseline', justifyContent: 'space-between', py: 0.75 }}
+    >
+      <Typography variant="body2">{label}</Typography>
+      <Stack spacing={0} sx={{ alignItems: 'flex-end' }}>
+        <Typography variant="body2" sx={{ color: tone, fontWeight: 500 }}>
+          {ok === null ? '…' : ok ? 'OK' : 'Needs setup'}
+        </Typography>
+        {detail ? (
+          <Typography variant="caption" color="text.secondary">
+            {detail}
+          </Typography>
+        ) : null}
+      </Stack>
+    </Stack>
+  )
+}
+
 export function DashboardOverview() {
   const apiHealth = useApiHealth()
-  const [summary, setSummary] = useState<DashboardSummary | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const summaryQuery = useQuery({
+    queryKey: queryKeys.dashboard.summary,
+    queryFn: getDashboardSummary,
+  })
+  const summary = summaryQuery.data ?? null
+  const loading = summaryQuery.isPending
+  const error =
+    summaryQuery.error == null
+      ? null
+      : summaryQuery.error instanceof ApiError
+        ? summaryQuery.error.message
+        : 'Failed to load dashboard'
 
-  const load = useCallback(() => {
-    setLoading(true)
-    setError(null)
-    getDashboardSummary()
-      .then(setSummary)
-      .catch((err: unknown) => {
-        setSummary(null)
-        setError(err instanceof ApiError ? err.message : 'Failed to load dashboard')
-      })
-      .finally(() => setLoading(false))
-  }, [])
+  const load = () => {
+    void summaryQuery.refetch()
+  }
 
-  useEffect(() => {
-    load()
-  }, [load])
-
-  const kpis = [
-    {
-      label: 'Calls today',
-      value: summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today ?? '—',
-      to: '/calls',
-      hint: summary?.operational?.calls_today?.definition,
-      kpi: summary?.operational?.calls_today,
-    },
-    {
-      label: 'Booked today',
-      value:
-        summary?.operational?.appointments_booked_today?.value ??
-        summary?.appointments_today ??
-        '—',
-      to: '/appointments',
-      hint: summary?.operational?.appointments_booked_today?.definition,
-      kpi: summary?.operational?.appointments_booked_today,
-    },
-    {
-      label: 'Completion',
-      value:
-        summary?.operational?.completion_rate?.value != null
-          ? `${Math.round(summary.operational.completion_rate.value * 100)}%`
-          : summary?.call_statistics?.completion_rate != null
-            ? `${Math.round(summary.call_statistics.completion_rate * 100)}%`
-            : '—',
-      to: '/calls',
-      hint: summary?.operational?.completion_rate?.definition,
-      kpi: summary?.operational?.completion_rate,
-    },
-    {
-      label: 'Needs attention',
-      value:
-        summary?.operational?.attention_needed?.value ??
-        summary?.call_statistics?.attention_today ??
-        '—',
-      to: '/calls',
-      hint: summary?.operational?.attention_needed?.definition,
-      kpi: summary?.operational?.attention_needed,
-    },
-    {
-      label: 'Next 10 upcoming',
-      value:
-        summary?.operational?.upcoming_appointments?.value ??
-        summary?.upcoming?.length ??
-        '—',
-      to: '/appointments',
-      hint: summary?.operational?.upcoming_appointments?.definition,
-      kpi: summary?.operational?.upcoming_appointments,
-    },
-  ] as const
-
-  const provider = summary?.provider_status
   const callsToday =
-    summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today
-  const recentCallsCount = summary?.recent_calls
+    summary?.operational?.calls_today?.value ?? summary?.call_statistics?.calls_today ?? '—'
+  const bookingsToday =
+    summary?.operational?.appointments_booked_today?.value ??
+    summary?.appointments_today ??
+    '—'
+  const completion =
+    summary?.operational?.completion_rate?.value != null
+      ? `${Math.round(summary.operational.completion_rate.value * 100)}%`
+      : summary?.call_statistics?.completion_rate != null
+        ? `${Math.round(summary.call_statistics.completion_rate * 100)}%`
+        : '—'
+  const attention =
+    summary?.operational?.attention_needed?.value ??
+    summary?.call_statistics?.attention_today ??
+    0
+
+  const attentionCount = typeof attention === 'number' ? attention : 0
   const timezoneLabel = summary?.timezone
-  const generatedAt = summary?.generated_at
   const stale = summary?.freshness?.stale
+  const provider = summary?.provider_status
+  const assistantOk =
+    apiHealth.status === 'loading' ? null : apiHealth.status === 'ok' && Boolean(provider?.deepgram)
+  const calendarOk = summary
+    ? Boolean(provider?.calendar ?? summary.calendar_connected)
+    : null
+  const telephonyOk = summary ? Boolean(provider?.twilio) : null
 
   return (
     <Stack spacing={3}>
       <PageHeader
-        title="Dashboard"
+        title="Today"
         subtitle={
           timezoneLabel
-            ? `What matters now — appointments, calendar, and providers (${timezoneLabel}).`
-            : 'What matters now — appointments, calendar, and providers.'
+            ? `${formatTodayLabel(timezoneLabel)} · ${timezoneLabel}`
+            : formatTodayLabel()
         }
         actions={
           <Stack direction="row" spacing={1} sx={{ alignItems: 'center', flexWrap: 'wrap' }}>
-            <Chip
-              label={
-                apiHealth.status === 'ok'
-                  ? 'API ok'
-                  : apiHealth.status === 'loading'
-                    ? 'API…'
-                    : 'API down'
-              }
-              color={apiHealth.status === 'ok' ? 'success' : 'default'}
-              variant="outlined"
-              onClick={apiHealth.refresh}
-              aria-label="Refresh API health"
-            />
+            <Button
+              variant="contained"
+              component={RouterLink}
+              to="/reservations"
+              startIcon={<AddIcon />}
+            >
+              New booking
+            </Button>
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
@@ -170,220 +210,202 @@ export function DashboardOverview() {
         </Alert>
       ) : null}
 
-      <Grid container spacing={2}>
-        {kpis.map((card) => (
-          <Grid key={card.label} size={{ xs: 12, sm: 6, md: 4, lg: 2.4 }}>
-            <Card
-              sx={{
-                textDecoration: 'none',
-                display: 'block',
-                bgcolor: designTokens.colors.lightAsh,
-                border: `1px solid ${designTokens.colors.cloudGray}`,
-              }}
-            >
-              <CardContent>
-                <Stack spacing={1}>
-                  <Typography variant="body2" color="text.secondary">
-                    {card.label}
-                  </Typography>
-                  {loading ? (
-                    <Skeleton width={64} height={36} />
-                  ) : (
-                    <Typography variant="h3">{card.value}</Typography>
-                  )}
-                  {!loading && card.kpi ? (
-                    <details>
-                      <summary>Details</summary>
-                      <Typography variant="body2">{card.kpi.definition}</Typography>
-                      <Typography variant="body2">
-                        Window: {card.kpi.window} ({card.kpi.timezone})
-                      </Typography>
-                      {card.kpi.numerator != null && card.kpi.denominator != null ? (
-                        <Typography variant="body2">
-                          {card.kpi.numerator} of {card.kpi.denominator}
-                        </Typography>
-                      ) : null}
-                      <Typography variant="body2">Exclusions: {card.kpi.exclusions}</Typography>
-                      <Button component={RouterLink} to={card.kpi.drill_down} size="small">
-                        View details
-                      </Button>
-                    </details>
-                  ) : null}
-                </Stack>
-              </CardContent>
-            </Card>
-          </Grid>
-        ))}
-      </Grid>
-
       {stale ? (
-        <Alert severity="warning">
+        <Alert
+          severity="warning"
+          action={
+            <Button color="inherit" size="small" component={RouterLink} to="/analytics">
+              Analytics
+            </Button>
+          }
+        >
           Twilio analytics sync looks stale
           {summary?.freshness?.source_synced_at
             ? ` (last sync ${formatWhen(summary.freshness.source_synced_at)})`
             : ''}
-          . Refresh from Analytics.
+          .
         </Alert>
       ) : null}
 
+      <Grid container spacing={1.5}>
+        <Grid size={{ xs: 6, md: 3 }}>
+          <Metric label="Calls" value={callsToday} to="/calls" loading={loading} />
+        </Grid>
+        <Grid size={{ xs: 6, md: 3 }}>
+          <Metric label="Bookings" value={bookingsToday} to="/reservations" loading={loading} />
+        </Grid>
+        <Grid size={{ xs: 6, md: 3 }}>
+          <Metric label="Completion" value={completion} to="/calls" loading={loading} />
+        </Grid>
+        <Grid size={{ xs: 6, md: 3 }}>
+          <Metric label="Attention" value={attention} to="/calls" loading={loading} />
+        </Grid>
+      </Grid>
+
       <Grid container spacing={2}>
-        <Grid size={{ xs: 12, md: 7 }}>
-          <Stack spacing={1.5}>
-            <Typography variant="h3">Upcoming appointments</Typography>
+        <Grid size={{ xs: 12, lg: 5 }}>
+          <Box
+            sx={{
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 1,
+              p: { xs: 2, sm: 2.5 },
+              bgcolor: 'var(--surface-primary)',
+              minHeight: 280,
+            }}
+          >
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: 'baseline', justifyContent: 'space-between', mb: 1.5 }}
+            >
+              <Typography variant="h3">Needs attention</Typography>
+              <Button component={RouterLink} to="/calls" size="small">
+                Open calls
+              </Button>
+            </Stack>
             {loading ? (
               <Stack spacing={1}>
-                <Skeleton variant="rounded" height={56} />
-                <Skeleton variant="rounded" height={56} />
+                <Skeleton variant="rounded" height={48} />
+                <Skeleton variant="rounded" height={48} />
+              </Stack>
+            ) : attentionCount > 0 ? (
+              <Stack spacing={1.5}>
+                <Typography variant="body1">
+                  {attentionCount} call{attentionCount === 1 ? '' : 's'} need follow-up today.
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  Review failed bookings, transfers, and incomplete sessions.
+                </Typography>
+                <Button
+                  component={RouterLink}
+                  to="/calls"
+                  variant="outlined"
+                  sx={{ alignSelf: 'flex-start' }}
+                >
+                  Review attention queue
+                </Button>
+              </Stack>
+            ) : (
+              <Typography variant="body1" color="text.secondary">
+                Nothing needs attention right now.
+              </Typography>
+            )}
+          </Box>
+        </Grid>
+
+        <Grid size={{ xs: 12, lg: 7 }}>
+          <Box
+            sx={{
+              border: '1px solid var(--border-subtle)',
+              borderRadius: 1,
+              p: { xs: 2, sm: 2.5 },
+              bgcolor: 'var(--surface-primary)',
+              minHeight: 280,
+            }}
+          >
+            <Stack
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: 'baseline', justifyContent: 'space-between', mb: 1.5 }}
+            >
+              <Typography variant="h3">Upcoming</Typography>
+              <Button component={RouterLink} to="/reservations" size="small">
+                All bookings
+              </Button>
+            </Stack>
+            {loading ? (
+              <Stack spacing={1}>
+                <Skeleton variant="rounded" height={48} />
+                <Skeleton variant="rounded" height={48} />
+                <Skeleton variant="rounded" height={48} />
               </Stack>
             ) : !summary?.upcoming?.length ? (
-              <Alert severity="info">
-                No upcoming appointments. Create one from Appointments.
-              </Alert>
+              <Typography variant="body1" color="text.secondary">
+                No upcoming appointments. Create one from Bookings.
+              </Typography>
             ) : (
               <List disablePadding>
-                {summary.upcoming.slice(0, 6).map((item) => (
-                  <ListItem
-                    key={item.id}
-                    divider
-                    sx={{ px: 0 }}
-                    secondaryAction={
-                      <Chip label={item.status} size="small" variant="outlined" />
-                    }
-                  >
+                {summary.upcoming.slice(0, 8).map((item) => (
+                  <ListItem key={item.id} divider sx={{ px: 0 }}>
                     <ListItemText
                       primary={item.summary}
-                      secondary={formatWhen(item.start_datetime)}
+                      secondary={`${formatWhen(item.start_datetime)} · ${item.status}`}
                     />
                   </ListItem>
                 ))}
               </List>
             )}
-          </Stack>
-        </Grid>
-
-        <Grid size={{ xs: 12, md: 5 }}>
-          <Stack spacing={2}>
-            <Stack spacing={1}>
-              <Typography variant="h3">Status</Typography>
-              {loading ? (
-                <Skeleton width={160} height={32} />
-              ) : (
-                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                  <Chip
-                    icon={<CalendarMonthOutlinedIcon />}
-                    label={
-                      summary?.calendar_connected ? 'Calendar connected' : 'Calendar offline'
-                    }
-                    color={summary?.calendar_connected ? 'success' : 'default'}
-                    variant="outlined"
-                  />
-                  {callsToday != null ? (
-                    <Chip
-                      icon={<PhoneInTalkOutlinedIcon />}
-                      label={`${callsToday} calls today`}
-                      variant="outlined"
-                    />
-                  ) : null}
-                  {typeof recentCallsCount === 'number' ? (
-                    <Chip
-                      component={RouterLink}
-                      to="/calls"
-                      clickable
-                      icon={<PhoneInTalkOutlinedIcon />}
-                      label={`${recentCallsCount} calls (7d)`}
-                      variant="outlined"
-                    />
-                  ) : null}
-                </Stack>
-              )}
-              {generatedAt ? (
-                <Typography variant="caption" color="text.secondary">
-                  Generated {formatWhen(generatedAt)}
-                </Typography>
-              ) : null}
-            </Stack>
-
-            <Stack spacing={1}>
-              <Typography variant="h3">Providers</Typography>
-              {loading ? (
-                <Skeleton width={200} height={32} />
-              ) : (
-                <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                  <Chip
-                    label={provider?.twilio ? 'Twilio configured' : 'Twilio not configured'}
-                    size="small"
-                    variant="outlined"
-                    color={provider?.twilio ? 'success' : 'default'}
-                  />
-                  <Chip
-                    label={provider?.deepgram ? 'Deepgram configured' : 'Deepgram not configured'}
-                    size="small"
-                    variant="outlined"
-                    color={provider?.deepgram ? 'success' : 'default'}
-                  />
-                  <Chip
-                    label={
-                      (provider?.calendar ?? summary?.calendar_connected)
-                        ? 'Calendar connected'
-                        : 'Calendar not connected'
-                    }
-                    size="small"
-                    variant="outlined"
-                    color={
-                      (provider?.calendar ?? summary?.calendar_connected) ? 'success' : 'default'
-                    }
-                  />
-                </Stack>
-              )}
-              {!loading ? (
-                <Typography variant="caption" color="text.secondary">
-                  Last Twilio sync: {summary?.integrations?.twilio_last_synced_at
-                    ? formatWhen(summary.integrations.twilio_last_synced_at)
-                    : 'not recorded'}
-                </Typography>
-              ) : null}
-            </Stack>
-
-            <Stack spacing={1}>
-              <Typography variant="h3">Quick actions</Typography>
-              <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
-                <Button
-                  component={RouterLink}
-                  to="/appointments"
-                  variant="contained"
-                  startIcon={<AddIcon />}
-                >
-                  New appointment
-                </Button>
-                <Button
-                  component={RouterLink}
-                  to="/calendar"
-                  variant="outlined"
-                  startIcon={<EventOutlinedIcon />}
-                >
-                  Calendar
-                </Button>
-                <Button
-                  component={RouterLink}
-                  to="/analytics"
-                  variant="outlined"
-                  startIcon={<AnalyticsOutlinedIcon />}
-                >
-                  Analytics
-                </Button>
-                <Button
-                  component={RouterLink}
-                  to="/settings"
-                  variant="outlined"
-                  startIcon={<SettingsOutlinedIcon />}
-                >
-                  Settings
-                </Button>
-              </Stack>
-            </Stack>
-          </Stack>
+          </Box>
         </Grid>
       </Grid>
+
+      <Box
+        sx={{
+          border: '1px solid var(--border-subtle)',
+          borderRadius: 1,
+          p: { xs: 2, sm: 2.5 },
+          bgcolor: 'var(--surface-secondary)',
+          maxWidth: 560,
+        }}
+      >
+        <Typography variant="h3" sx={{ mb: 1 }}>
+          System health
+        </Typography>
+        {loading ? (
+          <Skeleton width={220} height={72} />
+        ) : (
+          <>
+            <HealthRow
+              label="Assistant"
+              ok={assistantOk}
+              detail={
+                apiHealth.status === 'ok'
+                  ? provider?.deepgram
+                    ? 'API + voice ready'
+                    : 'API up · Deepgram not configured'
+                  : apiHealth.status === 'loading'
+                    ? undefined
+                    : 'API unreachable'
+              }
+            />
+            <Divider />
+            <HealthRow
+              label="Calendar"
+              ok={calendarOk}
+              detail={
+                summary?.integrations?.calendar_account
+                  ? summary.integrations.calendar_account
+                  : undefined
+              }
+            />
+            <Divider />
+            <HealthRow
+              label="Telephony"
+              ok={telephonyOk}
+              detail={
+                summary?.integrations?.twilio_last_synced_at
+                  ? `Last sync ${formatWhen(summary.integrations.twilio_last_synced_at)}`
+                  : undefined
+              }
+            />
+          </>
+        )}
+        <Button
+          component={RouterLink}
+          to="/integrations"
+          size="small"
+          sx={{ mt: 1.5 }}
+        >
+          Manage integrations
+        </Button>
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+          KPI definitions and exclusions live in{' '}
+          <Box component={RouterLink} to="/analytics" sx={{ color: 'inherit' }}>
+            Analytics
+          </Box>
+          .
+        </Typography>
+      </Box>
     </Stack>
   )
 }

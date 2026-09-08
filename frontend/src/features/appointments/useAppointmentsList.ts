@@ -1,59 +1,60 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useInfiniteQuery } from '@tanstack/react-query'
+import { useState } from 'react'
 
 import { listAppointments } from '../../api/appointments'
 import { ApiError } from '../../api/client'
+import { queryKeys } from '../../api/queryKeys'
 import type { AppointmentListItem } from '../../types'
 
 export type AppointmentScope = 'upcoming' | 'history' | 'all'
 
 export function useAppointmentsList() {
-  const [items, setItems] = useState<AppointmentListItem[]>([])
   const [scope, setScope] = useState<AppointmentScope>('upcoming')
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [loadingMore, setLoadingMore] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const requestId = useRef(0)
 
-  const fetchPage = useCallback(async (reset: boolean, cursor?: string | null) => {
-    const currentRequest = ++requestId.current
-    reset ? setLoading(true) : setLoadingMore(true)
-    setError(null)
-    try {
-      const page = await listAppointments({ scope, limit: 100, cursor })
-      if (currentRequest !== requestId.current) return
-      setItems((current) => {
-        const source = reset ? [] : current
-        const merged = new Map(source.map((item) => [item.id, item]))
-        page.items.forEach((item) => merged.set(item.id, item))
+  const query = useInfiniteQuery({
+    queryKey: queryKeys.appointments.list(scope),
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) =>
+      listAppointments({ scope, limit: 100, cursor: pageParam }),
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+  })
+
+  const items: AppointmentListItem[] = query.data
+    ? (() => {
+        const merged = new Map<number, AppointmentListItem>()
+        for (const page of query.data.pages) {
+          for (const item of page.items) {
+            merged.set(item.id, item)
+          }
+        }
         return [...merged.values()]
-      })
-      setNextCursor(page.next_cursor ?? null)
-    } catch (caught: unknown) {
-      if (currentRequest !== requestId.current) return
-      if (reset) setItems([])
-      setError(caught instanceof ApiError ? caught.message : 'Failed to load appointments')
-    } finally {
-      if (currentRequest === requestId.current) {
-        setLoading(false)
-        setLoadingMore(false)
-      }
-    }
-  }, [scope])
+      })()
+    : []
 
-  useEffect(() => {
-    void fetchPage(true)
-  }, [fetchPage])
+  const error =
+    query.error == null
+      ? null
+      : query.error instanceof ApiError
+        ? query.error.message
+        : 'Failed to load appointments'
 
   return {
     items,
     scope,
     setScope,
-    nextCursor,
-    loading,
-    loadingMore,
+    nextCursor: query.hasNextPage
+      ? (query.data?.pages.at(-1)?.next_cursor ?? null)
+      : null,
+    loading: query.isPending,
+    loadingMore: query.isFetchingNextPage,
     error,
-    refresh: () => fetchPage(true),
-    loadMore: () => fetchPage(false, nextCursor),
+    refresh: () => {
+      void query.refetch()
+    },
+    loadMore: () => {
+      if (query.hasNextPage && !query.isFetchingNextPage) {
+        void query.fetchNextPage()
+      }
+    },
   }
 }

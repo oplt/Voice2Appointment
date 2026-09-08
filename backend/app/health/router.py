@@ -84,6 +84,18 @@ def health_metrics() -> dict[str, Any]:
     return {"status": "ok", "metrics": snap}
 
 
+@router.get("/health/features")
+def health_features() -> dict[str, Any]:
+    """Product-domain kill-switch snapshot for acceptance / ops."""
+    from app.core.feature_flags import flag_snapshot
+
+    return {
+        "status": "ok",
+        "app_env": settings.app_env,
+        "features": flag_snapshot(),
+    }
+
+
 @router.get("/health")
 def health() -> dict[str, str]:
     """Backward-compatible alias for liveness."""

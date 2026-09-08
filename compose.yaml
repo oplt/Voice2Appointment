@@ -107,7 +107,9 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.backend
-    command: celery -A app.workers.celery_app.celery_app worker --loglevel=INFO
+    # Local convenience worker; production uses the independently isolated
+    # queue workers declared in Procfile.production.
+    command: celery -A app.workers.celery_app.celery_app worker -Q critical,notifications,provider_sync,media,maintenance --loglevel=INFO
     env_file:
       - .env
     environment:

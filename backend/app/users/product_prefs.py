@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db.models import User
 from app.telephony.phones import canonical_e164
@@ -80,6 +80,69 @@ class ProductPrefs(BaseModel):
     languages: LanguagePrefs = Field(default_factory=LanguagePrefs)
 
 
+class NotificationPrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    channel: Literal["email"] | None = None
+    confirmations_enabled: bool | None = None
+    reminders_enabled: bool | None = None
+    consent_at: str | None = None
+    quiet_hours_start: str | None = None
+    quiet_hours_end: str | None = None
+    reminder_hours_before: int | None = Field(default=None, ge=1, le=168)
+
+
+class RetentionPrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    transcript_days: int | None = Field(default=None, ge=1, le=365)
+    recording_days: int | None = Field(default=None, ge=1, le=365)
+    legal_hold: bool | None = None
+
+
+class TranscriptPrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    storage_enabled: bool | None = None
+    # Kept for GET/PUT compatibility. The server, not the client, records it.
+    consent_at: str | None = None
+    redact_phone_numbers: bool | None = None
+
+
+class TransferPrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool | None = None
+    destination_e164: str | None = None
+    business_hours_only: bool | None = None
+
+    @field_validator("destination_e164")
+    @classmethod
+    def valid_dest(cls, value: str | None) -> str | None:
+        return TransferPrefs.valid_dest(value)
+
+
+class LanguagePrefsPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    primary: str | None = None
+    enabled: list[str] | None = None
+
+
+class ProductPrefsUpdate(BaseModel):
+    """Partial preference update that preserves unknown persisted fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    notifications: NotificationPrefsPatch | None = None
+    retention: RetentionPrefsPatch | None = None
+    transcripts: TranscriptPrefsPatch | None = None
+    transfer: TransferPrefsPatch | None = None
+    languages: LanguagePrefsPatch | None = None
+    # This is an explicit acknowledgement, never persisted as a preference.
+    transcript_storage_consent: bool = False
+
+
 def _parse_config(raw: str | None) -> dict[str, Any]:
     if not raw or not str(raw).strip():
         return {}
@@ -135,11 +198,78 @@ def prefs_policy_valid(config_json: str | None) -> bool:
         return False
 
 
-def save_product_prefs(user: User, prefs: ProductPrefs) -> ProductPrefs:
-    data = _parse_config(user.config_json)
-    data["product"] = prefs.model_dump(mode="json")
+def _product_blob(data: dict[str, Any]) -> dict[str, Any]:
+    existing = data.get("product")
+    if isinstance(existing, dict):
+        return dict(existing)
+    return {
+        key: data[key]
+        for key in ("notifications", "retention", "transcripts", "transfer", "languages")
+        if key in data
+    }
+
+
+def _persist_product_blob(user: User, data: dict[str, Any], product: dict[str, Any]) -> None:
+    data["product"] = product
     user.config_json = json.dumps(data, separators=(",", ":"), sort_keys=True)
+
+
+def save_product_prefs(user: User, prefs: ProductPrefs) -> ProductPrefs:
+    """Save known preferences without deleting unrecognized persisted fields."""
+    data = _parse_config(user.config_json)
+    product = _product_blob(data)
+    for section, values in prefs.model_dump(mode="json").items():
+        existing = product.get(section)
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(values)
+        product[section] = merged
+    _persist_product_blob(user, data, product)
     return prefs
+
+
+def update_product_prefs(
+    user: User,
+    update: ProductPrefsUpdate,
+) -> ProductPrefs:
+    """Apply a partial update while retaining future server-side preference keys."""
+    data = _parse_config(user.config_json)
+    product = _product_blob(data)
+    previous = load_product_prefs(user.config_json)
+    changes = update.model_dump(exclude_unset=True)
+    transcript_changes = changes.get("transcripts")
+    if isinstance(transcript_changes, dict):
+        # Consent timestamps are evidence, not client-controlled values.
+        transcript_changes.pop("consent_at", None)
+        enabling_storage = transcript_changes.get("storage_enabled") is True
+        if enabling_storage and not previous.transcripts.consent_at:
+            if not update.transcript_storage_consent:
+                raise ValueError("explicit transcript storage consent is required")
+            transcript_changes["consent_at"] = datetime.now(timezone.utc).isoformat()
+
+    for section in ("notifications", "retention", "transcripts", "transfer", "languages"):
+        values = changes.get(section)
+        if not isinstance(values, dict):
+            continue
+        existing = product.get(section)
+        merged = dict(existing) if isinstance(existing, dict) else {}
+        merged.update(values)
+        product[section] = merged
+
+    prefs = ProductPrefs.model_validate(product)
+    if (
+        prefs.notifications.confirmations_enabled or prefs.notifications.reminders_enabled
+    ) and not prefs.notifications.consent_at:
+        notifications = dict(product.get("notifications") or {})
+        notifications["consent_at"] = datetime.now(timezone.utc).isoformat()
+        product["notifications"] = notifications
+        prefs = ProductPrefs.model_validate(product)
+
+    # Multilingual operation remains feature-gated. Preserve the existing contract.
+    languages = dict(product.get("languages") or {})
+    languages.update({"primary": "en", "enabled": ["en"]})
+    product["languages"] = languages
+    _persist_product_blob(user, data, product)
+    return ProductPrefs.model_validate(product)
 
 
 def grant_notification_consent(prefs: NotificationPrefs) -> NotificationPrefs:

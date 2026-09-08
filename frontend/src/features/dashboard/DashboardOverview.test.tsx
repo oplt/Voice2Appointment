@@ -1,10 +1,11 @@
 import { ThemeProvider, createTheme } from '@mui/material/styles'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../../api/client'
 import { getDashboardSummary } from '../../api/dashboard'
+import { withQueryClient } from '../../test/query'
 import { DashboardOverview } from './DashboardOverview'
 
 vi.mock('../../api/dashboard', () => ({
@@ -18,11 +19,13 @@ const theme = createTheme()
 
 function renderPage() {
   return render(
-    <ThemeProvider theme={theme}>
-      <MemoryRouter>
-        <DashboardOverview />
-      </MemoryRouter>
-    </ThemeProvider>,
+    withQueryClient(
+      <ThemeProvider theme={theme}>
+        <MemoryRouter>
+          <DashboardOverview />
+        </MemoryRouter>
+      </ThemeProvider>,
+    ),
   )
 }
 
@@ -31,14 +34,23 @@ describe('DashboardOverview states', () => {
     vi.mocked(getDashboardSummary).mockReset()
   })
 
-  it('renders KPI fields from contract', async () => {
+  it('renders compact operational metrics without KPI methodology', async () => {
     vi.mocked(getDashboardSummary).mockResolvedValue({
       appointments_today: 2,
       appointments_week: 5,
-      upcoming: [],
+      upcoming: [
+        {
+          id: 1,
+          summary: 'Alex · checkup',
+          start_datetime: '2026-09-03T14:00:00Z',
+          end_datetime: '2026-09-03T14:30:00Z',
+          timezone: 'UTC',
+          status: 'confirmed',
+        },
+      ],
       calendar_connected: true,
       recent_calls: 3,
-      call_statistics: { calls_today: 1, recent_calls: 3 },
+      call_statistics: { calls_today: 1, recent_calls: 3, attention_today: 0 },
       provider_status: { twilio: true, deepgram: true, calendar: true },
       operational: {
         calls_today: {
@@ -51,6 +63,14 @@ describe('DashboardOverview states', () => {
           numerator: 1,
           denominator: 2,
         },
+        attention_needed: {
+          value: 0,
+          definition: 'Calls needing follow-up.',
+          window: 'local_day',
+          timezone: 'UTC',
+          drill_down: '/calls',
+          exclusions: 'None',
+        },
       },
       timezone: 'UTC',
       generated_at: '2026-09-03T12:00:00Z',
@@ -59,13 +79,16 @@ describe('DashboardOverview states', () => {
     await waitFor(() => {
       expect(screen.getByText('1')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByText('Details'))
-    expect(screen.getByText('Calls started in the local day.')).toBeInTheDocument()
-    expect(screen.getByText('Window: local_day (UTC)')).toBeInTheDocument()
-    expect(screen.getByText('1 of 2')).toBeInTheDocument()
-    expect(screen.getByText('Exclusions: None')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'View details' })).toHaveAttribute('href', '/calls')
-    expect(screen.getByText('Twilio configured')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Today' })).toBeInTheDocument()
+    expect(screen.getByText('Calls')).toBeInTheDocument()
+    expect(screen.getByText('Bookings')).toBeInTheDocument()
+    expect(screen.getByText('Needs attention')).toBeInTheDocument()
+    expect(screen.getByText('Upcoming')).toBeInTheDocument()
+    expect(screen.getByText('Alex · checkup')).toBeInTheDocument()
+    expect(screen.getByText('System health')).toBeInTheDocument()
+    expect(screen.queryByText('Details')).not.toBeInTheDocument()
+    expect(screen.queryByText('Calls started in the local day.')).not.toBeInTheDocument()
+    expect(screen.queryByText('Exclusions: None')).not.toBeInTheDocument()
   })
 
   it('renders error recovery', async () => {

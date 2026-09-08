@@ -160,6 +160,7 @@ def process_inbound_voice(
             from_number=from_number,
             to_number=to_number,
             user_id=user.id,
+            organization_id=user.organization_id,
             data={"AccountSid": account_sid},
             session=db,
         )

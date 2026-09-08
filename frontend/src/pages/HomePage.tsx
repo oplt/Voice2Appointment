@@ -9,6 +9,7 @@ import { Link as RouterLink, useLocation, useSearchParams } from 'react-router-d
 
 import { useAuth } from '../auth/AuthProvider'
 import { HomeAuthCard, type AuthMode } from '../components/auth/HomeAuthCard'
+import { SkipLink } from '../components/SkipLink'
 import { designTokens } from '../theme/tokens'
 import { safeNextPath } from '../utils/safeNextPath'
 
@@ -26,15 +27,20 @@ export function HomePage() {
   const nextPath = safeNextPath(fromState?.from)
 
   return (
-    <Box
-      component="main"
-      sx={{
-        minHeight: '100vh',
-        px: { xs: 2, md: 4 },
-        py: { xs: 3, md: 5 },
-        backgroundColor: 'background.default',
-      }}
-    >
+    <>
+      <SkipLink />
+      <Box
+        component="main"
+        id="main-content"
+        tabIndex={-1}
+        sx={{
+          minHeight: '100vh',
+          px: { xs: 2, md: 4 },
+          py: { xs: 3, md: 5 },
+          backgroundColor: 'background.default',
+          outline: 'none',
+        }}
+      >
       <Grid
         container
         spacing={{ xs: 3, md: 4 }}
@@ -94,6 +100,7 @@ export function HomePage() {
           )}
         </Grid>
       </Grid>
-    </Box>
+      </Box>
+    </>
   )
 }

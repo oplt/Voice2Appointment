@@ -10,16 +10,20 @@ import time
 from collections import deque
 from contextvars import ContextVar
 
-from app.calendars.tools import FUNCTION_MAP, voice_calendar_service, voice_db, voice_user_id
+from app.calendars.tools import (
+    voice_calendar_service,
+    voice_db,
+    voice_user_id,
+)
 from app.core.config import settings
+from app.core.correlation import bind_correlation, reset_correlation
 from app.core.logging import (
-    bind_log_context,
     log_event,
     new_request_id,
-    reset_log_context,
     sanitize_for_log,
 )
 from app.db.session import SessionLocal
+from app.industries.clinic import redact_clinic_payload
 from app.telephony import lifecycle as call_lifecycle
 from app.voice.audio_metrics import (
     estimate_legacy_buffer_latency_ms as estimate_legacy_buffer_latency_ms,
@@ -36,6 +40,8 @@ from app.voice.providers.deepgram import (
     sts_connect,
     wait_for_message_type,
 )
+from app.voice.registry.core import get_tool_registry
+from app.voice.tool_runtime import get_voice_tool_runtime
 from app.voice.transcript import BoundedTranscript
 from app.voice.twilio_media import (
     AUDIO_END,
@@ -78,17 +84,31 @@ def load_voice_config(ctx: CallContext) -> dict:
 
 
 def execute_function_call(func_name: str, arguments: dict) -> dict:
-    if func_name in FUNCTION_MAP:
-        result = FUNCTION_MAP[func_name](**arguments)
-        log_event(
-            logger,
-            "function_call_result",
-            operation=func_name,
-            result=sanitize_for_log(result),
-        )
+    registry = get_tool_registry()
+    definition = registry.get(func_name)
+    db = voice_db.get()
+    user_id = voice_user_id.get()
+    if definition is None:
+        result = {"error": f"Unknown function: {func_name}"}
+        log_event(logger, "function_call_unknown", operation=func_name)
         return result
-    result = {"error": f"Unknown function: {func_name}"}
-    log_event(logger, "function_call_unknown", operation=func_name)
+    if not registry.is_allowed(db, user_id=user_id, tool_name=func_name):
+        result = {
+            "success": False,
+            "error": "tool_not_entitled",
+            "message": f"Tool {func_name} is not enabled for this tenant.",
+        }
+        log_event(logger, "function_call_denied", operation=func_name)
+        return result
+    result = definition.handler(**arguments)
+    if definition.redaction.clinic_medical_redact and isinstance(result, dict):
+        result = redact_clinic_payload(result)
+    log_event(
+        logger,
+        "function_call_result",
+        operation=func_name,
+        result=sanitize_for_log(result),
+    )
     return result
 
 
@@ -140,59 +160,83 @@ async def handle_function_call_request(
     inflight_tool_ids: set[str] | None = None,
 ):
     """Run sync Google/tool work off the event loop with explicit call context."""
-    func_id = "unknown"
-    func_name = "unknown"
-    try:
-        for function_call in decoded["functions"]:
-            func_name = function_call["name"]
-            func_id = function_call["id"]
-            if tool_results is not None and func_id in tool_results:
-                await sts_ws.send(json.dumps(tool_results[func_id]))
-                continue
-            if inflight_tool_ids is not None and func_id in inflight_tool_ids:
-                # A thread-backed tool cannot be safely cancelled; do not
-                # duplicate its side effect when a replacement Agent reconnects.
-                continue
-            if inflight_tool_ids is not None:
-                inflight_tool_ids.add(func_id)
-            arguments = json.loads(function_call["arguments"])
+    function_calls = decoded.get("functions") or []
+    for function_call in function_calls:
+        raw_id = function_call.get("id") if isinstance(function_call, dict) else None
+        raw_name = function_call.get("name") if isinstance(function_call, dict) else None
+        func_id = raw_id if isinstance(raw_id, str) and raw_id else None
+        func_name = raw_name if isinstance(raw_name, str) and raw_name else None
+        response_id = func_id or "unknown"
+        response_name = func_name or "unknown"
+
+        if func_id is not None and tool_results is not None and func_id in tool_results:
+            await sts_ws.send(json.dumps(tool_results[func_id]))
+            continue
+        if func_id is not None and inflight_tool_ids is not None and func_id in inflight_tool_ids:
+            # A thread-backed tool cannot be safely cancelled; do not duplicate its
+            # side effect when a replacement Agent reconnects.
+            continue
+        if func_id is not None and inflight_tool_ids is not None:
+            inflight_tool_ids.add(func_id)
+
+        started = time.perf_counter()
+        try:
+            if func_name is None:
+                raise ValueError("function name is required")
+            raw_arguments = function_call.get("arguments")
+            if not isinstance(raw_arguments, str):
+                raise ValueError("function arguments must be JSON")
+            arguments = json.loads(raw_arguments)
+            if not isinstance(arguments, dict):
+                raise ValueError("function arguments must be an object")
             log_event(
                 logger,
                 "function_call",
                 operation=func_name,
-                func_id=func_id,
+                func_id=response_id,
                 arguments=sanitize_for_log(arguments),
             )
-            started = time.perf_counter()
-            result = await asyncio.to_thread(
-                _run_tool_in_thread, func_name, arguments, ctx
+
+            # Function-call messages are processed in order. In particular,
+            # mutations are never parallelized even though the bounded runtime
+            # can serve reads from different calls concurrently.
+            result = await get_voice_tool_runtime().run(
+                func_name,
+                lambda: _run_tool_in_thread(func_name, arguments, ctx),
             )
             latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
             if "availability" in func_name or "find_" in func_name:
                 latency.record_ms("calendar_lookup_ms", latency_ms)
             elif "create_" in func_name:
                 latency.record_ms("calendar_create_ms", latency_ms)
-            function_result = create_function_call_response(func_id, func_name, result)
-            if tool_results is not None:
-                tool_results[func_id] = function_result
-            if inflight_tool_ids is not None:
-                inflight_tool_ids.discard(func_id)
-            await sts_ws.send(json.dumps(function_result))
+            function_result = create_function_call_response(response_id, func_name, result)
             log_event(
                 logger,
                 "function_call_sent",
                 operation=func_name,
-                func_id=func_id,
+                func_id=response_id,
                 latency_ms=latency_ms,
             )
-    except Exception as e:
-        logger.exception("Error calling function operation=%s", func_name)
-        error_result = create_function_call_response(
-            func_id,
-            func_name,
-            {"error": f"Function call failed with: {e.__class__.__name__}"},
-        )
-        await sts_ws.send(json.dumps(error_result))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "function_call_failed operation=%s error_type=%s",
+                response_name,
+                type(exc).__name__,
+            )
+            function_result = create_function_call_response(
+                response_id,
+                response_name,
+                {"error": f"Function call failed with: {type(exc).__name__}"},
+            )
+        finally:
+            if func_id is not None and inflight_tool_ids is not None:
+                inflight_tool_ids.discard(func_id)
+
+        # Cache both success and safe error envelopes. On a provider reconnect this
+        # prevents a completed mutation (including a failed one) from being run again.
+        if func_id is not None and tool_results is not None:
+            tool_results[func_id] = function_result
+        await sts_ws.send(json.dumps(function_result))
 
 
 async def handle_text_message(
@@ -468,8 +512,9 @@ class VoiceSession(TwilioMediaMixin):
         context_wait = None
         twilio_wait = None
         try:
-            log_tokens = bind_log_context(
-                request_id=new_request_id(), operation="voice_session"
+            request_id = new_request_id()
+            log_tokens = bind_correlation(
+                request_id=request_id, operation="voice_session"
             )
             session_token = _active_session.set(self)
             twilio_task = asyncio.create_task(
@@ -499,8 +544,12 @@ class VoiceSession(TwilioMediaMixin):
                 return
             assert self.call_context is not None
             ctx = self.call_context
-            log_tokens.update(
-                bind_log_context(call_sid=ctx.call_sid, user_id=ctx.user_id)
+            reset_correlation(log_tokens)
+            log_tokens = bind_correlation(
+                request_id=request_id,
+                call_sid=ctx.call_sid,
+                user_id=ctx.user_id,
+                operation="voice_session",
             )
             config = await asyncio.to_thread(load_voice_config, ctx)
             await run_provider_loop(self, config, ctx)
@@ -535,6 +584,10 @@ class VoiceSession(TwilioMediaMixin):
                         else:
                             await asyncio.sleep(0.05 * (attempt + 1))
             self.transcript.clear()
-            reset_log_context(log_tokens)
+            if self.call_context is not None:
+                from app.calendars.tools import clear_voice_credential_snapshot
+
+                clear_voice_credential_snapshot(self.call_context.call_sid)
+            reset_correlation(log_tokens)
             if session_token is not None:
                 _active_session.reset(session_token)

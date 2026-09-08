@@ -58,7 +58,7 @@ function DeliveryStatusList({ appointmentId }: { appointmentId: number }) {
   return (
     <Stack spacing={0.75}>
       {deliveries.map((delivery) => (
-        <Stack key={delivery.id} direction="row" spacing={1} alignItems="center">
+        <Stack key={delivery.id} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
           <Chip
             size="small"
             label={delivery.status}

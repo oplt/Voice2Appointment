@@ -131,23 +131,34 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         import time
 
-        from app.core.logging import (
-            bind_log_context,
-            log_event,
-            new_request_id,
-            reset_log_context,
+        from app.core.correlation import (
+            CORRELATION_HEADER,
+            bind_correlation,
+            reset_correlation,
+            resolve_correlation_id,
         )
+        from app.core.logging import log_event, new_request_id
 
         request_id = request.headers.get("X-Request-ID") or new_request_id()
+        correlation_id = resolve_correlation_id(
+            explicit=request.headers.get(CORRELATION_HEADER),
+            request_id=request_id,
+        )
         operation = f"{request.method} {request.url.path}"
-        tokens = bind_log_context(request_id=request_id, operation=operation)
+        tokens = bind_correlation(
+            correlation_id=correlation_id,
+            request_id=request_id,
+            operation=operation,
+        )
         request.state.request_id = request_id
+        request.state.correlation_id = correlation_id
         started = time.perf_counter()
         status_code = 500
         try:
             response = await call_next(request)
             status_code = response.status_code
             response.headers["X-Request-ID"] = request_id
+            response.headers[CORRELATION_HEADER] = correlation_id
             return response
         finally:
             latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
@@ -172,4 +183,4 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
                     )
                 except Exception:  # noqa: BLE001
                     pass
-            reset_log_context(tokens)
+            reset_correlation(tokens)

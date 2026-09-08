@@ -1,6 +1,7 @@
 """Single source of truth for Deepgram/OpenAI voice tool schemas.
 
-Must match Python callables in ``app.calendars.tools.FUNCTION_MAP``.
+Must match Python callables in ``app.calendars.tools.FUNCTION_MAP`` and
+``app.voice.registry`` (runtime Deepgram lists come from the registry).
 """
 
 from __future__ import annotations

@@ -1,0 +1,35 @@
+{
+  "base_url": "http://127.0.0.1:8000",
+  "scenarios": {
+    "dashboard": {
+      "concurrency": 10,
+      "iterations": 100,
+      "requests": [{"method": "GET", "path": "/api/v1/dashboard/summary"}]
+    },
+    "availability": {
+      "concurrency": 10,
+      "iterations": 100,
+      "requests": [{"method": "GET", "path": "/api/v1/calendars/availability?datetime_start=REPLACE&datetime_end=REPLACE"}]
+    },
+    "booking_one_tenant": {
+      "concurrency": 10,
+      "iterations": 20,
+      "requests": [{"method": "POST", "path": "/api/v1/appointments", "json": {"REPLACE": "unique idempotency keys and a valid booking payload"}}]
+    },
+    "booking_different_tenants": {
+      "concurrency": 10,
+      "iterations": 20,
+      "requests": [{"method": "POST", "path": "/api/v1/appointments", "json": {"REPLACE": "one valid payload per authenticated tenant"}}]
+    },
+    "voice_function_calls": {
+      "concurrency": 10,
+      "iterations": 100,
+      "requests": [{"method": "POST", "path": "/REPLACE-test-voice-function-endpoint", "json": {"REPLACE": "fake Deepgram function-call fixture"}}]
+    },
+    "provider_timeouts": {
+      "concurrency": 5,
+      "iterations": 20,
+      "requests": [{"method": "GET", "path": "/REPLACE-route-wired-to-a-timeout-provider-fake", "timeout_seconds": 15}]
+    }
+  }
+}

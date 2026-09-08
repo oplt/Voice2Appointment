@@ -2,6 +2,7 @@ import { api } from './client'
 import type {
   BookingPolicy,
   ProductPrefs,
+  ProductPrefsUpdate,
   SetupReadiness,
   UserProfile,
   UserProfileUpdate,
@@ -27,8 +28,8 @@ export function getProductPrefs() {
   return api.get<ProductPrefs>('/api/v1/users/me/product-prefs')
 }
 
-export function putProductPrefs(body: ProductPrefs) {
-  return api.put<ProductPrefs>('/api/v1/users/me/product-prefs', body)
+export function patchProductPrefs(body: ProductPrefsUpdate) {
+  return api.patch<ProductPrefs>('/api/v1/users/me/product-prefs', body)
 }
 
 export function getSetupReadiness() {

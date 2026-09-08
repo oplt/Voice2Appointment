@@ -48,6 +48,33 @@ class TimestampMixin:
     )
 
 
+class Organization(TimestampMixin, Base):
+    __tablename__ = "organization"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False, unique=True)
+    default_timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class OrganizationMember(TimestampMixin, Base):
+    __tablename__ = "organization_member"
+    __table_args__ = (UniqueConstraint("organization_id", "user_id", name="uq_org_member"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("res_user.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    role: Mapped[str] = mapped_column(String(32), nullable=False, default="owner")
+
+
 class User(Base):
     __tablename__ = "res_user"
 
@@ -69,6 +96,9 @@ class User(Base):
     )
     password_reset_consumed_at: Mapped[datetime | None] = mapped_column(
         TZDateTime, nullable=True
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("organization.id"), nullable=True, index=True
     )
 
     twilio_account_sid: Mapped[str | None] = mapped_column(String(255), nullable=True)
@@ -96,6 +126,10 @@ class User(Base):
     twilio_active_refresh_due_at: Mapped[datetime | None] = mapped_column(
         TZDateTime, nullable=True
     )
+    twilio_sync_lease_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    twilio_sync_lease_expires_at: Mapped[datetime | None] = mapped_column(
+        TZDateTime, nullable=True
+    )
     cache_calendar_version: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
@@ -121,6 +155,7 @@ class User(Base):
         lazy="select",
         uselist=False,
     )
+    organization: Mapped[Organization | None] = relationship("Organization")
 
     @validates("twilio_phone_number")
     def _sync_twilio_phone_e164(self, _key: str, value: str | None) -> str | None:
@@ -170,6 +205,9 @@ class CallSession(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("res_user.id"), nullable=False, index=True
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("organization.id"), nullable=True, index=True
     )
     call_sid: Mapped[str] = mapped_column(
         String(64), unique=True, index=True, nullable=False
@@ -233,6 +271,7 @@ class CallSession(Base):
         from_number: str | None,
         to_number: str | None,
         user_id: int,
+        organization_id: int | None = None,
         data: dict[str, Any] | None = None,
         *,
         session: Any | None = None,
@@ -247,6 +286,7 @@ class CallSession(Base):
         try:
             row = cls(
                 user_id=user_id,
+                organization_id=organization_id,
                 call_sid=call_sid,
                 from_number=from_number,
                 to_number=to_number,
@@ -306,6 +346,9 @@ class Appointment(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("res_user.id"), nullable=False, index=True
+    )
+    organization_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("organization.id"), nullable=True, index=True
     )
     callsession_id: Mapped[int | None] = mapped_column(
         Integer,
@@ -489,6 +532,345 @@ class BookingFunnelEvent(Base):
     reason_code: Mapped[str] = mapped_column(String(32), nullable=False, default="unknown")
     occurred_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
     idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class Location(TimestampMixin, Base):
+    __tablename__ = "location"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    timezone: Mapped[str] = mapped_column(String(100), nullable=False, default="UTC")
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    business_hours: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class CatalogCategory(TimestampMixin, Base):
+    __tablename__ = "catalog_category"
+    __table_args__ = (UniqueConstraint("organization_id", "name", name="uq_catalog_category"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class CatalogItem(TimestampMixin, Base):
+    __tablename__ = "catalog_item"
+    __table_args__ = (Index("ix_catalog_item_org_active", "organization_id", "active"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    category_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("catalog_category.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="service")
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    bookable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    sellable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    buffer_before_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    buffer_after_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class CatalogOption(TimestampMixin, Base):
+    __tablename__ = "catalog_option"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    catalog_item_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("catalog_item.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class PriceBook(TimestampMixin, Base):
+    __tablename__ = "price_book"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class Price(TimestampMixin, Base):
+    __tablename__ = "price"
+    __table_args__ = (Index("ix_price_book_item_effective", "price_book_id", "catalog_item_id", "effective_from"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    price_book_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("price_book.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    catalog_item_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("catalog_item.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    location_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("location.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    channel: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    effective_from: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    effective_until: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    tax_metadata: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class Resource(TimestampMixin, Base):
+    __tablename__ = "resource"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    location_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("location.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    resource_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    capacity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class ResourceCapability(Base):
+    __tablename__ = "resource_capability"
+    __table_args__ = (UniqueConstraint("resource_id", "capability", name="uq_resource_capability"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    resource_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("resource.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    capability: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class ServiceResourceRequirement(Base):
+    __tablename__ = "service_resource_requirement"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    catalog_item_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("catalog_item.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    resource_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    capability: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    required: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+
+class AvailabilityRule(TimestampMixin, Base):
+    __tablename__ = "availability_rule"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id"), nullable=False, index=True)
+    location_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("location.id"), nullable=True, index=True)
+    resource_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("resource.id"), nullable=True, index=True)
+    weekday: Mapped[int] = mapped_column(Integer, nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+
+
+class AvailabilityException(TimestampMixin, Base):
+    __tablename__ = "availability_exception"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id"), nullable=False, index=True)
+    location_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("location.id"), nullable=True, index=True)
+    resource_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("resource.id"), nullable=True, index=True)
+    starts_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    ends_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    available: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class Customer(TimestampMixin, Base):
+    __tablename__ = "customer"
+    __table_args__ = (Index("ix_customer_org_phone", "organization_id", "phone"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True)
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    consent_preferences: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class Reservation(TimestampMixin, Base):
+    __tablename__ = "reservation"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_reservation_org_idempotency"),
+        Index("ix_reservation_org_window", "organization_id", "start_datetime", "end_datetime"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id"), nullable=False, index=True)
+    location_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("location.id"), nullable=True, index=True)
+    customer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("customer.id"), nullable=True, index=True)
+    appointment_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("appointment.id"), nullable=True, unique=True)
+    catalog_item_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("catalog_item.id"), nullable=True, index=True
+    )
+    scheduling_mode: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="single_resource"
+    )
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    start_datetime: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    end_datetime: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    party_size: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    hold_expires_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    provider_sync_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="none"
+    )
+    allocation_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class ReservationResource(Base):
+    __tablename__ = "reservation_resource"
+    __table_args__ = (UniqueConstraint("reservation_id", "resource_id", name="uq_reservation_resource"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(Integer, ForeignKey("reservation.id", ondelete="CASCADE"), nullable=False, index=True)
+    resource_id: Mapped[int] = mapped_column(Integer, ForeignKey("resource.id"), nullable=False, index=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class ReservationLineItem(Base):
+    __tablename__ = "reservation_line_item"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(Integer, ForeignKey("reservation.id", ondelete="CASCADE"), nullable=False, index=True)
+    catalog_item_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("catalog_item.id"), nullable=True)
+    item_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    tax_metadata: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class KnowledgeEntry(TimestampMixin, Base):
+    __tablename__ = "knowledge_entry"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class FeatureEntitlement(TimestampMixin, Base):
+    __tablename__ = "feature_entitlement"
+    __table_args__ = (UniqueConstraint("organization_id", "feature", name="uq_feature_entitlement"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True)
+    feature: Mapped[str] = mapped_column(String(100), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    limits_json: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class IndustryProfile(TimestampMixin, Base):
+    """Per-organization industry capability/policy surface (not a separate app)."""
+
+    __tablename__ = "industry_profile"
+    __table_args__ = (UniqueConstraint("organization_id", name="uq_industry_profile_org"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    industry_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    scheduling_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="single_resource")
+    required_customer_fields: Mapped[list[Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=list, server_default=text("'[]'")
+    )
+    required_booking_fields: Mapped[list[Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=list, server_default=text("'[]'")
+    )
+    enabled_tools: Mapped[list[Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=list, server_default=text("'[]'")
+    )
+    confirmation_policy: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    deposit_policy: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    handoff_policy: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    privacy_policy: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    terminology: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    flow_steps: Mapped[list[Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=list, server_default=text("'[]'")
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class WaitlistEntry(TimestampMixin, Base):
+    __tablename__ = "waitlist_entry"
+    __table_args__ = (
+        Index("ix_waitlist_org_status", "organization_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    location_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("location.id"), nullable=True, index=True)
+    customer_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("customer.id"), nullable=True, index=True)
+    catalog_item_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("catalog_item.id"), nullable=True)
+    party_size: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    preferred_start: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    preferred_end: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="waiting")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True)
+    actor_user_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("res_user.id"), nullable=True, index=True)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+    occurred_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False, default=_utcnow)
 
 
 from app.core.cache_generation import register_cache_generation_events  # noqa: E402

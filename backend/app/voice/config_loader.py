@@ -10,11 +10,11 @@ from typing import Callable
 
 from sqlalchemy.orm import Session
 
-from app.calendars.tool_schemas import AGENT_SYSTEM_PROMPT, VOICE_TOOL_DEFINITIONS
 from app.db.models import User
 from app.voice.context import CallContext
 from app.voice.dates import get_current_date_context
 from app.voice.providers.deepgram import get_deepgram_settings
+from app.voice.registry.core import get_tool_registry
 
 logger = logging.getLogger(__name__)
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "config.json"
@@ -39,6 +39,7 @@ def load_voice_config_for_context(
     session_factory: Callable[[], Session] | None,
 ) -> dict:
     config = load_default_config_template()
+    db: Session | None = None
     if session_factory is not None:
         db = session_factory()
         try:
@@ -56,11 +57,25 @@ def load_voice_config_for_context(
                         config = overlay
                     elif isinstance(overlay, dict):
                         config = _deep_merge(copy.deepcopy(config), overlay)
-        finally:
-            db.close()
+        except Exception:
+            if db is not None:
+                db.close()
+                db = None
+            raise
 
     think = config.setdefault("agent", {}).setdefault("think", {})
-    think["functions"] = copy.deepcopy(VOICE_TOOL_DEFINITIONS)
+    registry = get_tool_registry()
+    try:
+        think["functions"] = registry.deepgram_functions(db, user_id=ctx.user_id)
+        think["prompt"] = registry.build_system_prompt(
+            db,
+            user_id=ctx.user_id,
+            current_date_context=get_current_date_context(timezone_name=ctx.timezone),
+        )
+    finally:
+        if db is not None:
+            db.close()
+
     deepgram = get_deepgram_settings()
     listen = config.setdefault("agent", {}).setdefault("listen", {}).setdefault(
         "provider", {}
@@ -74,7 +89,4 @@ def load_voice_config_for_context(
     )
     if "language" in speak:
         speak["language"] = "en"
-    think["prompt"] = AGENT_SYSTEM_PROMPT.format(
-        current_date_context=get_current_date_context(timezone_name=ctx.timezone)
-    )
     return config

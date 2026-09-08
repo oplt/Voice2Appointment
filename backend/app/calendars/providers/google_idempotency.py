@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Any
+from typing import Any, Callable
 
 from googleapiclient.errors import HttpError
 
@@ -23,16 +23,20 @@ def insert_event(
     calendar_id: str,
     event: dict[str, Any],
     idempotency_key: str | None,
+    execute: Callable[[Any], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Insert once, resolving a duplicate deterministic ID to its event."""
+    execute_request = execute or (lambda request: request.execute())
     if idempotency_key:
         event["id"] = deterministic_event_id(idempotency_key)
         event["extendedProperties"] = {
             "private": {"idempotency_key": idempotency_key}
         }
     try:
-        return events.insert(calendarId=calendar_id, body=event).execute()
+        return execute_request(events.insert(calendarId=calendar_id, body=event))
     except HttpError as error:
         if idempotency_key and http_status(error) == 409:
-            return events.get(calendarId=calendar_id, eventId=event["id"]).execute()
+            return execute_request(
+                events.get(calendarId=calendar_id, eventId=event["id"])
+            )
         raise

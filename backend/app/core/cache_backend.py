@@ -44,7 +44,9 @@ def _close_client() -> None:
     metrics.incr("cache_events", labels={"cache": "redis", "result": "reset"})
 
 
-def note_failure(exc: BaseException, operation: str) -> None:
+def note_failure(
+    exc: BaseException, operation: str, *, latency_ms: float | None = None
+) -> None:
     global _failure_count, _pool_exhaustion_count, _retry_after, _degraded
     _failure_count += 1
     _degraded = True
@@ -55,17 +57,29 @@ def note_failure(exc: BaseException, operation: str) -> None:
         "cache_events",
         labels={"cache": "redis", "operation": operation, "result": result},
     )
+    if latency_ms is not None:
+        metrics.observe(
+            "redis_latency_ms",
+            latency_ms,
+            labels={"operation": operation, "result": result},
+        )
     if _is_connection_failure(exc):
         _close_client()
         _retry_after = time.monotonic() + settings.redis_retry_after_seconds
         logger.warning("Redis client reset: %s", type(exc).__name__)
 
 
-def note_success(operation: str) -> None:
+def note_success(operation: str, *, latency_ms: float | None = None) -> None:
     metrics.incr(
         "cache_operations",
         labels={"cache": "redis", "operation": operation, "result": "success"},
     )
+    if latency_ms is not None:
+        metrics.observe(
+            "redis_latency_ms",
+            latency_ms,
+            labels={"operation": operation, "result": "success"},
+        )
 
 
 def redis_client() -> Any | None:
@@ -87,7 +101,9 @@ def redis_client() -> Any | None:
             socket_keepalive=True,
         )
         client = redis.Redis(connection_pool=pool)
+        started = time.perf_counter()
         client.ping()
+        note_success("connect", latency_ms=(time.perf_counter() - started) * 1000.0)
         _client = client
         if _degraded:
             _degraded = False

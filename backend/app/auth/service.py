@@ -52,6 +52,10 @@ def create_user(db: Session, *, username: str, email: str, password: str) -> Use
         password=hash_password(password),
     )
     db.add(user)
+    db.flush()
+    from app.tenancy.service import create_organization_for_user
+
+    create_organization_for_user(db, user)
     db.commit()
     db.refresh(user)
     return user

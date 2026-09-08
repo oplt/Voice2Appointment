@@ -1,4 +1,4 @@
-"""Voice / Deepgram latency recording (Phase 13.2–13.3)."""
+"""Voice / Deepgram latency recording (Phase 13.2–13.3 / Phase 12 metrics)."""
 
 from __future__ import annotations
 
@@ -80,11 +80,23 @@ class LatencyTracker:
             operation=f"calendar_{operation}",
             latency_ms=round(ms, 2),
         )
+        try:
+            from app.core.metrics import metrics
+
+            label = "lookup" if operation in {"availability", "list", "get"} else operation
+            if operation in {"create", "insert", "update", "delete"}:
+                label = "create" if operation == "insert" else operation
+            metrics.observe(
+                "calendar_request_latency_ms",
+                ms,
+                labels={"operation": label[:32], "result": "success"},
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def ingest_provider_message(self, decoded: dict[str, Any]) -> None:
         """Capture Deepgram latency fields when present (Phase 13.3)."""
         msg_type = decoded.get("type")
-        # Known / defensive shapes — only record numeric latencies.
         for key in ("latency", "latency_ms", "total_latency", "total_latency_ms"):
             value = decoded.get(key)
             if isinstance(value, (int, float)):
@@ -105,7 +117,6 @@ class LatencyTracker:
                 if isinstance(value, (int, float)):
                     self.record_ms(dest, float(value), provider=True)
 
-        # Infer stages from Agent message types (no transcript bodies logged).
         if msg_type == "ConversationText":
             role = (decoded.get("role") or "").lower()
             if role == "user":
@@ -113,7 +124,6 @@ class LatencyTracker:
             elif role in {"assistant", "agent"}:
                 self.note_llm_response()
         elif msg_type in {"AgentStartedSpeaking", "AgentAudioDone"}:
-            # Speaking start is a strong TTS signal; first binary still preferred.
             if msg_type == "AgentStartedSpeaking":
                 self.note_llm_response()
         elif msg_type == "UserStartedSpeaking":
@@ -131,3 +141,28 @@ class LatencyTracker:
     def emit_summary(self) -> None:
         snap = self.snapshot()
         log_event(logger, "voice_latency_summary", **snap)
+        try:
+            from app.core.metrics import metrics
+
+            first = self._latencies_ms.get("tts_first_audio_ms")
+            if first is None:
+                first = self._latencies_ms.get("llm_response_ms")
+            if first is not None:
+                metrics.observe("voice_first_response_ms", float(first))
+            for key, metric_name in (
+                ("stt_final_ms", "voice_stt_final_ms"),
+                ("llm_response_ms", "voice_llm_response_ms"),
+                ("tts_first_audio_ms", "voice_tts_first_audio_ms"),
+                ("twilio_audio_to_stt_queue_ms", "voice_audio_to_stt_queue_ms"),
+            ):
+                value = self._latencies_ms.get(key)
+                if value is not None:
+                    metrics.observe(metric_name, float(value))
+            for key, value in self._provider.items():
+                metrics.observe(
+                    "voice_provider_latency_ms",
+                    float(value),
+                    labels={"stage": key[:40]},
+                )
+        except Exception:  # noqa: BLE001
+            pass

@@ -173,6 +173,12 @@ class ContextFilter(logging.Filter):
         record.call_sid = get_call_sid() or "-"
         record.user_id = get_user_id() if get_user_id() is not None else "-"
         record.operation = get_operation() or "-"
+        try:
+            from app.core.correlation import get_correlation_id
+
+            record.correlation_id = get_correlation_id() or "-"
+        except Exception:  # noqa: BLE001
+            record.correlation_id = "-"
         return True
 
 
@@ -191,6 +197,7 @@ class StructuredFormatter(logging.Formatter):
             "logger": record.name,
             "msg": sanitize_for_log(record.getMessage()),
             "request_id": getattr(record, "request_id", "-"),
+            "correlation_id": getattr(record, "correlation_id", "-"),
             "call_sid": getattr(record, "call_sid", "-"),
             "user_id": getattr(record, "user_id", "-"),
             "operation": getattr(record, "operation", "-"),
@@ -221,6 +228,7 @@ class StructuredFormatter(logging.Formatter):
             "process",
             "message",
             "request_id",
+            "correlation_id",
             "call_sid",
             "user_id",
             "operation",
@@ -238,6 +246,7 @@ class TextFormatter(logging.Formatter):
             f"{self.formatTime(record, datefmt='%Y-%m-%d %H:%M:%S')} "
             f"[{record.levelname}] {record.name} "
             f"request_id={getattr(record, 'request_id', '-')} "
+            f"correlation_id={getattr(record, 'correlation_id', '-')} "
             f"call_sid={getattr(record, 'call_sid', '-')} "
             f"user_id={getattr(record, 'user_id', '-')} "
             f"operation={getattr(record, 'operation', '-')} "

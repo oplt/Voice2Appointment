@@ -76,6 +76,8 @@ class Settings:
     voice_transcript_message_max_bytes: int = int(
         os.getenv("VOICE_TRANSCRIPT_MESSAGE_MAX_BYTES", "4096")
     )
+    voice_tool_workers: int = int(os.getenv("VOICE_TOOL_WORKERS", "4"))
+    voice_tool_queue_size: int = int(os.getenv("VOICE_TOOL_QUEUE_SIZE", "16"))
 
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     celery_broker_url: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
@@ -104,6 +106,12 @@ class Settings:
     request_max_body_bytes: int = int(
         os.getenv("REQUEST_MAX_BODY_BYTES", str(2 * 1024 * 1024))
     )
+    # Per-process SQLAlchemy budget. Keep the deployment total below Postgres
+    # ``max_connections``; see docs/phase3-connection-budget.md.
+    db_pool_size: int = int(os.getenv("DB_POOL_SIZE", "5"))
+    db_max_overflow: int = int(os.getenv("DB_MAX_OVERFLOW", "0"))
+    db_pool_timeout: float = float(os.getenv("DB_POOL_TIMEOUT", "5"))
+    db_pool_recycle: int = int(os.getenv("DB_POOL_RECYCLE", "1800"))
 
     # Local HTTP needs secure=False so the auth cookie is stored.
     cookie_secure: bool = os.getenv("COOKIE_SECURE", "false").lower() in {
@@ -134,6 +142,10 @@ class Settings:
         "GOOGLE_REDIRECT_URI",
         "http://localhost:8000/api/v1/calendars/google/callback",
     )
+    google_http_timeout_seconds: float = float(
+        os.getenv("GOOGLE_HTTP_TIMEOUT_SECONDS", "15")
+    )
+    google_request_retries: int = int(os.getenv("GOOGLE_REQUEST_RETRIES", "2"))
 
     # Comma-separated CIDRs of reverse proxies allowed to set X-Forwarded-For.
     trusted_proxy_cidrs: str = os.getenv(
@@ -173,6 +185,15 @@ class Settings:
     twilio_active_refresh_interval_seconds: int = int(
         os.getenv("TWILIO_ACTIVE_REFRESH_INTERVAL_SECONDS", "60")
     )
+    twilio_sync_lease_seconds: int = int(
+        os.getenv("TWILIO_SYNC_LEASE_SECONDS", "60")
+    )
+    twilio_active_refresh_concurrency: int = int(
+        os.getenv("TWILIO_ACTIVE_REFRESH_CONCURRENCY", "4")
+    )
+    twilio_requests_per_second: float = float(
+        os.getenv("TWILIO_REQUESTS_PER_SECOND", "10")
+    )
 
     analytics_max_range_days: int = int(os.getenv("ANALYTICS_MAX_RANGE_DAYS", "366"))
     analytics_default_range_days: int = int(
@@ -185,6 +206,11 @@ class Settings:
         os.getenv("CALENDAR_MAX_RANGE_DAYS", "366")
     )
     reporting_currency: str = os.getenv("REPORTING_CURRENCY", "").strip().upper()
+
+    # Phase 13 — product-domain kill switches (resolved in __post_init__).
+    enable_catalog_domain: bool = field(default=False)
+    enable_reservation_domain: bool = field(default=False)
+    enable_industry_voice_tools: bool = field(default=False)
 
     redis_socket_connect_timeout: float = float(
         os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "0.5")
@@ -212,6 +238,23 @@ class Settings:
             object.__setattr__(self, "debug", False)
         else:
             object.__setattr__(self, "debug", raw_debug)
+
+        # Product-domain flags: explicit env wins; else off in production, on elsewhere.
+        def _flag(name: str, *, production_default: bool = False) -> bool:
+            raw = os.getenv(name)
+            if raw is None or not str(raw).strip():
+                return False if self.is_production else True
+            return str(raw).strip().lower() in {"1", "true", "yes"}
+
+        object.__setattr__(
+            self, "enable_catalog_domain", _flag("ENABLE_CATALOG_DOMAIN")
+        )
+        object.__setattr__(
+            self, "enable_reservation_domain", _flag("ENABLE_RESERVATION_DOMAIN")
+        )
+        object.__setattr__(
+            self, "enable_industry_voice_tools", _flag("ENABLE_INDUSTRY_VOICE_TOOLS")
+        )
 
     @property
     def is_production(self) -> bool:
@@ -242,6 +285,9 @@ class Settings:
             "TWILIO_SYNC_MAX_PAGES": self.twilio_sync_max_pages,
             "TWILIO_ACTIVE_REFRESH_BATCH_SIZE": self.twilio_active_refresh_batch_size,
             "TWILIO_ACTIVE_REFRESH_INTERVAL_SECONDS": self.twilio_active_refresh_interval_seconds,
+            "TWILIO_SYNC_LEASE_SECONDS": self.twilio_sync_lease_seconds,
+            "TWILIO_ACTIVE_REFRESH_CONCURRENCY": self.twilio_active_refresh_concurrency,
+            "TWILIO_REQUESTS_PER_SECOND": self.twilio_requests_per_second,
             "ANALYTICS_LEGACY_MAX_CALLS": self.analytics_legacy_max_calls,
             "CALENDAR_MAX_RANGE_DAYS": self.calendar_max_range_days,
             "REDIS_MAX_CONNECTIONS": self.redis_max_connections,
@@ -249,10 +295,22 @@ class Settings:
             "REDIS_SOCKET_CONNECT_TIMEOUT": self.redis_socket_connect_timeout,
             "REDIS_SOCKET_TIMEOUT": self.redis_socket_timeout,
             "REDIS_RETRY_AFTER_SECONDS": self.redis_retry_after_seconds,
+            "DB_POOL_SIZE": self.db_pool_size,
+            "VOICE_TOOL_WORKERS": self.voice_tool_workers,
+            "VOICE_TOOL_QUEUE_SIZE": self.voice_tool_queue_size,
+            "GOOGLE_HTTP_TIMEOUT_SECONDS": self.google_http_timeout_seconds,
         }
         invalid_limits = [name for name, value in positive_limits.items() if value <= 0]
         if self.request_max_body_bytes <= 0:
             invalid_limits.append("REQUEST_MAX_BODY_BYTES")
+        if self.db_max_overflow < 0:
+            invalid_limits.append("DB_MAX_OVERFLOW")
+        if self.db_pool_timeout <= 0:
+            invalid_limits.append("DB_POOL_TIMEOUT")
+        if self.db_pool_recycle < 0:
+            invalid_limits.append("DB_POOL_RECYCLE")
+        if self.google_request_retries < 0:
+            invalid_limits.append("GOOGLE_REQUEST_RETRIES")
         if invalid_limits:
             raise RuntimeError(
                 "Settings must be positive: " + ", ".join(sorted(invalid_limits))

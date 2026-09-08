@@ -18,6 +18,10 @@ type ConfirmDialogProps = {
   onClose: () => void
 }
 
+/**
+ * Modal confirm. MUI Dialog restores focus to the opener on close
+ * (disableRestoreFocus left false).
+ */
 export function ConfirmDialog({
   open,
   title,
@@ -29,12 +33,25 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
 }: ConfirmDialogProps) {
+  const titleId = 'confirm-dialog-title'
+  const descriptionId = 'confirm-dialog-description'
+
   return (
-    <Dialog open={open} onClose={loading ? undefined : onClose} fullWidth maxWidth="xs">
-      <DialogTitle>{title}</DialogTitle>
+    <Dialog
+      open={open}
+      onClose={loading ? undefined : onClose}
+      fullWidth
+      maxWidth="xs"
+      aria-labelledby={titleId}
+      aria-describedby={description ? descriptionId : undefined}
+      disableRestoreFocus={false}
+    >
+      <DialogTitle id={titleId}>{title}</DialogTitle>
       {description ? (
         <DialogContent>
-          <DialogContentText component="div">{description}</DialogContentText>
+          <DialogContentText id={descriptionId} component="div">
+            {description}
+          </DialogContentText>
         </DialogContent>
       ) : null}
       <DialogActions sx={{ px: 3, pb: 2 }}>

@@ -1,12 +1,52 @@
 import { createTheme } from '@mui/material/styles'
 
 import { componentOverrides } from './components'
-import { designTokens, paletteOptions, typographyOptions } from './tokens'
+import {
+  darkPaletteOptions,
+  designTokens,
+  paletteOptions,
+  typographyOptions,
+} from './tokens'
 
-export { designTokens }
+export { designTokens, semanticDark, semanticLight, semanticCssVariables } from './tokens'
+
+const noneShadows = [
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+  'none',
+] as const
 
 const theme = createTheme({
-  palette: paletteOptions,
+  cssVariables: {
+    colorSchemeSelector: 'data-mui-color-scheme',
+  },
+  defaultColorScheme: 'light',
+  colorSchemes: {
+    light: { palette: paletteOptions },
+    dark: { palette: darkPaletteOptions },
+  },
   typography: typographyOptions,
   shape: {
     borderRadius: designTokens.radius.button,
@@ -38,33 +78,8 @@ const theme = createTheme({
       sharp: 'cubic-bezier(0.5, 0, 0, 0.75)',
     },
   },
-  shadows: [
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-    'none',
-  ],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  shadows: noneShadows as any,
   components: componentOverrides,
 })
 

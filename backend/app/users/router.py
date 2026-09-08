@@ -14,9 +14,9 @@ from app.db.models import User
 from app.users import service as users_service
 from app.users.product_prefs import (
     ProductPrefs,
-    grant_notification_consent,
+    ProductPrefsUpdate,
     load_product_prefs,
-    save_product_prefs,
+    update_product_prefs,
 )
 from app.users.readiness import compute_readiness
 
@@ -119,22 +119,14 @@ def get_product_prefs(
 
 
 @router.put("/me/product-prefs", response_model=ProductPrefs)
-def put_product_prefs(
-    payload: ProductPrefs,
+@router.patch("/me/product-prefs", response_model=ProductPrefs)
+def update_me_product_prefs(
+    payload: ProductPrefsUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
 ) -> ProductPrefs:
     try:
-        prefs = payload
-        notif = prefs.notifications
-        if (
-            notif.confirmations_enabled or notif.reminders_enabled
-        ) and not notif.consent_at:
-            notif = grant_notification_consent(notif)
-            prefs = prefs.model_copy(update={"notifications": notif})
-        langs = prefs.languages.model_copy(update={"primary": "en", "enabled": ["en"]})
-        prefs = prefs.model_copy(update={"languages": langs})
-        save_product_prefs(current_user, prefs)
+        update_product_prefs(current_user, payload)
         db.add(current_user)
         db.commit()
         db.refresh(current_user)

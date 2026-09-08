@@ -186,12 +186,10 @@ def check_availability(
     db: Session, user_id: int, datetime_start: str, datetime_end: str
 ) -> dict[str, Any]:
     service = GoogleCalendarService(db, user_id)
-    is_available, conflicts = service.check_availability(datetime_start, datetime_end)
+    is_available, busy_intervals = service.check_availability(datetime_start, datetime_end)
     return {
         "available": is_available,
-        "conflicting_events": [
-            {"id": e.get("id"), "summary": e.get("summary")} for e in conflicts
-        ],
+        "busy_intervals": busy_intervals,
     }
 
 
@@ -200,7 +198,7 @@ def embed_link(db: Session, user_id: int, view_type: str = "week") -> dict[str, 
     if not auth:
         raise ValueError("Google Calendar not connected")
     service = GoogleCalendarService(db, user_id)
-    calendar_list = service.service.calendarList().list().execute()
+    calendar_list = service.list_calendars()
     primary = next(
         (c for c in calendar_list.get("items", []) if c.get("primary")), None
     )
@@ -333,7 +331,7 @@ def finish_google_oauth(
     from app.calendars.providers.google import exchange_authorization_code
 
     base = settings.frontend_base_url.rstrip("/")
-    settings_path = f"{base}/settings"
+    settings_path = f"{base}/integrations"
     if error:
         return f"{settings_path}?{urlencode({'google': 'denied'})}"
     if not code:

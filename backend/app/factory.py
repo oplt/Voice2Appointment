@@ -35,7 +35,12 @@ from app.voice.gateway import router as voice_router
 async def lifespan(_app: FastAPI):
     settings.require_runtime_secrets()
     init_sentry()
-    yield
+    try:
+        yield
+    finally:
+        from app.voice.tool_runtime import shutdown_voice_tool_runtime
+
+        shutdown_voice_tool_runtime()
 
 
 def create_app(
@@ -89,8 +94,9 @@ def create_app(
                 CSRF_HEADER_NAME,
                 "X-CSRF-Token",
                 "X-Request-ID",
+                "X-Correlation-ID",
             ],
-            expose_headers=["X-Request-ID"],
+            expose_headers=["X-Request-ID", "X-Correlation-ID"],
         )
 
     # Outermost: request_id / structured HTTP timing for every process.

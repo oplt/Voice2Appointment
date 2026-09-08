@@ -51,7 +51,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "calendar",
         "Google Calendar connected",
         bool(cal.get("connected")),
-        fix_path="/settings#calendar",
+        fix_path="/integrations",
         detail=(
             f"Connected as {cal.get('account_email')}"
             if cal.get("connected")
@@ -62,7 +62,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "timezone",
         "Timezone selected",
         bool(cal.get("time_zone")),
-        fix_path="/settings#calendar",
+        fix_path="/integrations",
         detail=cal.get("time_zone") or "Set a calendar timezone after connecting.",
     )
     named_services = {
@@ -74,7 +74,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "services",
         "Named service durations",
         bool(named_services),
-        fix_path="/settings#booking",
+        fix_path="/resources",
         detail=(
             f"{len(named_services)} service(s) configured."
             if named_services
@@ -85,7 +85,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "business_hours",
         "Business hours",
         bool(policy.business_hours),
-        fix_path="/settings#booking",
+        fix_path="/resources",
         detail=(
             "Business hours configured."
             if policy.business_hours
@@ -98,7 +98,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "telephony",
         "Twilio credentials stored",
         twilio_sid,
-        fix_path="/settings#telephony",
+        fix_path="/integrations",
         detail=(
             "Twilio SID/token present — verify with a test call before production."
             if twilio_sid
@@ -109,7 +109,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "phone_route",
         "Inbound phone number",
         bool(user.twilio_phone_number or user.twilio_phone_e164),
-        fix_path="/settings#telephony",
+        fix_path="/integrations",
         detail=(
             user.twilio_phone_e164
             or user.twilio_phone_number
@@ -120,7 +120,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "test_call",
         "Safe test call",
         bool(user.twilio_last_synced_at),
-        fix_path="/settings#telephony",
+        fix_path="/integrations",
         detail=(
             "A recent telephony sync/activity was recorded."
             if user.twilio_last_synced_at
@@ -132,7 +132,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "deepgram",
         "Speech platform credential",
         bool((settings.deepgram_api_key or "").strip()),
-        fix_path="/settings#voice",
+        fix_path="/agent",
         detail=(
             "Platform Deepgram key is configured."
             if (settings.deepgram_api_key or "").strip()
@@ -143,7 +143,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "notifications",
         "Notification consent (optional)",
         bool(product.notifications.consent_at),
-        fix_path="/settings#notifications",
+        fix_path="/settings",
         detail=(
             "Confirmations/reminders consent recorded."
             if product.notifications.consent_at
@@ -155,7 +155,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "retention",
         "Retention policy",
         product.retention.transcript_days >= 1,
-        fix_path="/settings#privacy",
+        fix_path="/settings",
         detail=(
             f"Transcripts {product.retention.transcript_days}d, "
             f"recordings {product.retention.recording_days}d"

@@ -50,13 +50,29 @@ def _claim_attempt(db: Session, appointment_id: int) -> Appointment | None:
     db.commit()
     if claimed is None:
         return None
-    return db.get(Appointment, claimed)
-
-
-def _record_failure(db: Session, appointment_id: int, exc: BaseException) -> None:
+    row = db.get(Appointment, claimed)
+    if row is not None:
+        # Provider I/O must not run with this session's read transaction open.
+        # The detached row is a durable snapshot of the operation we claimed.
+        db.expunge(row)
     db.rollback()
-    row = db.get(Appointment, appointment_id)
+    return row
+
+
+def _record_failure(
+    db: Session,
+    appointment_id: int,
+    exc: BaseException,
+    *,
+    attempt_count: int | None = None,
+) -> None:
+    db.rollback()
+    stmt = select(Appointment).where(Appointment.id == appointment_id).with_for_update()
+    if attempt_count is not None:
+        stmt = stmt.where(Appointment.provider_attempt_count == attempt_count)
+    row = db.scalar(stmt)
     if row is None:
+        db.rollback()
         return
     attempts = max(1, int(row.provider_attempt_count or 1))
     row.provider_last_error_code = _safe_error_code(exc)
@@ -80,15 +96,35 @@ def _clear_operation(row: Appointment) -> None:
     row.provider_next_retry_at = None
 
 
+def _claimed_current(db: Session, claimed: Appointment) -> Appointment | None:
+    """Load the same claimed operation for a short, compare-and-finalize txn."""
+    current = db.scalar(
+        select(Appointment)
+        .where(
+            Appointment.id == claimed.id,
+            Appointment.provider_sync_status == "pending_provider",
+            Appointment.provider_attempt_count == claimed.provider_attempt_count,
+        )
+        .with_for_update()
+    )
+    if current is None:
+        db.rollback()
+    return current
+
+
 def complete_create(
     db: Session,
-    row: Appointment,
+    row: Appointment | int,
     provider_create: ProviderCall,
 ) -> Appointment:
-    claimed = _claim_attempt(db, row.id)
+    appointment_id = row if isinstance(row, int) else row.id
+    claimed = _claim_attempt(db, appointment_id)
     if claimed is None:
         db.expire_all()
-        return db.get(Appointment, row.id) or row
+        current = db.get(Appointment, appointment_id)
+        if current is None:
+            raise BookingPolicyError("appointment not found")
+        return current
     try:
         event = provider_create(
             summary=claimed.summary,
@@ -102,32 +138,42 @@ def complete_create(
         event_id = str((event or {}).get("id") or "").strip()
         if not event_id:
             raise RuntimeError("provider returned no event id")
-        claimed.google_calendar_event_id = event_id
-        claimed.google_calendar_link = (event or {}).get("htmlLink")
-        claimed.status = "confirmed"
-        _clear_operation(claimed)
+        current = _claimed_current(db, claimed)
+        if current is None:
+            current = db.get(Appointment, appointment_id)
+            if current is None:
+                raise BookingPolicyError("appointment not found")
+            return current
+        current.google_calendar_event_id = event_id
+        current.google_calendar_link = (event or {}).get("htmlLink")
+        current.status = "confirmed"
+        _clear_operation(current)
         # Stage the durable notification outbox row in the same transaction
         # that finalizes the provider create (P6-V01 #1).
         from app.notifications.service import stage_confirmation_intent
 
-        stage_confirmation_intent(db, claimed)
+        stage_confirmation_intent(db, current)
         db.commit()
-        db.refresh(claimed)
-        return claimed
+        db.refresh(current)
+        return current
     except Exception as exc:
-        _record_failure(db, row.id, exc)
+        _record_failure(db, appointment_id, exc, attempt_count=claimed.provider_attempt_count)
         raise
 
 
 def _perform_reschedule(
     db: Session,
-    row: Appointment,
+    row: Appointment | int,
     provider_update: ProviderCall,
 ) -> Appointment:
-    claimed = _claim_attempt(db, row.id)
+    appointment_id = row if isinstance(row, int) else row.id
+    claimed = _claim_attempt(db, appointment_id)
     if claimed is None:
         db.expire_all()
-        return db.get(Appointment, row.id) or row
+        current = db.get(Appointment, appointment_id)
+        if current is None:
+            raise BookingPolicyError("appointment not found")
+        return current
     payload = dict(claimed.provider_operation_payload or {})
     try:
         provider_update(
@@ -136,54 +182,70 @@ def _perform_reschedule(
             datetime_end=payload["end_datetime"],
             timezone=payload["timezone"],
         )
-        claimed.start_datetime = datetime.fromisoformat(payload["start_datetime"])
-        claimed.end_datetime = datetime.fromisoformat(payload["end_datetime"])
-        claimed.timezone = payload["timezone"]
-        claimed.status = "confirmed"
-        claimed.reminder_sent = False
-        claimed.confirmation_sent_at = None
-        _clear_operation(claimed)
+        current = _claimed_current(db, claimed)
+        if current is None:
+            current = db.get(Appointment, appointment_id)
+            if current is None:
+                raise BookingPolicyError("appointment not found")
+            return current
+        current.start_datetime = datetime.fromisoformat(payload["start_datetime"])
+        current.end_datetime = datetime.fromisoformat(payload["end_datetime"])
+        current.timezone = payload["timezone"]
+        current.status = "confirmed"
+        current.reminder_sent = False
+        current.confirmation_sent_at = None
+        _clear_operation(current)
         # Drop the stale (old-slot) outbox rows and stage a fresh confirmation
         # for the new slot in the same transaction (P6-V01 #1/#3).
         from app.notifications.service import stage_reschedule_notifications
 
-        stage_reschedule_notifications(db, claimed)
+        stage_reschedule_notifications(db, current)
         db.commit()
-        db.refresh(claimed)
-        return claimed
+        db.refresh(current)
+        return current
     except Exception as exc:
-        _record_failure(db, row.id, exc)
+        _record_failure(db, appointment_id, exc, attempt_count=claimed.provider_attempt_count)
         raise
 
 
 def _perform_cancel(
     db: Session,
-    row: Appointment,
+    row: Appointment | int,
     provider_delete: ProviderCall,
 ) -> Appointment:
-    claimed = _claim_attempt(db, row.id)
+    appointment_id = row if isinstance(row, int) else row.id
+    claimed = _claim_attempt(db, appointment_id)
     if claimed is None:
         db.expire_all()
-        return db.get(Appointment, row.id) or row
+        current = db.get(Appointment, appointment_id)
+        if current is None:
+            raise BookingPolicyError("appointment not found")
+        return current
     payload = dict(claimed.provider_operation_payload or {})
     try:
         provider_delete(event_id=claimed.google_calendar_event_id)
-        claimed.status = "cancelled"
+        current = _claimed_current(db, claimed)
+        if current is None:
+            current = db.get(Appointment, appointment_id)
+            if current is None:
+                raise BookingPolicyError("appointment not found")
+            return current
+        current.status = "cancelled"
         reason = str(payload.get("reason") or "").strip()
         if reason:
-            note = (claimed.notes or "").strip()
+            note = (current.notes or "").strip()
             suffix = f"Cancelled: {reason}"
-            claimed.notes = f"{note}\n{suffix}".strip() if note else suffix
-        _clear_operation(claimed)
+            current.notes = f"{note}\n{suffix}".strip() if note else suffix
+        _clear_operation(current)
         # Cancel not-yet-sent outbox rows in the same transaction (P6-V01 #1).
         from app.notifications.service import stage_cancellation
 
-        stage_cancellation(db, claimed.id)
+        stage_cancellation(db, current.id)
         db.commit()
-        db.refresh(claimed)
-        return claimed
+        db.refresh(current)
+        return current
     except Exception as exc:
-        _record_failure(db, row.id, exc)
+        _record_failure(db, appointment_id, exc, attempt_count=claimed.provider_attempt_count)
         raise
 
 
@@ -203,6 +265,9 @@ def reschedule_appointment_slot(
         start_datetime = start_datetime.replace(tzinfo=timezone.utc)
     if end_datetime.tzinfo is None:
         end_datetime = end_datetime.replace(tzinfo=timezone.utc)
+    if check_provider_availability is not None:
+        check_provider_availability(start_datetime, end_datetime)
+    pending_provider_id: int | None = None
     with tenant_booking_lock(db, user_id):
         row = _find_appointment(db, user_id, appointment_id, event_id)
         if row.provider_operation:
@@ -215,8 +280,6 @@ def reschedule_appointment_slot(
             timezone_name=timezone_name,
             exclude_appointment_id=row.id,
         )
-        if check_provider_availability is not None:
-            check_provider_availability(start_datetime, end_datetime)
         if provider_update is None or not row.google_calendar_event_id:
             row.start_datetime = start_datetime
             row.end_datetime = end_datetime
@@ -232,6 +295,7 @@ def reschedule_appointment_slot(
             db.commit()
             db.refresh(row)
         else:
+            pending_provider_id = row.id
             row.provider_sync_status = "pending_provider"
             row.provider_operation = "reschedule"
             row.provider_operation_payload = {
@@ -241,9 +305,8 @@ def reschedule_appointment_slot(
             }
             row.provider_next_retry_at = None
             db.commit()
-            db.refresh(row)
-    if provider_update is not None and row.provider_operation == "reschedule":
-        row = _perform_reschedule(db, row, provider_update)
+    if provider_update is not None and pending_provider_id is not None:
+        row = _perform_reschedule(db, pending_provider_id, provider_update)
     if row.provider_sync_status == "confirmed":
         _after_change(db, row, confirmation=True)
     return row
@@ -258,6 +321,7 @@ def cancel_appointment(
     reason: str | None = None,
     provider_delete: ProviderCall | None = None,
 ) -> Appointment:
+    pending_provider_id: int | None = None
     with tenant_booking_lock(db, user_id):
         row = _find_appointment(db, user_id, appointment_id, event_id)
         if row.status == "cancelled":
@@ -278,14 +342,14 @@ def cancel_appointment(
             db.commit()
             db.refresh(row)
         else:
+            pending_provider_id = row.id
             row.provider_sync_status = "pending_provider"
             row.provider_operation = "cancel"
             row.provider_operation_payload = {"reason": reason or ""}
             row.provider_next_retry_at = None
             db.commit()
-            db.refresh(row)
-    if provider_delete is not None and row.provider_operation == "cancel":
-        row = _perform_cancel(db, row, provider_delete)
+    if provider_delete is not None and pending_provider_id is not None:
+        row = _perform_cancel(db, pending_provider_id, provider_delete)
     return row
 
 

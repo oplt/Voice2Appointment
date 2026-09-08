@@ -43,7 +43,13 @@ export function SnackbarProvider({ children }: SnackbarProviderProps) {
         onClose={() => setOpen(false)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
       >
-        <Alert severity={severity} variant="filled" onClose={() => setOpen(false)}>
+        <Alert
+          severity={severity}
+          variant="filled"
+          onClose={() => setOpen(false)}
+          role={severity === 'error' ? 'alert' : 'status'}
+          aria-live={severity === 'error' ? 'assertive' : 'polite'}
+        >
           {message}
         </Alert>
       </Snackbar>

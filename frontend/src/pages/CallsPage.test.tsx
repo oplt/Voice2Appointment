@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '../api/client'
 import { listCalls } from '../api/calls'
 import { CallsPage } from '../pages/CallsPage'
+import { withQueryClient } from '../test/query'
 
 vi.mock('../api/calls', () => ({
   listCalls: vi.fn(),
@@ -16,11 +17,13 @@ const theme = createTheme()
 
 function renderPage() {
   return render(
-    <ThemeProvider theme={theme}>
-      <MemoryRouter>
-        <CallsPage />
-      </MemoryRouter>
-    </ThemeProvider>,
+    withQueryClient(
+      <ThemeProvider theme={theme}>
+        <MemoryRouter>
+          <CallsPage />
+        </MemoryRouter>
+      </ThemeProvider>,
+    ),
   )
 }
 

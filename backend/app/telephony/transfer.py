@@ -176,7 +176,7 @@ def execute_twilio_transfer(
         from app.telephony.providers.twilio import TwilioProvider
 
         provider = TwilioProvider(account_sid=account_sid, auth_token=auth_token)
-        provider._client.calls(call_sid).update(twiml=twiml)
+        provider.update_call_twiml(call_sid, twiml)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "transfer_failed call_sid_suffix=%s err=%s",
@@ -305,7 +305,7 @@ def execute_controlled_fallback(
         provider = TwilioProvider(
             account_sid=user.twilio_account_sid, auth_token=user.twilio_auth_token
         )
-        provider._client.calls(call_sid).update(twiml=_FALLBACK_TWIML)
+        provider.update_call_twiml(call_sid, _FALLBACK_TWIML)
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "provider_fallback_failed call_sid_suffix=%s err=%s",

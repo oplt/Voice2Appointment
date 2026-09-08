@@ -1,7 +1,7 @@
-"""Celery task wait/runtime instrumentation (P8-02 / P8-V02).
+"""Celery task wait/runtime instrumentation (P8-02 / Phase 12 correlation).
 
-Single default queue remains. These metrics justify a future split only when
-urgent-job p95 *enqueue-to-start wait* exceeds the documented SLO under mixed load.
+These metrics justify a future queue split only when urgent-job p95
+enqueue-to-start wait exceeds the documented SLO under mixed load.
 """
 
 from __future__ import annotations
@@ -11,6 +11,15 @@ from datetime import datetime, timezone
 from typing import Any
 
 from celery.signals import before_task_publish, task_postrun, task_prerun, task_retry
+
+from app.core.correlation import (
+    CELERY_CALL_SID_HEADER,
+    CELERY_CORRELATION_HEADER,
+    CELERY_REQUEST_HEADER,
+    bind_correlation,
+    celery_correlation_headers,
+    reset_correlation,
+)
 
 # Allowlisted task name prefixes → short operation labels (bounded cardinality).
 _OPERATION_BY_PREFIX: tuple[tuple[str, str], ...] = (
@@ -23,10 +32,13 @@ _OPERATION_BY_PREFIX: tuple[tuple[str, str], ...] = (
     ("download_and_archive", "recording"),
     ("sync_", "sync"),
     ("precompute_analytics", "analytics"),
+    ("expire_reservation", "reservations"),
+    ("finalize_pending", "reservations"),
 )
 
 _ENQUEUED_HEADER = "va_enqueued_at"
 _started_at: dict[str, float] = {}
+_context_tokens: dict[str, dict[str, Any]] = {}
 _registered = False
 
 
@@ -58,6 +70,8 @@ def register_celery_metrics(app: Any) -> None:
         if headers is None:
             return
         headers[_ENQUEUED_HEADER] = datetime.now(timezone.utc).isoformat()
+        for key, value in celery_correlation_headers().items():
+            headers.setdefault(key, value)
 
     @task_prerun.connect(weak=False)
     def _on_prerun(
@@ -73,6 +87,15 @@ def register_celery_metrics(app: Any) -> None:
         name = getattr(task, "name", None) or getattr(sender, "name", None)
         op = _operation_for(name)
         headers = getattr(getattr(task, "request", None), "headers", None) or {}
+        delivery = getattr(getattr(task, "request", None), "delivery_info", None) or {}
+        queue = str(delivery.get("routing_key") or "unknown")
+        tokens = bind_correlation(
+            correlation_id=headers.get(CELERY_CORRELATION_HEADER),
+            request_id=headers.get(CELERY_REQUEST_HEADER),
+            call_sid=headers.get(CELERY_CALL_SID_HEADER),
+            operation=f"celery:{op}",
+        )
+        _context_tokens[key] = tokens
         enqueued = headers.get(_ENQUEUED_HEADER)
         if isinstance(enqueued, str):
             try:
@@ -84,7 +107,7 @@ def register_celery_metrics(app: Any) -> None:
                 metrics.observe(
                     "celery_queue_wait_ms",
                     wait_ms,
-                    labels={"operation": op},
+                    labels={"operation": op, "queue": queue},
                 )
             except ValueError:
                 pass
@@ -101,6 +124,9 @@ def register_celery_metrics(app: Any) -> None:
 
         key = _task_key(task_id)
         started = _started_at.pop(key, None)
+        tokens = _context_tokens.pop(key, None)
+        if tokens is not None:
+            reset_correlation(tokens)
         name = getattr(task, "name", None) or getattr(sender, "name", None)
         op = _operation_for(name)
         result = "success"
@@ -124,4 +150,8 @@ def register_celery_metrics(app: Any) -> None:
         metrics.incr(
             "celery_tasks",
             labels={"operation": _operation_for(name), "result": "retry"},
+        )
+        metrics.incr(
+            "provider_retries",
+            labels={"provider": "celery", "operation": _operation_for(name)},
         )

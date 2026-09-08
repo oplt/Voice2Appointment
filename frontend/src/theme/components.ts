@@ -1,6 +1,11 @@
 import type { Components, Theme } from '@mui/material/styles'
 
-import { designTokens } from './tokens'
+import {
+  designTokens,
+  semanticCssVariables,
+  semanticDark,
+  semanticLight,
+} from './tokens'
 
 const transition = [
   `border-color ${designTokens.motion.duration}`,
@@ -9,17 +14,30 @@ const transition = [
   `box-shadow 0.25s`,
 ].join(', ')
 
+const lightVars = semanticCssVariables(semanticLight)
+const darkVars = semanticCssVariables(semanticDark)
+
 export const componentOverrides: Components<Theme> = {
   MuiCssBaseline: {
     styleOverrides: {
+      ':root': {
+        ...lightVars,
+        colorScheme: 'light',
+      },
+      '[data-mui-color-scheme="dark"]': {
+        ...darkVars,
+        colorScheme: 'dark',
+      },
       html: {
         WebkitFontSmoothing: 'antialiased',
         MozOsxFontSmoothing: 'grayscale',
+        fontSize: '100%',
+        textSizeAdjust: '100%',
       },
       body: {
         margin: 0,
-        backgroundColor: designTokens.colors.pureWhite,
-        color: designTokens.colors.carbonDark,
+        backgroundColor: 'var(--surface-canvas)',
+        color: 'var(--text-primary)',
       },
       '@media (prefers-reduced-motion: reduce)': {
         '*, *::before, *::after': {
@@ -29,19 +47,39 @@ export const componentOverrides: Components<Theme> = {
           scrollBehavior: 'auto !important',
         },
       },
+      '@media (forced-colors: active)': {
+        '*, *::before, *::after': {
+          borderColor: 'CanvasText',
+        },
+        a: {
+          color: 'LinkText',
+        },
+        ':focus-visible': {
+          outline: '3px solid Highlight',
+          outlineOffset: 2,
+        },
+      },
+      '@media (prefers-contrast: more)': {
+        body: {
+          backgroundColor: '#FFFFFF',
+          color: '#000000',
+        },
+        ':focus-visible': {
+          outlineWidth: 4,
+        },
+      },
       a: {
         color: designTokens.colors.pewter,
         textDecoration: 'none',
         transition: `color ${designTokens.motion.duration}`,
       },
       'a:hover': {
-        color: designTokens.colors.carbonDark,
+        color: 'var(--text-primary)',
         textDecoration: 'underline',
       },
-      '& :focus-visible': {
-        outline: `3px solid ${designTokens.colors.electricBlue}`,
+      ':focus-visible': {
+        outline: `3px solid var(--action-primary)`,
         outlineOffset: 3,
-        boxShadow: `0 0 0 2px ${designTokens.colors.pureWhite}`,
       },
     },
   },
@@ -67,22 +105,22 @@ export const componentOverrides: Components<Theme> = {
           backgroundColor: '#355dc9',
         },
         '&.MuiButton-colorPrimary:focus-visible': {
-          borderColor: designTokens.colors.carbonDark,
+          borderColor: 'var(--text-primary)',
         },
       },
       outlined: {
-        borderWidth: 3,
-        borderColor: designTokens.colors.cloudGray,
-        color: designTokens.colors.graphite,
-        backgroundColor: designTokens.colors.pureWhite,
+        borderWidth: 2,
+        borderColor: 'var(--border-strong)',
+        color: 'var(--text-secondary)',
+        backgroundColor: 'var(--surface-primary)',
         '&:hover': {
-          borderWidth: 3,
-          borderColor: designTokens.colors.paleSilver,
-          backgroundColor: designTokens.colors.lightAsh,
+          borderWidth: 2,
+          borderColor: 'var(--text-secondary)',
+          backgroundColor: 'var(--surface-secondary)',
         },
       },
       text: {
-        color: designTokens.colors.carbonDark,
+        color: 'var(--text-primary)',
         minWidth: 44,
         '&:hover': {
           backgroundColor: 'rgba(23, 26, 32, 0.04)',
@@ -99,8 +137,8 @@ export const componentOverrides: Components<Theme> = {
       root: {
         backgroundColor: designTokens.colors.frostedGlass,
         backdropFilter: 'blur(12px)',
-        color: designTokens.colors.carbonDark,
-        borderBottom: 'none',
+        color: 'var(--text-primary)',
+        borderBottom: '1px solid var(--border-subtle)',
         boxShadow: 'none',
       },
     },
@@ -121,7 +159,8 @@ export const componentOverrides: Components<Theme> = {
       root: {
         borderRadius: designTokens.radius.card,
         boxShadow: 'none',
-        border: 'none',
+        border: '1px solid var(--border-subtle)',
+        backgroundColor: 'var(--surface-primary)',
         backgroundImage: 'none',
       },
     },
@@ -142,22 +181,41 @@ export const componentOverrides: Components<Theme> = {
   },
   MuiTextField: {
     defaultProps: {
-      variant: 'standard',
+      variant: 'outlined',
+      size: 'medium',
+    },
+  },
+  MuiFormLabel: {
+    styleOverrides: {
+      root: {
+        fontSize: '1rem',
+      },
+      asterisk: {
+        color: 'var(--status-error)',
+      },
+    },
+  },
+  MuiInputBase: {
+    styleOverrides: {
+      root: {
+        minHeight: 44,
+        fontSize: '1rem',
+      },
     },
   },
   MuiInput: {
     styleOverrides: {
       root: {
-        fontSize: '0.875rem',
-        color: designTokens.colors.carbonDark,
+        fontSize: '1rem',
+        color: 'var(--text-primary)',
         '&:before': {
-          borderBottomColor: designTokens.colors.paleSilver,
+          borderBottomColor: 'var(--border-strong)',
         },
         '&:hover:not(.Mui-disabled):before': {
-          borderBottomColor: designTokens.colors.graphite,
+          borderBottomColor: 'var(--text-secondary)',
         },
         '&:after': {
-          borderBottomColor: designTokens.colors.electricBlue,
+          borderBottomColor: 'var(--action-primary)',
         },
       },
       input: {
@@ -172,22 +230,45 @@ export const componentOverrides: Components<Theme> = {
     styleOverrides: {
       root: {
         borderRadius: designTokens.radius.button,
-        fontSize: '0.875rem',
+        fontSize: '1rem',
+        backgroundColor: 'var(--surface-primary)',
         '& .MuiOutlinedInput-notchedOutline': {
-          borderColor: designTokens.colors.paleSilver,
+          borderColor: 'var(--border-strong)',
         },
         '&:hover .MuiOutlinedInput-notchedOutline': {
-          borderColor: designTokens.colors.graphite,
+          borderColor: 'var(--text-secondary)',
         },
         '&.Mui-focused .MuiOutlinedInput-notchedOutline': {
-          borderColor: designTokens.colors.electricBlue,
-          borderWidth: 1,
+          borderColor: 'var(--action-primary)',
+          borderWidth: 2,
+        },
+        '&.Mui-error .MuiOutlinedInput-notchedOutline': {
+          borderColor: 'var(--status-error)',
         },
       },
       input: {
+        paddingTop: 12,
+        paddingBottom: 12,
         '&::placeholder': {
           color: designTokens.colors.silverFog,
           opacity: 1,
+        },
+      },
+    },
+  },
+  MuiFilledInput: {
+    styleOverrides: {
+      root: {
+        borderRadius: designTokens.radius.button,
+        backgroundColor: 'var(--surface-secondary)',
+        '&:before': { display: 'none' },
+        '&:after': { display: 'none' },
+        '&:hover': {
+          backgroundColor: 'var(--surface-secondary)',
+        },
+        '&.Mui-focused': {
+          backgroundColor: 'var(--surface-secondary)',
+          boxShadow: `inset 0 0 0 2px var(--action-primary)`,
         },
       },
     },
@@ -196,7 +277,10 @@ export const componentOverrides: Components<Theme> = {
     styleOverrides: {
       root: {
         fontSize: '0.75rem',
-        color: designTokens.colors.pewter,
+        marginLeft: 0,
+        '&.Mui-error': {
+          color: 'var(--status-error)',
+        },
       },
     },
   },
@@ -209,7 +293,7 @@ export const componentOverrides: Components<Theme> = {
         minHeight: 48,
         color: designTokens.colors.pewter,
         '&.Mui-selected': {
-          color: designTokens.colors.carbonDark,
+          color: 'var(--text-primary)',
         },
       },
     },
@@ -217,7 +301,7 @@ export const componentOverrides: Components<Theme> = {
   MuiTabs: {
     styleOverrides: {
       indicator: {
-        backgroundColor: designTokens.colors.electricBlue,
+        backgroundColor: 'var(--action-primary)',
         height: 2,
       },
     },
@@ -243,6 +327,8 @@ export const componentOverrides: Components<Theme> = {
       root: {
         overflowX: 'auto',
         WebkitOverflowScrolling: 'touch',
+        border: '1px solid var(--border-subtle)',
+        borderRadius: designTokens.radius.card,
       },
     },
   },
@@ -251,19 +337,20 @@ export const componentOverrides: Components<Theme> = {
       paper: {
         borderRadius: designTokens.radius.card,
         boxShadow: 'none',
-        border: `1px solid ${designTokens.colors.cloudGray}`,
+        border: '1px solid var(--border-subtle)',
       },
     },
   },
   MuiTableCell: {
     styleOverrides: {
       root: {
-        borderBottomColor: designTokens.colors.cloudGray,
+        borderBottomColor: 'var(--border-subtle)',
         fontSize: '0.875rem',
       },
       head: {
-        color: designTokens.colors.carbonDark,
+        color: 'var(--text-primary)',
         fontWeight: 500,
+        fontSize: '0.75rem',
       },
     },
   },
@@ -289,9 +376,9 @@ export const componentOverrides: Components<Theme> = {
       root: {
         color: designTokens.colors.pewter,
         textDecoration: 'none',
-        transition: `color ${designTokens.motion.duration}, box-shadow ${designTokens.motion.duration} ${designTokens.motion.easing}`,
+        transition: `color ${designTokens.motion.duration}`,
         '&:hover': {
-          color: designTokens.colors.carbonDark,
+          color: 'var(--text-primary)',
           textDecoration: 'underline',
         },
       },
@@ -300,8 +387,9 @@ export const componentOverrides: Components<Theme> = {
   MuiDrawer: {
     styleOverrides: {
       paper: {
-        borderRight: 'none',
+        borderRight: '1px solid var(--border-subtle)',
         boxShadow: 'none',
+        backgroundColor: 'var(--surface-primary)',
       },
     },
   },

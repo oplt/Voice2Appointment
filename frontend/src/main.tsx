@@ -4,7 +4,8 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 
-import App from './App.tsx'
+import App from './app/App'
+import { AppProviders } from './app/providers'
 import { AuthProvider } from './auth/AuthProvider'
 import { SnackbarProvider } from './components/SnackbarProvider'
 import theme from './theme/theme'
@@ -14,11 +15,13 @@ createRoot(document.getElementById('root')!).render(
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <BrowserRouter>
-        <AuthProvider>
-          <SnackbarProvider>
-            <App />
-          </SnackbarProvider>
-        </AuthProvider>
+        <AppProviders>
+          <AuthProvider>
+            <SnackbarProvider>
+              <App />
+            </SnackbarProvider>
+          </AuthProvider>
+        </AppProviders>
       </BrowserRouter>
     </ThemeProvider>
   </StrictMode>,

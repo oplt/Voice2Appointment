@@ -6,11 +6,12 @@ import logging
 import time
 from contextvars import ContextVar
 from datetime import datetime, timedelta
+from threading import RLock
 from typing import Any, Callable
 
 from sqlalchemy.orm import Session
 
-from app.calendars.providers.google import GoogleCalendarService
+from app.calendars.providers.google import GoogleCalendarService, GoogleCredentialSnapshot
 from app.db.session import SessionLocal
 from app.voice.context import current_call_context
 
@@ -20,6 +21,44 @@ voice_user_id: ContextVar[int | None] = ContextVar("voice_user_id", default=None
 voice_calendar_service: ContextVar[GoogleCalendarService | None] = ContextVar(
     "voice_calendar_service", default=None
 )
+_voice_credential_snapshots: dict[str, GoogleCredentialSnapshot] = {}
+_voice_credential_lock = RLock()
+
+
+def clear_voice_credential_snapshot(call_sid: str) -> None:
+    """Drop the immutable credential snapshot when a voice call ends."""
+    with _voice_credential_lock:
+        _voice_credential_snapshots.pop(call_sid, None)
+
+
+def _voice_credential_snapshot(call_sid: str | None) -> GoogleCredentialSnapshot | None:
+    if not call_sid:
+        return None
+    with _voice_credential_lock:
+        return _voice_credential_snapshots.get(call_sid)
+
+
+def _store_voice_credential_snapshot(
+    call_sid: str | None, snapshot: GoogleCredentialSnapshot | None
+) -> None:
+    if not call_sid or snapshot is None:
+        return
+    with _voice_credential_lock:
+        _voice_credential_snapshots[call_sid] = snapshot
+
+
+def _calendar_not_connected_result(*, availability: bool = False) -> dict[str, Any]:
+    """Stable result for read-only tools in the supported local-only mode."""
+    result: dict[str, Any] = {
+        "success": False,
+        "code": "calendar_not_connected",
+        "mode": "local_only_mode",
+        "error": "Google Calendar is not connected for this tenant.",
+        "retryable": False,
+    }
+    if availability:
+        result["available"] = False
+    return result
 
 
 def _record_calendar_latency(operation: str, started: float) -> None:
@@ -54,7 +93,8 @@ def _as_bool(value: Any, default: bool = False) -> bool:
 def _resolve_service() -> tuple[GoogleCalendarService | None, Session | None, str, str]:
     """Build a GoogleCalendarService using CallContext / voice ContextVars.
 
-    Reuses one GoogleCalendarService per voice call when ContextVar is set (Phase 9.1).
+    Reuses only an immutable credential snapshot per voice call; discovery
+    service instances stay confined to their individual worker thread.
     """
     ctx = current_call_context.get()
     db = voice_db.get()
@@ -76,20 +116,22 @@ def _resolve_service() -> tuple[GoogleCalendarService | None, Session | None, st
         if owns:
             db.close()
         raise ValueError("user_id is required for calendar tools")
+    snapshot = _voice_credential_snapshot(ctx.call_sid if ctx is not None else None)
     # Local-only is the shared disconnected-calendar policy. Read-only calendar
     # tools still fail safely, while booking mutations pass no provider hook to
     # the application service and become locally confirmed.
     from app.calendars.service import get_auth_record
 
-    auth = get_auth_record(db, user_id)
-    if auth is None or not auth.token_json:
-        return None, db if owns else None, timezone_name, calendar_id
-    cached = voice_calendar_service.get()
-    if cached is not None and cached.user_id == user_id:
-        return cached, None, timezone_name, calendar_id
-    service = GoogleCalendarService(db, user_id)
-    if not owns:
-        voice_calendar_service.set(service)
+    if snapshot is None:
+        auth = get_auth_record(db, user_id)
+        if auth is None or not auth.token_json:
+            return None, db if owns else None, timezone_name, calendar_id
+    # A Google discovery service is not thread-safe, so it is built per tool
+    # operation. Only an immutable credential snapshot is reused per call.
+    service = GoogleCalendarService(db, user_id, credential_snapshot=snapshot)
+    _store_voice_credential_snapshot(
+        ctx.call_sid if ctx is not None else None, service.credential_snapshot
+    )
     return service, db if owns else None, timezone_name, calendar_id
 
 
@@ -112,7 +154,9 @@ def check_calendar_availability(datetime_start=None, datetime_end=None):
         start_iso = datetime_start.isoformat()
         end_iso = datetime_end.isoformat()
         calendar_service, owned, _timezone, calendar_id = _resolve_service()
-        is_available, conflicting_events = calendar_service.check_availability(
+        if calendar_service is None:
+            return _calendar_not_connected_result(availability=True)
+        is_available, busy_intervals = calendar_service.check_availability(
             start_iso, end_iso, calendar_id=calendar_id
         )
 
@@ -128,9 +172,7 @@ def check_calendar_availability(datetime_start=None, datetime_end=None):
         return {
             "available": False,
             "message": "Time slot is not available",
-            "conflicting_events": [
-                event.get("summary", "Unknown event") for event in conflicting_events
-            ],
+            "busy_intervals": busy_intervals,
             "suggested_alternatives": alternatives,
         }
     except Exception as e:
@@ -161,6 +203,12 @@ def find_appointments(
             }
 
         calendar_service, owned, _timezone, calendar_id = _resolve_service()
+        if calendar_service is None:
+            return {
+                **_calendar_not_connected_result(),
+                "count": 0,
+                "appointments": [],
+            }
         events_result = calendar_service.list_events(
             datetime_start.isoformat(),
             datetime_end.isoformat(),
@@ -388,11 +436,9 @@ def reschedule_appointment(
             }
 
         calendar_service, owned, timezone_name, calendar_id = _resolve_service()
-        existing = (
-            calendar_service.service.events()
-            .get(calendarId=calendar_id, eventId=event_id)
-            .execute()
-        )
+        if calendar_service is None:
+            return _calendar_not_connected_result()
+        existing = calendar_service.get_event(event_id, calendar_id=calendar_id)
         summary = existing.get("summary", "Appointment")
         old_start = existing["start"].get("dateTime") or existing["start"].get("date")
 
@@ -491,11 +537,9 @@ def cancel_appointment(event_id=None, reason=None, confirmed=False, **_kwargs):
             }
 
         calendar_service, owned, _timezone, calendar_id = _resolve_service()
-        existing = (
-            calendar_service.service.events()
-            .get(calendarId=calendar_id, eventId=event_id)
-            .execute()
-        )
+        if calendar_service is None:
+            return _calendar_not_connected_result()
+        existing = calendar_service.get_event(event_id, calendar_id=calendar_id)
         summary = existing.get("summary", "Unknown appointment")
         start = existing["start"].get("dateTime") or existing["start"].get("date")
 
@@ -681,3 +725,5 @@ FUNCTION_MAP: dict[str, Callable[..., dict[str, Any]]] = {
     "get_appointment_details": get_appointment_details,
     "request_human_handoff": request_human_handoff,
 }
+# Prefer ``app.voice.registry.get_tool_registry()`` for new call sites. This map
+# remains for import compatibility during the Deepgram naming migration.

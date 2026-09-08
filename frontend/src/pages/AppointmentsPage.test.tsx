@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { listAppointments } from '../api/appointments'
 import { SnackbarProvider } from '../components/SnackbarProvider'
+import { withQueryClient } from '../test/query'
 import { AppointmentsPage } from './AppointmentsPage'
 
 vi.mock('../api/appointments', () => ({
@@ -27,7 +28,15 @@ const appointment = (id: number) => ({
 
 function renderPage() {
   return render(
-    <ThemeProvider theme={createTheme()}><MemoryRouter><SnackbarProvider><AppointmentsPage /></SnackbarProvider></MemoryRouter></ThemeProvider>,
+    withQueryClient(
+      <ThemeProvider theme={createTheme()}>
+        <MemoryRouter>
+          <SnackbarProvider>
+            <AppointmentsPage />
+          </SnackbarProvider>
+        </MemoryRouter>
+      </ThemeProvider>,
+    ),
   )
 }
 

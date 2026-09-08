@@ -206,6 +206,11 @@ export type ProductPrefs = {
     recording_days: number
     legal_hold: boolean
   }
+  transcripts: {
+    storage_enabled: boolean
+    consent_at?: string | null
+    redact_phone_numbers: boolean
+  }
   transfer: {
     enabled: boolean
     destination_e164?: string | null
@@ -215,6 +220,15 @@ export type ProductPrefs = {
     primary: string
     enabled: string[]
   }
+}
+
+export type ProductPrefsUpdate = {
+  notifications?: Partial<ProductPrefs['notifications']>
+  retention?: Partial<ProductPrefs['retention']>
+  transcripts?: Partial<ProductPrefs['transcripts']>
+  transfer?: Partial<ProductPrefs['transfer']>
+  languages?: Partial<ProductPrefs['languages']>
+  transcript_storage_consent?: boolean
 }
 
 export type ReadinessItem = {

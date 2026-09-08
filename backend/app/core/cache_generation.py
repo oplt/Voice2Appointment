@@ -79,6 +79,10 @@ def _after_flush(session: Session, _context: Any) -> None:
         session.execute(
             User.__table__.update().where(User.__table__.c.id == user_id).values(values)
         )
+        memo = session.info.get("cache_generation_memo")
+        if isinstance(memo, dict):
+            for namespace in namespaces:
+                memo.pop((user_id, namespace), None)
     session.info.setdefault(_APPLIED, set()).update(pending)
     pending.clear()
 
@@ -105,6 +109,10 @@ def advance_cache_generations(
     session.execute(
         User.__table__.update().where(User.__table__.c.id == user_id).values(values)
     )
+    memo = session.info.get("cache_generation_memo")
+    if isinstance(memo, dict):
+        for namespace in namespaces:
+            memo.pop((user_id, namespace), None)
 
 
 def _clear(session: Session) -> None:
