@@ -758,7 +758,25 @@ class AvailabilityException(TimestampMixin, Base):
 
 class Customer(TimestampMixin, Base):
     __tablename__ = "customer"
-    __table_args__ = (Index("ix_customer_org_phone", "organization_id", "phone"),)
+    __table_args__ = (
+        Index("ix_customer_org_phone", "organization_id", "phone"),
+        Index(
+            "uq_customer_org_phone",
+            "organization_id",
+            "phone",
+            unique=True,
+            postgresql_where=text("phone IS NOT NULL"),
+            sqlite_where=text("phone IS NOT NULL"),
+        ),
+        Index(
+            "uq_customer_org_email",
+            "organization_id",
+            "email",
+            unique=True,
+            postgresql_where=text("email IS NOT NULL"),
+            sqlite_where=text("email IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     organization_id: Mapped[int] = mapped_column(Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True)

@@ -38,7 +38,11 @@ def test_roles_expose_least_privilege_permissions() -> None:
 
     assert has_permission(member, "catalog.read")
     assert has_permission(member, "analytics.read")
+    assert has_permission(member, "resources.read")
     assert not has_permission(member, "catalog.write")
+    assert not has_permission(member, "resources.write")
+    assert not has_permission(member, "agent.manage")
+    assert not has_permission(member, "locations.write")
     assert not has_permission(member, "organization.manage")
     with pytest.raises(TenancyError, match="permission"):
         require_membership(

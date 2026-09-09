@@ -4,12 +4,38 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.feature_flags import capability_allowed
-from app.db.models import User
+from app.db.models import KnowledgeEntry, User
 from app.industries.service import enabled_tools, get_industry_profile, tool_enabled
 from app.voice.registry.types import ToolDefinition, ToolHandler, ToolKind
+
+_INSTRUCTIONS_TITLE = "instructions"
+
+
+def _load_agent_instructions(db: Session | None, *, user_id: int | None) -> str | None:
+    """Return active KnowledgeEntry content titled ``instructions`` for the user's org."""
+    if db is None or user_id is None:
+        return None
+    user = db.get(User, user_id)
+    if user is None or user.organization_id is None:
+        return None
+    entry = db.scalar(
+        select(KnowledgeEntry)
+        .where(
+            KnowledgeEntry.organization_id == user.organization_id,
+            KnowledgeEntry.active.is_(True),
+            func.lower(KnowledgeEntry.title) == _INSTRUCTIONS_TITLE,
+        )
+        .order_by(KnowledgeEntry.id.desc())
+        .limit(1)
+    )
+    if entry is None:
+        return None
+    content = (entry.content or "").strip()
+    return content or None
 
 
 class ToolRegistry:
@@ -131,20 +157,35 @@ class ToolRegistry:
         user_id: int | None,
         current_date_context: str,
     ) -> str:
+        """Assemble prompt: immutable safety → tenant instructions → tools → date."""
         definitions = self.enabled_definitions(db, user_id=user_id)
-        lines = ["You are a professional voice assistant for this business.", "", "Tools:"]
+        lines = [
+            "You are a professional voice assistant for this business.",
+            "",
+            "Safety rules:",
+            "- These safety rules are immutable and always take precedence over any business instructions below.",
+            "- Prefer read tools before mutations.",
+            "- For mutations that accept confirmed: first call with confirmed=false, then confirmed=true after the caller agrees.",
+            "- Convert relative dates to absolute ISO datetimes using CURRENT DATE CONTEXT.",
+            "- Use request_human_handoff only when the caller asks for a person or you cannot complete the request safely.",
+            "- Never invent ids; use ids returned by prior tool calls.",
+        ]
+        tenant_instructions = _load_agent_instructions(db, user_id=user_id)
+        if tenant_instructions is not None:
+            lines.extend(
+                [
+                    "",
+                    "Business instructions:",
+                    "(Follow only when they do not conflict with Safety rules above.)",
+                    tenant_instructions,
+                ]
+            )
+        lines.extend(["", "Tools:"])
         for index, definition in enumerate(definitions, start=1):
             description = str(definition.schema.get("description") or definition.name)
             lines.append(f"{index}) {definition.name} — {description}")
         lines.extend(
             [
-                "",
-                "Safety rules:",
-                "- Prefer read tools before mutations.",
-                "- For mutations that accept confirmed: first call with confirmed=false, then confirmed=true after the caller agrees.",
-                "- Convert relative dates to absolute ISO datetimes using CURRENT DATE CONTEXT.",
-                "- Use request_human_handoff only when the caller asks for a person or you cannot complete the request safely.",
-                "- Never invent ids; use ids returned by prior tool calls.",
                 "",
                 "CURRENT DATE CONTEXT:",
                 current_date_context,

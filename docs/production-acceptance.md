@@ -1,25 +1,29 @@
-# Production acceptance (Phase 13)
+# Production acceptance
 
-Checklist before enabling the new product-domain architecture for **all** tenants.
+Checklist before enabling the product-domain architecture for **all** tenants.
+This document reflects the **repository state as of the Phase A–Q closure pass**.
 
 ## Gate summary
 
-| # | Criterion | Evidence |
-| --- | --- | --- |
-| 1 | Existing appointment workflow passes tests | `test_phase2_provider_io`, `test_phase13_*` booking |
-| 2 | Existing voice booking still works | ToolRegistry legacy defaults + phase 7 tests |
-| 3 | Google Calendar behavior compatible | Provider I/O outside lock; google metrics |
-| 4 | Twilio behavior compatible | Sync lease + no open TX during fetch |
-| 5 | Frontend routes remain functional | `frontend` vitest + Playwright a11y |
-| 6 | Legacy tenants migrated automatically | Alembic org backfill + `create_organization_for_user` on register |
-| 7 | Rollback path exists | Kill switches below |
-| 8 | Catalog/reservation behind flags + entitlements | `ENABLE_*` + `FeatureEntitlement` / industry profile |
-| 9 | Load-test voice latency | Synth before/after (`observability_load.py`); live voice load still required for go-live |
-| 10 | No provider network in long DB critical section | Booking + reservation commit: `complete_create` **after** `scheduling_lock` |
+| # | Criterion | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Backend typecheck (mypy) | ✅ local | `cd backend && mypy` — clean |
+| 2 | Frontend Vitest | ✅ local | `npm test` — 50 passed |
+| 3 | Focused backend unit tests | ✅ local | phase7/8/9, customer dedup, clinic hooks, combos, deposits, tenancy RBAC |
+| 4 | Reservation concurrency design | ✅ code | `resource_scheduling_locks` by resource id; PG tests in `test_postgres_integration.py` (require PG CI) |
+| 5 | Reservation lifecycle + notifications | ✅ code | cancel/reschedule/party/resources + outbox staging |
+| 6 | Product HTTP APIs | ✅ code | catalog/pricing/resources/customers/reservations/payments/tenancy/industries; hold/commit/detail/pagination |
+| 7 | Tenancy/RBAC | ✅ code | `resources.read/write`, `agent.manage`, `locations.write`; org switcher wired |
+| 8 | Customer dedup | ✅ code | E.164/email normalize + unique indexes + merge/history |
+| 9 | Agent instructions runtime | ✅ code | Knowledge `instructions` below immutable safety in `build_system_prompt` |
+| 10 | Clinic Google sync path | ✅ code | `booking_provider_hooks` passed into `book_reservation` |
+| 11 | Connection budget | ✅ | Celery `DB_POOL_SIZE=2`; `docs/phase3-connection-budget.md` |
+| 12 | Voice executor | ✅ | `asyncio.wrap_future` + submit failure releases semaphore |
+| 13 | Perf harness @ 1/5/10/25 | 🟡 | `run_phase14_baseline.sh` → `/tmp/phase14-baseline.json`; Deepgram connect probe; busy-tools inject. Full Twilio media soak + live Google freebusy still optional disposable-env |
+| 14 | Alembic head | ✅ | Current head **`o1c2d3e4f5a6`** (customer dedup). Org backfill revision id **`g9b0c1d2e3f4`** lives in file `e6f7a8b9c0d1_backfill_organizations.py` |
+| 15 | Full GitHub CI (migrations/PG/Playwright/Docker) | ⬜ verify on next push | Must pass after this closure; do not claim green until Actions confirms |
 
 ## Feature flags (kill switches)
-
-Set in environment (see `.env.example`):
 
 | Variable | Production default | Non-prod default |
 | --- | --- | --- |
@@ -27,70 +31,47 @@ Set in environment (see `.env.example`):
 | `ENABLE_RESERVATION_DOMAIN` | `false` | `true` |
 | `ENABLE_INDUSTRY_VOICE_TOOLS` | `false` | `true` |
 
-When off:
-
-- Voice exposes **legacy calendar tools only** (no industry/catalog/reservation tools).
-- `create_catalog_item` / reservation hold-commit raise `FeatureDisabledError`.
-- Classic `book_appointment` continues to work (JSON booking policy).
-
-Inspect live flags:
-
 ```bash
 curl -s http://127.0.0.1:8000/health/features
 ```
 
-Per-organization tool entitlements still apply when flags are on (industry profile assignment).
-
 ## Rollback
 
-1. Set all three `ENABLE_*` flags to `false` on HTTP **and** voice processes; restart.
-2. Confirm `/health/features` shows all `false`.
-3. Confirm voice Deepgram function list is legacy calendar set only (no `book_table`, etc.).
-4. Do **not** reverse Alembic org backfill in production unless restoring a full DB snapshot — organization rows are additive and safe to leave.
-5. If a bad reservation path shipped while flags were on, stop Celery reservation tasks (`expire_reservation_holds`, `finalize_pending_reservations`) until flags are off.
-6. Calendar/Twilio credentials and appointment rows remain authoritative; no data wipe required for flag rollback.
+1. Set all three `ENABLE_*` to `false` on HTTP **and** voice; restart.
+2. Confirm `/health/features` all `false`.
+3. Do **not** reverse org backfill (`g9b0c1d2e3f4`) in production without a DB snapshot.
+4. Stop Celery reservation maintenance tasks if a bad path shipped while flags were on.
 
-## Migration
+## Migration chain (relevant)
 
-- `e6f7a8b9c0d1` / `g9b0c1d2e3f4` backfill creates one `organization` + owner membership per legacy user.
-- New registrations call `create_organization_for_user` so tenants never lack an org id.
+```text
+… → b0c1d2e3f4a5 (industry)
+  → g9b0c1d2e3f4 (org backfill; file e6f7a8b9c0d1_*)
+  → h0c1… → … → n1c2… (adjacency/payments)
+  → o1c2d3e4f5a6 (customer dedup)   ← HEAD
+```
 
 ## Load / latency
 
 ```bash
-PYTHONPATH=backend python backend/scripts/observability_load.py \
-  --concurrency 8 --iterations 40 \
-  --json-out /tmp/obs-before.json
-# … deploy candidate …
-PYTHONPATH=backend python backend/scripts/observability_load.py \
-  --compare-with /tmp/obs-before.json \
-  --json-out /tmp/obs-after.json
+bash backend/scripts/run_phase14_baseline.sh
+PYTHONPATH=backend python backend/scripts/voice_e2e_load.py \
+  --stages 1,5,10,25 --inject busy-tools --json-out /tmp/phase14-busy.json
 ```
 
-Synthetic load is **not** a substitute for a disposable-environment voice WebSocket load test before declaring production voice latency non-regressing.
+Synthetic + Deepgram connect/disconnect is **not** a full production voice p95 claim. Disposable Twilio media soak remains recommended before go-live.
 
 ## Critical section rule
 
-Justified pattern (already implemented):
-
-1. Acquire advisory lock.
-2. Persist durable booking/reservation intent.
+1. Acquire resource advisory locks (sorted resource ids).
+2. Persist durable reservation intent.
 3. Commit / release lock.
-4. Call Google (or other provider) via `complete_create` **outside** the lock.
-5. Reconcile pending provider state asynchronously if the request crashes after step 3.
+4. Provider `complete_create` **outside** the lock.
+5. Reconcile pending provider state asynchronously if needed.
 
-Any new code that performs provider HTTP while holding `scheduling_lock` or an open write transaction must document an explicit exception in this file and add a regression test.
+## Honest gaps remaining for true production p95
 
-## Acceptance command
-
-```bash
-PYTHONPATH=backend PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-  pytest -p timeout \
-  backend/tests/test_phase13_production_acceptance.py \
-  backend/tests/test_phase1_reliability.py \
-  backend/tests/test_phase2_provider_io.py \
-  backend/tests/test_phase7_tool_registry.py \
-  -q
-
-cd frontend && npm test && npm run build
-```
+* Live Google freebusy/create under load (disposable creds)
+* Postgres pool exhaustion + Redis/Celery down drills against real services
+* Full Twilio media WebSocket soak
+* GitHub Actions confirmation of migrations / PG integration / Playwright / Docker after push

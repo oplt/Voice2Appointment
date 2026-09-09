@@ -7,20 +7,31 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_db
 from app.calendars.service import booking_provider_hooks
 from app.core.errors import map_exception, raise_http
-from app.db.models import CatalogItem, Customer, Location, PriceBook, Reservation, User
+from app.db.models import (
+    CatalogItem,
+    Customer,
+    Location,
+    PriceBook,
+    Reservation,
+    ReservationLineItem,
+    ReservationResource,
+    User,
+)
 from app.industries.service import sync_calendar_for_org
 from app.reservations.service import (
     add_line_item,
     book_reservation,
     cancel_reservation,
     change_resource_assignment,
+    commit_reservation,
     find_availability,
+    hold_reservation,
     remove_line_item,
     reschedule_reservation,
     update_party_size,
@@ -64,6 +75,10 @@ class ReservationIn(BaseModel):
     idempotency_key: str | None = Field(default=None, max_length=128)
 
 
+class HoldIn(ReservationIn):
+    hold_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+
+
 class ReservationOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -79,6 +94,29 @@ class ReservationOut(BaseModel):
     hold_expires_at: datetime | None
     provider_sync_status: str
     allocation_json: dict[str, Any]
+
+
+class ReservationPageOut(BaseModel):
+    items: list[ReservationOut]
+    total: int
+    limit: int
+    offset: int
+
+
+class LineItemOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    catalog_item_id: int | None
+    item_name: str
+    quantity: int
+    unit_price_minor: int
+    currency: str
+    tax_metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ReservationDetailOut(ReservationOut):
+    line_items: list[LineItemOut] = Field(default_factory=list)
+    resource_ids: list[int] = Field(default_factory=list)
 
 
 class CancelIn(BaseModel):
@@ -128,6 +166,46 @@ def _reservation(db: Session, organization_id: int, reservation_id: int) -> Rese
     return row
 
 
+def _line_items(db: Session, reservation_id: int) -> list[ReservationLineItem]:
+    return list(
+        db.scalars(
+            select(ReservationLineItem)
+            .where(ReservationLineItem.reservation_id == reservation_id)
+            .order_by(ReservationLineItem.id)
+        ).all()
+    )
+
+
+def _resource_ids(db: Session, reservation_id: int) -> list[int]:
+    return list(
+        db.scalars(
+            select(ReservationResource.resource_id).where(
+                ReservationResource.reservation_id == reservation_id
+            )
+        ).all()
+    )
+
+
+def _reservation_detail(db: Session, row: Reservation) -> ReservationDetailOut:
+    return ReservationDetailOut(
+        id=row.id,
+        location_id=row.location_id,
+        customer_id=row.customer_id,
+        catalog_item_id=row.catalog_item_id,
+        appointment_id=row.appointment_id,
+        scheduling_mode=row.scheduling_mode,
+        status=row.status,
+        start_datetime=row.start_datetime,
+        end_datetime=row.end_datetime,
+        party_size=row.party_size,
+        hold_expires_at=row.hold_expires_at,
+        provider_sync_status=row.provider_sync_status,
+        allocation_json=dict(row.allocation_json or {}),
+        line_items=[LineItemOut.model_validate(line) for line in _line_items(db, row.id)],
+        resource_ids=_resource_ids(db, row.id),
+    )
+
+
 def _owned_reference(
     db: Session, organization_id: int, model: type[Any], value: int | None, label: str
 ) -> None:
@@ -175,16 +253,49 @@ def availability(
     }
 
 
-@router.get("/reservations", response_model=list[ReservationOut])
+@router.get("/reservations", response_model=ReservationPageOut)
 def list_reservations(
     organization_id: OrganizationId,
     status_filter: str | None = Query(None, alias="status"),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(require_db),
-) -> list[Reservation]:
-    statement = select(Reservation).where(Reservation.organization_id == organization_id)
+) -> ReservationPageOut:
+    filters = [Reservation.organization_id == organization_id]
     if status_filter:
-        statement = statement.where(Reservation.status == status_filter)
-    return list(db.scalars(statement.order_by(Reservation.start_datetime.desc()).limit(200)).all())
+        filters.append(Reservation.status == status_filter)
+    total = int(db.scalar(select(func.count()).select_from(Reservation).where(*filters)) or 0)
+    items = list(
+        db.scalars(
+            select(Reservation)
+            .where(*filters)
+            .order_by(Reservation.start_datetime.desc(), Reservation.id.desc())
+            .offset(offset)
+            .limit(limit)
+        ).all()
+    )
+    return ReservationPageOut(
+        items=[ReservationOut.model_validate(item) for item in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/reservations/{reservation_id}", response_model=ReservationDetailOut)
+def get_reservation(
+    reservation_id: int, organization_id: OrganizationId, db: Session = Depends(require_db)
+) -> ReservationDetailOut:
+    row = _reservation(db, organization_id, reservation_id)
+    return _reservation_detail(db, row)
+
+
+@router.get("/reservations/{reservation_id}/line-items", response_model=list[LineItemOut])
+def list_reservation_line_items(
+    reservation_id: int, organization_id: OrganizationId, db: Session = Depends(require_db)
+) -> list[ReservationLineItem]:
+    _reservation(db, organization_id, reservation_id)
+    return _line_items(db, reservation_id)
 
 
 @router.post("/reservations", response_model=ReservationOut, status_code=status.HTTP_201_CREATED)
@@ -210,6 +321,50 @@ def create_reservation(
             **payload.model_dump(exclude={"preferred_resource_ids", "required_capabilities"}),
             preferred_resource_ids=tuple(payload.preferred_resource_ids),
             required_capabilities=tuple(payload.required_capabilities),
+        )
+    except Exception as exc:
+        raise_http(map_exception(exc))
+
+
+@router.post("/reservations/hold", response_model=ReservationOut, status_code=status.HTTP_201_CREATED)
+def hold(
+    payload: HoldIn,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> Reservation:
+    _owned_reference(db, organization_id, CatalogItem, payload.catalog_item_id, "Catalog item")
+    _owned_reference(db, organization_id, Location, payload.location_id, "Location")
+    _owned_reference(db, organization_id, Customer, payload.customer_id, "Customer")
+    _owned_reference(db, organization_id, PriceBook, payload.price_book_id, "Price book")
+    try:
+        return hold_reservation(
+            db,
+            organization_id=organization_id,
+            **payload.model_dump(exclude={"preferred_resource_ids", "required_capabilities"}),
+            preferred_resource_ids=tuple(payload.preferred_resource_ids),
+            required_capabilities=tuple(payload.required_capabilities),
+        )
+    except Exception as exc:
+        raise_http(map_exception(exc))
+
+
+@router.post("/reservations/{reservation_id}/commit", response_model=ReservationOut)
+def commit(
+    reservation_id: int,
+    organization_id: OrganizationId,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(require_db),
+) -> Reservation:
+    _reservation(db, organization_id, reservation_id)
+    hooks = booking_provider_hooks(db, current_user.id)
+    try:
+        return commit_reservation(
+            db,
+            reservation_id,
+            owner_user_id=current_user.id,
+            sync_calendar=sync_calendar_for_org(db, organization_id),
+            provider_create=hooks.create_event,
+            calendar_id=hooks.calendar_id,
         )
     except Exception as exc:
         raise_http(map_exception(exc))

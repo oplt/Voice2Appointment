@@ -28,6 +28,10 @@ PERMISSIONS = frozenset(
         "reservation.write",
         "customer.read",
         "customer.write",
+        "resources.read",
+        "resources.write",
+        "locations.write",
+        "agent.manage",
         "analytics.read",
         "integration.manage",
         "organization.manage",
@@ -47,6 +51,10 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "reservation.write",
             "customer.read",
             "customer.write",
+            "resources.read",
+            "resources.write",
+            "locations.write",
+            "agent.manage",
             "analytics.read",
         }
     ),
@@ -58,10 +66,18 @@ _ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
             "reservation.write",
             "customer.read",
             "customer.write",
+            "resources.read",
         }
     ),
     "viewer": frozenset(
-        {"catalog.read", "pricing.read", "reservation.read", "customer.read", "analytics.read"}
+        {
+            "catalog.read",
+            "pricing.read",
+            "reservation.read",
+            "customer.read",
+            "resources.read",
+            "analytics.read",
+        }
     ),
 }
 INVITATION_TTL_DAYS = 7
@@ -146,6 +162,23 @@ def list_members(db: Session, *, organization_id: int) -> list[OrganizationMembe
             select(OrganizationMember)
             .where(OrganizationMember.organization_id == organization_id)
             .order_by(OrganizationMember.created_at, OrganizationMember.id)
+        ).all()
+    )
+
+
+def list_organizations_for_user(db: Session, *, user_id: int) -> list[Organization]:
+    return list(
+        db.scalars(
+            select(Organization)
+            .join(
+                OrganizationMember,
+                OrganizationMember.organization_id == Organization.id,
+            )
+            .where(
+                OrganizationMember.user_id == user_id,
+                Organization.active.is_(True),
+            )
+            .order_by(Organization.name, Organization.id)
         ).all()
     )
 

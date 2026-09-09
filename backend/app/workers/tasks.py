@@ -201,7 +201,7 @@ def sync_twilio_for_user(self, user_id: int) -> dict:
         )
         _set_twilio_sync_health(db, user, status="healthy")
         if sync_metrics.get("has_more"):
-            sync_twilio_for_user.apply_async(args=[user_id], countdown=1)
+            sync_twilio_for_user.apply_async(args=(user_id,), countdown=1)
             sync_metrics["continuation_enqueued"] = True
             retain_chain = True
         metrics.incr("twilio_sync", labels={"result": "success"})

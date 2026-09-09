@@ -16,6 +16,28 @@ export type Reservation = {
   allocation_json: Record<string, unknown>
 }
 
+export type ReservationLineItem = {
+  id: number
+  catalog_item_id: number | null
+  item_name: string
+  quantity: number
+  unit_price_minor: number
+  currency: string
+  tax_metadata: Record<string, unknown>
+}
+
+export type ReservationDetail = Reservation & {
+  line_items: ReservationLineItem[]
+  resource_ids: number[]
+}
+
+export type ReservationPage = {
+  items: Reservation[]
+  total: number
+  limit: number
+  offset: number
+}
+
 export type ReservationCreate = {
   catalog_item_id: number
   start_datetime: string
@@ -59,15 +81,45 @@ export type AvailabilityResponse = {
   constraints: unknown
 }
 
-export function listReservations(status?: string) {
+export type ListReservationsParams = {
+  status?: string
+  limit?: number
+  offset?: number
+}
+
+export function listReservations(params: ListReservationsParams | string = {}) {
+  const normalized =
+    typeof params === 'string' ? { status: params || undefined } : params
   const search = new URLSearchParams()
-  if (status) search.set('status', status)
+  if (normalized.status) search.set('status', normalized.status)
+  if (normalized.limit != null) search.set('limit', String(normalized.limit))
+  if (normalized.offset != null) search.set('offset', String(normalized.offset))
   const qs = search.toString()
-  return api.get<Reservation[]>(`/api/v1/reservations${qs ? `?${qs}` : ''}`)
+  return api.get<ReservationPage>(`/api/v1/reservations${qs ? `?${qs}` : ''}`)
+}
+
+export function getReservation(reservationId: number) {
+  return api.get<ReservationDetail>(`/api/v1/reservations/${reservationId}`)
+}
+
+export function listReservationLineItems(reservationId: number) {
+  return api.get<ReservationLineItem[]>(
+    `/api/v1/reservations/${reservationId}/line-items`,
+  )
 }
 
 export function createReservation(body: ReservationCreate) {
   return api.post<Reservation>('/api/v1/reservations', body)
+}
+
+export function holdReservation(
+  body: ReservationCreate & { hold_ttl_seconds?: number },
+) {
+  return api.post<Reservation>('/api/v1/reservations/hold', body)
+}
+
+export function commitReservation(reservationId: number) {
+  return api.post<Reservation>(`/api/v1/reservations/${reservationId}/commit`)
 }
 
 export function cancelReservation(
@@ -91,6 +143,20 @@ export function rescheduleReservation(
   },
 ) {
   return api.post<Reservation>(`/api/v1/reservations/${reservationId}/reschedule`, body)
+}
+
+export function updateReservationPartySize(
+  reservationId: number,
+  body: { party_size: number; idempotency_key?: string | null },
+) {
+  return api.post<Reservation>(`/api/v1/reservations/${reservationId}/party-size`, body)
+}
+
+export function changeReservationResources(
+  reservationId: number,
+  body: { resource_ids: number[]; idempotency_key?: string | null },
+) {
+  return api.post<Reservation>(`/api/v1/reservations/${reservationId}/resources`, body)
 }
 
 export function findReservationAvailability(body: AvailabilityRequest) {

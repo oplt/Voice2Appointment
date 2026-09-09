@@ -682,6 +682,26 @@ def _restore_reschedule_failure(
     return True
 
 
+def _stage_lifecycle_notification(
+    db: Session,
+    reservation: Reservation,
+    *,
+    kind: str,
+    fingerprint: str | None = None,
+) -> None:
+    """Stage outbox intents when a reservation mutation has a linked appointment."""
+    if not reservation.appointment_id:
+        return
+    appointment = db.get(Appointment, reservation.appointment_id)
+    if appointment is None:
+        return
+    from app.notifications.service import stage_reservation_lifecycle_notification
+
+    stage_reservation_lifecycle_notification(
+        db, appointment, kind=kind, fingerprint=fingerprint
+    )
+
+
 def cancel_reservation(
     db: Session,
     reservation_id: int,
@@ -729,6 +749,9 @@ def cancel_reservation(
     else:
         reservation.status = "cancelled"
         reservation.provider_sync_status = "none"
+    _stage_lifecycle_notification(
+        db, reservation, kind="cancel", fingerprint=idempotency_key or record.idempotency_key
+    )
     _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
     db.commit()
     db.refresh(reservation)
@@ -828,6 +851,12 @@ def reschedule_reservation(
         if appointment.provider_sync_status == "confirmed":
             reservation.status = "confirmed"
             reservation.provider_sync_status = "confirmed"
+    _stage_lifecycle_notification(
+        db,
+        reservation,
+        kind="reschedule",
+        fingerprint=idempotency_key or record.idempotency_key,
+    )
     _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
     db.commit()
     db.refresh(reservation)
@@ -852,6 +881,12 @@ def update_party_size(
     item = _item_for_reservation(db, reservation)
     _reallocate_reservation(db, reservation, item=item, start=reservation.start_datetime, end=reservation.end_datetime, party_size=party_size)
     reservation.party_size = party_size
+    _stage_lifecycle_notification(
+        db,
+        reservation,
+        kind="party_size",
+        fingerprint=idempotency_key or record.idempotency_key,
+    )
     _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
     db.commit()
     db.refresh(reservation)
@@ -883,6 +918,12 @@ def change_resource_assignment(
         db, reservation, item=item, start=reservation.start_datetime, end=reservation.end_datetime,
         party_size=reservation.party_size, preferred_resource_ids=tuple(resource_ids),
         required_resource_ids=tuple(resource_ids),
+    )
+    _stage_lifecycle_notification(
+        db,
+        reservation,
+        kind="resource_assignment",
+        fingerprint=idempotency_key or record.idempotency_key,
     )
     _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
     db.commit()

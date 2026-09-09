@@ -11,6 +11,7 @@ import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogTitle from '@mui/material/DialogTitle'
 import FormControlLabel from '@mui/material/FormControlLabel'
+import IconButton from '@mui/material/IconButton'
 import InputAdornment from '@mui/material/InputAdornment'
 import MenuItem from '@mui/material/MenuItem'
 import Stack from '@mui/material/Stack'
@@ -27,8 +28,9 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import useMediaQuery from '@mui/material/useMediaQuery'
 import { useTheme } from '@mui/material/styles'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 
 import {
@@ -36,11 +38,19 @@ import {
   bulkActivateCatalogItems,
   bulkDeactivateCatalogItems,
   createCatalogItem,
+  createCatalogOption,
+  createCategory,
+  deleteCatalogOption,
   listCatalogItems,
+  listCatalogOptions,
   listCategories,
   patchCatalogItem,
+  patchCatalogOption,
+  patchCategory,
+  type CatalogCategory,
   type CatalogItem,
   type CatalogKind,
+  type CatalogOption,
 } from '../../api/catalog'
 import { ApiError } from '../../api/client'
 import { queryKeys } from '../../api/queryKeys'
@@ -56,6 +66,8 @@ const EDITOR_TABS = [
   'Availability',
   'Locations',
 ] as const
+
+const PAGE_SIZE = 50
 
 type DraftItem = {
   name: string
@@ -100,6 +112,14 @@ export function CatalogView() {
   const [draft, setDraft] = useState<DraftItem>(emptyDraft)
   const [editDraft, setEditDraft] = useState<DraftItem | null>(null)
   const [archiveTarget, setArchiveTarget] = useState<CatalogItem | null>(null)
+  const [offset, setOffset] = useState(0)
+  const [accumulated, setAccumulated] = useState<CatalogItem[]>([])
+
+  const [categoryDialog, setCategoryDialog] = useState<'create' | CatalogCategory | null>(null)
+  const [categoryName, setCategoryName] = useState('')
+  const [categoryActive, setCategoryActive] = useState(true)
+
+  const [optionName, setOptionName] = useState('')
 
   const kindParam: CatalogKind | undefined =
     listTab === 2
@@ -108,36 +128,61 @@ export function CatalogView() {
         ? undefined
         : kindFilter
 
+  useEffect(() => {
+    setOffset(0)
+    setAccumulated([])
+    setSelected([])
+  }, [query, kindFilter, listTab])
+
   const itemsQuery = useQuery({
     queryKey: queryKeys.catalog.items({
       query: query.trim() || undefined,
       kind: kindParam,
       listTab,
+      limit: PAGE_SIZE,
+      offset,
     }),
     queryFn: () =>
       listCatalogItems({
         query: query.trim() || undefined,
         kind: kindParam,
-        limit: 100,
+        limit: PAGE_SIZE,
+        offset,
       }),
   })
+
+  useEffect(() => {
+    const page = itemsQuery.data
+    if (!page) return
+    setAccumulated((prev) => {
+      if (page.offset === 0) return page.items
+      const seen = new Set(prev.map((row) => row.id))
+      return [...prev, ...page.items.filter((row) => !seen.has(row.id))]
+    })
+  }, [itemsQuery.data])
 
   const categoriesQuery = useQuery({
     queryKey: queryKeys.catalog.categories,
     queryFn: listCategories,
   })
 
-  const items = itemsQuery.data?.items ?? []
+  const optionsQuery = useQuery({
+    queryKey: queryKeys.catalog.options(editorId ?? 0),
+    queryFn: () => listCatalogOptions(editorId!),
+    enabled: editorId != null && editorTab === 3,
+  })
+
+  const items = accumulated
+  const total = itemsQuery.data?.total ?? 0
+  const hasMore = items.length < total
   const categories = categoriesQuery.data ?? []
-  const categoryName = (id: number | null) =>
+  const categoryNameOf = (id: number | null) =>
     id == null ? '—' : (categories.find((c) => c.id === id)?.name ?? `#${id}`)
 
   const filtered =
     listTab === 1
       ? items.filter((row) => row.kind === 'service' || row.kind === 'package')
-      : listTab === 3
-        ? items
-        : items
+      : items
 
   const editor = items.find((r) => r.id === editorId) ?? null
 
@@ -162,6 +207,7 @@ export function CatalogView() {
       notify('Catalog item created', 'success')
       setCreateOpen(false)
       setDraft(emptyDraft())
+      setOffset(0)
       invalidate()
     },
     onError: (err: unknown) => {
@@ -197,6 +243,7 @@ export function CatalogView() {
         bookable: updated.bookable,
         duration_minutes: updated.duration_minutes != null ? String(updated.duration_minutes) : '',
       })
+      setAccumulated((prev) => prev.map((row) => (row.id === updated.id ? updated : row)))
       invalidate()
     },
     onError: (err: unknown) => {
@@ -212,6 +259,7 @@ export function CatalogView() {
     onSuccess: (_data, active) => {
       notify(active ? 'Items enabled' : 'Items disabled', 'success')
       setSelected([])
+      setOffset(0)
       invalidate()
     },
     onError: (err: unknown) => {
@@ -225,10 +273,86 @@ export function CatalogView() {
       notify('Item archived', 'success')
       setArchiveTarget(null)
       setEditorId(null)
+      setOffset(0)
       invalidate()
     },
     onError: (err: unknown) => {
       notify(err instanceof ApiError ? err.message : 'Archive failed', 'error')
+    },
+  })
+
+  const categorySaveMutation = useMutation({
+    mutationFn: async () => {
+      const name = categoryName.trim()
+      if (!name) throw new Error('Name required')
+      if (categoryDialog === 'create') {
+        return createCategory({ name, active: categoryActive })
+      }
+      if (categoryDialog && typeof categoryDialog === 'object') {
+        return patchCategory(categoryDialog.id, { name, active: categoryActive })
+      }
+      throw new Error('No category dialog')
+    },
+    onSuccess: () => {
+      notify(categoryDialog === 'create' ? 'Category created' : 'Category saved', 'success')
+      setCategoryDialog(null)
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Category save failed', 'error')
+    },
+  })
+
+  const archiveCategoryMutation = useMutation({
+    mutationFn: (cat: CatalogCategory) => patchCategory(cat.id, { active: false }),
+    onSuccess: () => {
+      notify('Category archived', 'success')
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Archive failed', 'error')
+    },
+  })
+
+  const createOptionMutation = useMutation({
+    mutationFn: () => {
+      if (editorId == null) throw new Error('No item')
+      return createCatalogOption(editorId, { name: optionName.trim(), active: true })
+    },
+    onSuccess: () => {
+      notify('Option added', 'success')
+      setOptionName('')
+      void queryClient.invalidateQueries({ queryKey: queryKeys.catalog.options(editorId!) })
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Failed to add option', 'error')
+    },
+  })
+
+  const toggleOptionMutation = useMutation({
+    mutationFn: (opt: CatalogOption) => {
+      if (editorId == null) throw new Error('No item')
+      return patchCatalogOption(editorId, opt.id, { active: !opt.active })
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.catalog.options(editorId!) })
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Failed to update option', 'error')
+    },
+  })
+
+  const deleteOptionMutation = useMutation({
+    mutationFn: (opt: CatalogOption) => {
+      if (editorId == null) throw new Error('No item')
+      return deleteCatalogOption(editorId, opt.id)
+    },
+    onSuccess: () => {
+      notify('Option removed', 'success')
+      void queryClient.invalidateQueries({ queryKey: queryKeys.catalog.options(editorId!) })
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Failed to remove option', 'error')
     },
   })
 
@@ -246,6 +370,18 @@ export function CatalogView() {
     })
   }
 
+  const openCategoryCreate = () => {
+    setCategoryName('')
+    setCategoryActive(true)
+    setCategoryDialog('create')
+  }
+
+  const openCategoryEdit = (cat: CatalogCategory) => {
+    setCategoryName(cat.name)
+    setCategoryActive(cat.active)
+    setCategoryDialog(cat)
+  }
+
   const toggleSelected = (id: number) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
@@ -257,22 +393,30 @@ export function CatalogView() {
         ? itemsQuery.error.message
         : 'Failed to load catalog'
 
+  const options = optionsQuery.data ?? []
+
   return (
     <Stack spacing={3}>
       <PageHeader
         title="Services & Products"
         subtitle="Catalog items the assistant can describe, sell, and book."
         actions={
-          <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={() => {
-              setDraft(emptyDraft())
-              setCreateOpen(true)
-            }}
-          >
-            New item
-          </Button>
+          listTab === 3 ? (
+            <Button variant="contained" startIcon={<AddIcon />} onClick={openCategoryCreate}>
+              New category
+            </Button>
+          ) : (
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => {
+                setDraft(emptyDraft())
+                setCreateOpen(true)
+              }}
+            >
+              New item
+            </Button>
+          )
         }
       />
 
@@ -314,13 +458,29 @@ export function CatalogView() {
                   <TableRow>
                     <TableCell>Name</TableCell>
                     <TableCell>Status</TableCell>
+                    <TableCell align="right">Actions</TableCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
                   {categories.map((cat) => (
                     <TableRow key={cat.id}>
                       <TableCell>{cat.name}</TableCell>
-                      <TableCell>{cat.active ? 'Active' : 'Inactive'}</TableCell>
+                      <TableCell>{cat.active ? 'Active' : 'Archived'}</TableCell>
+                      <TableCell align="right">
+                        <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+                          <Button size="small" onClick={() => openCategoryEdit(cat)}>
+                            Edit
+                          </Button>
+                          <Button
+                            size="small"
+                            color="error"
+                            disabled={!cat.active || archiveCategoryMutation.isPending}
+                            onClick={() => archiveCategoryMutation.mutate(cat)}
+                          >
+                            Archive
+                          </Button>
+                        </Stack>
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -380,7 +540,7 @@ export function CatalogView() {
             </Button>
           </Stack>
 
-          {itemsQuery.isPending ? (
+          {itemsQuery.isPending && offset === 0 ? (
             <CircularProgress size={28} />
           ) : filtered.length === 0 ? (
             <Typography color="text.secondary">No catalog items found.</Typography>
@@ -405,7 +565,7 @@ export function CatalogView() {
                     <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
                       <Typography variant="subtitle1">{row.name}</Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {row.kind} · {categoryName(row.category_id)}
+                        {row.kind} · {categoryNameOf(row.category_id)}
                       </Typography>
                       <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
                         {row.active ? null : <Chip size="small" label="Disabled" />}
@@ -456,7 +616,7 @@ export function CatalogView() {
                       </TableCell>
                       <TableCell>{row.name}</TableCell>
                       <TableCell>{row.kind}</TableCell>
-                      <TableCell>{categoryName(row.category_id)}</TableCell>
+                      <TableCell>{categoryNameOf(row.category_id)}</TableCell>
                       <TableCell>
                         {row.duration_minutes != null ? `${row.duration_minutes} min` : '—'}
                       </TableCell>
@@ -472,6 +632,23 @@ export function CatalogView() {
               </Table>
             </TableContainer>
           )}
+
+          {listTab !== 3 && listTab !== 4 ? (
+            <Stack direction="row" spacing={2} sx={{ alignItems: 'center' }}>
+              <Typography variant="body2" color="text.secondary">
+                Showing {filtered.length} of {total}
+              </Typography>
+              {hasMore ? (
+                <Button
+                  variant="outlined"
+                  disabled={itemsQuery.isFetching}
+                  onClick={() => setOffset((prev) => prev + PAGE_SIZE)}
+                >
+                  {itemsQuery.isFetching ? 'Loading…' : 'Load more'}
+                </Button>
+              ) : null}
+            </Stack>
+          ) : null}
         </>
       )}
 
@@ -567,6 +744,52 @@ export function CatalogView() {
             onClick={() => createMutation.mutate()}
           >
             Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={categoryDialog != null}
+        onClose={() => !categorySaveMutation.isPending && setCategoryDialog(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>
+          {categoryDialog === 'create' ? 'New category' : 'Edit category'}
+        </DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="Name"
+              value={categoryName}
+              onChange={(e) => setCategoryName(e.target.value)}
+              fullWidth
+              required
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={categoryActive}
+                  onChange={(e) => setCategoryActive(e.target.checked)}
+                />
+              }
+              label="Active"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={() => setCategoryDialog(null)}
+            disabled={categorySaveMutation.isPending}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!categoryName.trim() || categorySaveMutation.isPending}
+            onClick={() => categorySaveMutation.mutate()}
+          >
+            Save
           </Button>
         </DialogActions>
       </Dialog>
@@ -700,10 +923,74 @@ export function CatalogView() {
                   />
                 </Stack>
               ) : null}
-              {editorTab >= 3 ? (
+              {editorTab === 3 ? (
+                <Stack spacing={2}>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <TextField
+                      label="Option name"
+                      value={optionName}
+                      onChange={(e) => setOptionName(e.target.value)}
+                      fullWidth
+                    />
+                    <Button
+                      variant="contained"
+                      disabled={!optionName.trim() || createOptionMutation.isPending}
+                      onClick={() => createOptionMutation.mutate()}
+                      sx={{ whiteSpace: 'nowrap' }}
+                    >
+                      Add option
+                    </Button>
+                  </Stack>
+                  {optionsQuery.isPending ? (
+                    <CircularProgress size={20} />
+                  ) : options.length === 0 ? (
+                    <Typography color="text.secondary">No options yet.</Typography>
+                  ) : (
+                    <Stack spacing={1}>
+                      {options.map((opt) => (
+                        <Stack
+                          key={opt.id}
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: 'center' }}
+                        >
+                          <Typography sx={{ flex: 1 }}>{opt.name}</Typography>
+                          <Chip
+                            size="small"
+                            label={opt.active ? 'Active' : 'Inactive'}
+                            variant="outlined"
+                          />
+                          <Button
+                            size="small"
+                            onClick={() => toggleOptionMutation.mutate(opt)}
+                            disabled={toggleOptionMutation.isPending}
+                          >
+                            {opt.active ? 'Disable' : 'Enable'}
+                          </Button>
+                          <IconButton
+                            aria-label={`Delete ${opt.name}`}
+                            size="small"
+                            onClick={() => deleteOptionMutation.mutate(opt)}
+                            disabled={deleteOptionMutation.isPending}
+                          >
+                            <DeleteOutlineIcon fontSize="small" />
+                          </IconButton>
+                        </Stack>
+                      ))}
+                    </Stack>
+                  )}
+                </Stack>
+              ) : null}
+              {editorTab === 4 ? (
                 <Alert severity="info">
-                  {EDITOR_TABS[editorTab]} editing uses catalog option / availability APIs —
-                  wire deeper editors in a follow-up.
+                  Per-item availability schedules are not exposed by the catalog API yet.
+                  Configure resource working hours under Resources.
+                </Alert>
+              ) : null}
+              {editorTab === 5 ? (
+                <Alert severity="info">
+                  Location assignment for catalog items is not available in the API yet.
+                  Manage locations under organization settings.
                 </Alert>
               ) : null}
             </DialogContent>

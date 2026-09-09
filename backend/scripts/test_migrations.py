@@ -12,7 +12,7 @@ from sqlalchemy.engine import make_url
 
 DEPLOYED_REVISION = "c3d4e5f6a7b8"
 PREVIOUS_HEAD = "c9d0e1f2a3b4"
-CURRENT_HEAD = "n1c2d3e4f5a6"
+CURRENT_HEAD = "o1c2d3e4f5a6"
 
 
 def _config(database_url: str) -> Config:

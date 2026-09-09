@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import case, func, literal, or_, select
+from sqlalchemy import case, func, literal, or_, select, true
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.db.models import CatalogItem, Price, PriceBook, ReservationLineItem
 
@@ -92,6 +93,7 @@ def validate_new_price(
     channel: str | None,
     effective_from: datetime | None,
     effective_until: datetime | None,
+    exclude_price_id: int | None = None,
 ) -> str | None:
     """Validate a new price and return its canonical channel value."""
     if amount_minor < 0:
@@ -119,26 +121,27 @@ def validate_new_price(
         if normalized_channel is None
         else func.lower(Price.channel) == normalized_channel
     )
-    starts_before_new_end = (
-        True
+    starts_before_new_end: ColumnElement[bool] = (
+        true()
         if effective_until is None
         else or_(Price.effective_from.is_(None), Price.effective_from < effective_until)
     )
-    ends_after_new_start = (
-        True
+    ends_after_new_start: ColumnElement[bool] = (
+        true()
         if effective_from is None
         else or_(Price.effective_until.is_(None), Price.effective_until > effective_from)
     )
-    conflict = db.scalar(
-        select(Price.id).where(
-            Price.price_book_id == price_book_id,
-            Price.catalog_item_id == catalog_item_id,
-            target_location,
-            target_channel,
-            starts_before_new_end,
-            ends_after_new_start,
-        )
+    conflict_stmt = select(Price.id).where(
+        Price.price_book_id == price_book_id,
+        Price.catalog_item_id == catalog_item_id,
+        target_location,
+        target_channel,
+        starts_before_new_end,
+        ends_after_new_start,
     )
+    if exclude_price_id is not None:
+        conflict_stmt = conflict_stmt.where(Price.id != exclude_price_id)
+    conflict = db.scalar(conflict_stmt)
     if conflict is not None:
         raise PriceValidationError("price overlaps an existing price with the same scope")
     return normalized_channel

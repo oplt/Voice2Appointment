@@ -1,8 +1,10 @@
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined'
 import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined'
+import CheckOutlinedIcon from '@mui/icons-material/CheckOutlined'
 import LogoutIcon from '@mui/icons-material/Logout'
 import SwapHorizOutlinedIcon from '@mui/icons-material/SwapHorizOutlined'
 import Avatar from '@mui/material/Avatar'
+import CircularProgress from '@mui/material/CircularProgress'
 import Divider from '@mui/material/Divider'
 import IconButton from '@mui/material/IconButton'
 import ListItemIcon from '@mui/material/ListItemIcon'
@@ -11,9 +13,15 @@ import Menu from '@mui/material/Menu'
 import MenuItem from '@mui/material/MenuItem'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
-import { useId, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+import { ApiError } from '../../api/client'
+import {
+  activateOrganization,
+  listOrganizations,
+  type OrganizationSummary,
+} from '../../api/tenancy'
 import { useAuth } from '../../auth/AuthProvider'
 import { useSnackbar } from '../SnackbarProvider'
 
@@ -23,21 +31,71 @@ type OrgAccountMenuProps = {
 
 /** Tenant/organization profile menu — org switch, account, logout. */
 export function OrgAccountMenu({ collapsed = false }: OrgAccountMenuProps) {
-  const { user, logout } = useAuth()
+  const { user, logout, retryBootstrap } = useAuth()
   const { notify } = useSnackbar()
   const navigate = useNavigate()
   const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null)
+  const [orgs, setOrgs] = useState<OrganizationSummary[]>([])
+  const [loadingOrgs, setLoadingOrgs] = useState(false)
+  const [switchingId, setSwitchingId] = useState<number | null>(null)
+  const [showSwitcher, setShowSwitcher] = useState(false)
   const menuId = useId()
   const open = Boolean(anchorEl)
 
-  const orgLabel = user?.username ? `${user.username}'s org` : 'Organization'
+  const activeOrg = orgs.find((org) => org.active)
+  const orgLabel = activeOrg?.name || (user?.username ? `${user.username}'s org` : 'Organization')
   const initial = (user?.username || user?.email || '?').slice(0, 1).toUpperCase()
+
+  useEffect(() => {
+    if (!open) {
+      setShowSwitcher(false)
+      return
+    }
+    let cancelled = false
+    setLoadingOrgs(true)
+    listOrganizations()
+      .then((rows) => {
+        if (!cancelled) setOrgs(rows)
+      })
+      .catch(() => {
+        if (!cancelled) setOrgs([])
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingOrgs(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open])
 
   const handleLogout = async () => {
     setAnchorEl(null)
     await logout()
     notify('Signed out', 'info')
     navigate('/')
+  }
+
+  const handleActivate = async (organizationId: number) => {
+    if (switchingId != null) return
+    const current = orgs.find((org) => org.active)
+    if (current?.id === organizationId) {
+      setShowSwitcher(false)
+      return
+    }
+    setSwitchingId(organizationId)
+    try {
+      await activateOrganization(organizationId)
+      notify('Organization switched', 'success')
+      setAnchorEl(null)
+      retryBootstrap()
+      navigate(0)
+    } catch (error) {
+      const message =
+        error instanceof ApiError ? error.message : 'Unable to switch organization'
+      notify(message, 'error')
+    } finally {
+      setSwitchingId(null)
+    }
   }
 
   const trigger = (
@@ -107,12 +165,45 @@ export function OrgAccountMenu({ collapsed = false }: OrgAccountMenuProps) {
           />
         </MenuItem>
         <Divider />
-        <MenuItem disabled>
-          <ListItemIcon>
-            <SwapHorizOutlinedIcon fontSize="small" />
-          </ListItemIcon>
-          <ListItemText primary="Switch organization" secondary="Coming soon" />
-        </MenuItem>
+        {!showSwitcher ? (
+          <MenuItem
+            onClick={() => setShowSwitcher(true)}
+            disabled={loadingOrgs || orgs.length <= 1}
+          >
+            <ListItemIcon>
+              {loadingOrgs ? (
+                <CircularProgress size={16} />
+              ) : (
+                <SwapHorizOutlinedIcon fontSize="small" />
+              )}
+            </ListItemIcon>
+            <ListItemText
+              primary="Switch organization"
+              secondary={
+                orgs.length <= 1 && !loadingOrgs ? 'Only one organization' : undefined
+              }
+            />
+          </MenuItem>
+        ) : (
+          orgs.map((org) => (
+            <MenuItem
+              key={org.id}
+              onClick={() => void handleActivate(org.id)}
+              disabled={switchingId != null}
+            >
+              <ListItemIcon>
+                {switchingId === org.id ? (
+                  <CircularProgress size={16} />
+                ) : org.active ? (
+                  <CheckOutlinedIcon fontSize="small" color="primary" />
+                ) : (
+                  <BusinessOutlinedIcon fontSize="small" />
+                )}
+              </ListItemIcon>
+              <ListItemText primary={org.name} secondary={org.role} />
+            </MenuItem>
+          ))
+        )}
         <MenuItem
           onClick={() => {
             setAnchorEl(null)

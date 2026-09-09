@@ -16,7 +16,7 @@ from app.tenancy.api import OrganizationId, require_org_permission
 
 router = APIRouter(
     tags=["industry", "knowledge"],
-    dependencies=[Depends(require_org_permission("organization.manage"))],
+    dependencies=[Depends(require_org_permission("agent.manage"))],
 )
 
 
@@ -28,9 +28,12 @@ class KnowledgeIn(BaseModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
-class KnowledgePatch(KnowledgeIn):
+class KnowledgePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     title: str | None = Field(default=None, min_length=1, max_length=255)
     content: str | None = Field(default=None, min_length=1)
+    active: bool | None = None
+    metadata_json: dict[str, Any] | None = None
 
 
 class KnowledgeOut(KnowledgeIn):

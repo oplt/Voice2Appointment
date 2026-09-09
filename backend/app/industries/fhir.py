@@ -207,7 +207,7 @@ def _display_name(resource: dict[str, Any]) -> str | None:
                 return text.strip()
             given = first.get("given")
             family = first.get("family")
-            parts = []
+            parts: list[str] = []
             if isinstance(given, list):
                 parts.extend(str(g) for g in given if g)
             if family:

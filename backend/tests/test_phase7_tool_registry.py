@@ -6,7 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.db.base import Base
-from app.db.models import User
+from app.db.models import KnowledgeEntry, User
 from app.industries.service import assign_industry_profile
 from app.tenancy.service import create_organization_for_user
 from app.voice.config_loader import load_voice_config_for_context
@@ -125,6 +125,58 @@ def test_clinic_and_general_tool_sets() -> None:
     assert "get_price" in general_names
     assert "take_message" in general_names
     assert "book_appointment" in general_names
+
+
+def test_system_prompt_loads_agent_instructions_below_safety() -> None:
+    """Phase M: active KnowledgeEntry titled instructions appears after safety rules."""
+    registry = get_tool_registry()
+    db = _session()
+    user = User(username="instr7", email="instr7@example.test", password="unused")
+    db.add(user)
+    db.flush()
+    organization = create_organization_for_user(db, user)
+    assign_industry_profile(db, organization_id=organization.id, industry_type="clinic")
+    db.add(
+        KnowledgeEntry(
+            organization_id=organization.id,
+            title="instructions",
+            content="Always greet callers with our clinic name Sunrise Care.",
+            active=True,
+        )
+    )
+    db.add(
+        KnowledgeEntry(
+            organization_id=organization.id,
+            title="instructions",
+            content="INACTIVE should not appear",
+            active=False,
+        )
+    )
+    db.add(
+        KnowledgeEntry(
+            organization_id=organization.id,
+            title="FAQ Hours",
+            content="Open 9-5",
+            active=True,
+        )
+    )
+    db.commit()
+
+    prompt = registry.build_system_prompt(
+        db,
+        user_id=user.id,
+        current_date_context="Wednesday, September 9, 2026",
+    )
+    safety_idx = prompt.index("Safety rules:")
+    business_idx = prompt.index("Business instructions:")
+    tools_idx = prompt.index("Tools:")
+    date_idx = prompt.index("CURRENT DATE CONTEXT:")
+    assert safety_idx < business_idx < tools_idx < date_idx
+    assert "Sunrise Care" in prompt
+    assert "INACTIVE should not appear" not in prompt
+    assert "Open 9-5" not in prompt
+    assert "precedence" in prompt.casefold()
+    assert "Prefer read tools before mutations." in prompt
 
 
 def test_execute_denies_unentitled_tool() -> None:

@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import func, select
 
+from app.calendars.service import booking_provider_hooks
 from app.calendars.tools import (
     cancel_appointment as calendar_cancel_appointment,
 )
@@ -35,6 +36,7 @@ from app.industries.general import (
     take_message,
 )
 from app.industries.restaurant import book_restaurant_reservation, restaurant_availability
+from app.industries.service import sync_calendar_for_org
 from app.industries.waitlist import join_waitlist
 from app.notifications.secure_links import stage_secure_link
 from app.orders.service import get_order_status
@@ -572,6 +574,8 @@ def create_appointment_tool(**kwargs: Any) -> dict[str, Any]:
     elif catalog_item.duration_minutes:
         duration = int(catalog_item.duration_minutes)
 
+    # Same Google Calendar hooks as HTTP reservations API; no-op when disconnected.
+    hooks = booking_provider_hooks(db, user_id)
     try:
         reservation = book_reservation(
             db,
@@ -585,7 +589,9 @@ def create_appointment_tool(**kwargs: Any) -> dict[str, Any]:
             scheduling_mode="single_resource",
             duration_minutes=duration,
             owner_user_id=user_id,
-            sync_calendar=True,
+            sync_calendar=sync_calendar_for_org(db, organization_id),
+            provider_create=hooks.create_event,
+            calendar_id=hooks.calendar_id,
         )
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": type(exc).__name__, "message": str(exc)}

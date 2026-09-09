@@ -69,6 +69,22 @@ def require_org_permission(permission: str):
     return dependency
 
 
+def require_any_org_permission(*permissions: str):
+    def dependency(
+        context: OrganizationContext = Depends(organization_context_for_user),
+    ) -> int:
+        if not any(
+            tenancy_service.has_permission(context.membership, permission)
+            for permission in permissions
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Organization permission required"
+            )
+        return context.organization_id
+
+    return dependency
+
+
 def require_domain_permission(domain: str):
     def dependency(
         request: Request,
@@ -80,6 +96,25 @@ def require_domain_permission(domain: str):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="Organization permission required"
             )
+
+    return dependency
+
+
+def require_resources_permission():
+    """GET needs resources.read; mutations need resources.write; org.manage always allowed."""
+
+    def dependency(
+        request: Request,
+        context: OrganizationContext = Depends(organization_context_for_user),
+    ) -> int:
+        if tenancy_service.has_permission(context.membership, "organization.manage"):
+            return context.organization_id
+        needed = "resources.read" if request.method == "GET" else "resources.write"
+        if not tenancy_service.has_permission(context.membership, needed):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="Organization permission required"
+            )
+        return context.organization_id
 
     return dependency
 
@@ -100,8 +135,13 @@ class LocationIn(BaseModel):
     business_hours: dict[str, Any] = Field(default_factory=dict)
 
 
-class LocationPatch(LocationIn):
+class LocationPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    timezone: str | None = Field(default=None, min_length=1, max_length=100)
+    address: str | None = None
+    phone: str | None = Field(default=None, max_length=32)
+    business_hours: dict[str, Any] | None = None
 
 
 class LocationOut(LocationIn):
@@ -142,6 +182,35 @@ class InvitationAcceptIn(BaseModel):
     token: str = Field(min_length=20, max_length=512)
 
 
+class OrganizationMembershipOut(OrganizationOut):
+    role: str
+    active: bool
+
+
+@router.get("/organizations", response_model=list[OrganizationMembershipOut])
+def list_organizations(
+    current_user: User = Depends(get_current_user), db: Session = Depends(require_db)
+) -> list[OrganizationMembershipOut]:
+    organizations = tenancy_service.list_organizations_for_user(db, user_id=current_user.id)
+    out: list[OrganizationMembershipOut] = []
+    for organization in organizations:
+        member = tenancy_service.membership_for_user(
+            db, organization_id=organization.id, user_id=current_user.id
+        )
+        if member is None:
+            continue
+        out.append(
+            OrganizationMembershipOut(
+                id=organization.id,
+                name=organization.name,
+                slug=organization.slug,
+                role=member.role,
+                active=current_user.organization_id == organization.id,
+            )
+        )
+    return out
+
+
 @router.get("/organizations/me", response_model=OrganizationOut)
 def get_organization(
     organization_id: OrganizationId, db: Session = Depends(require_db)
@@ -167,7 +236,11 @@ def list_locations(
 
 @router.post("/locations", response_model=LocationOut, status_code=status.HTTP_201_CREATED)
 def create_location(
-    payload: LocationIn, organization_id: OrganizationId, db: Session = Depends(require_db)
+    payload: LocationIn,
+    organization_id: Annotated[
+        int, Depends(require_any_org_permission("organization.manage", "locations.write"))
+    ],
+    db: Session = Depends(require_db),
 ) -> Location:
     row = Location(organization_id=organization_id, **payload.model_dump())
     db.add(row)
@@ -180,7 +253,9 @@ def create_location(
 def patch_location(
     location_id: int,
     payload: LocationPatch,
-    organization_id: OrganizationId,
+    organization_id: Annotated[
+        int, Depends(require_any_org_permission("organization.manage", "locations.write"))
+    ],
     db: Session = Depends(require_db),
 ) -> Location:
     row = db.scalar(

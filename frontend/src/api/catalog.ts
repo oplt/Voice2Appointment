@@ -49,6 +49,38 @@ export type CatalogItemPatch = Partial<CatalogItemCreate> & {
   expected_version: number
 }
 
+export type CatalogOption = {
+  id: number
+  catalog_item_id: number
+  name: string
+  active: boolean
+  metadata_json: Record<string, unknown>
+}
+
+export type CatalogOptionCreate = {
+  name: string
+  active?: boolean
+  metadata_json?: Record<string, unknown>
+}
+
+export type CatalogOptionPatch = Partial<CatalogOptionCreate>
+
+export type ResourceRequirement = {
+  id: number
+  catalog_item_id: number
+  resource_type: string | null
+  capability: string | null
+  quantity: number
+  required: boolean
+}
+
+export type ResourceRequirementInput = {
+  resource_type?: string | null
+  capability?: string | null
+  quantity?: number
+  required?: boolean
+}
+
 export type ListCatalogItemsParams = {
   active?: boolean
   query?: string
@@ -109,4 +141,40 @@ export function bulkActivateCatalogItems(itemIds: number[]) {
 
 export function bulkDeactivateCatalogItems(itemIds: number[]) {
   return api.post<CatalogItem[]>('/api/v1/catalog/bulk-deactivate', { item_ids: itemIds })
+}
+
+export function listCatalogOptions(itemId: number) {
+  return api.get<CatalogOption[]>(`/api/v1/catalog/items/${itemId}/options`)
+}
+
+export function createCatalogOption(itemId: number, body: CatalogOptionCreate) {
+  return api.post<CatalogOption>(`/api/v1/catalog/items/${itemId}/options`, body)
+}
+
+export function patchCatalogOption(
+  itemId: number,
+  optionId: number,
+  body: CatalogOptionPatch,
+) {
+  return api.patch<CatalogOption>(
+    `/api/v1/catalog/items/${itemId}/options/${optionId}`,
+    body,
+  )
+}
+
+export function deleteCatalogOption(itemId: number, optionId: number) {
+  return api.delete<void>(`/api/v1/catalog/items/${itemId}/options/${optionId}`)
+}
+
+export function listResourceRequirements(itemId: number) {
+  return api.get<ResourceRequirement[]>(
+    `/api/v1/catalog/items/${itemId}/resource-requirements`,
+  )
+}
+
+export function putResourceRequirements(itemId: number, body: ResourceRequirementInput[]) {
+  return api.put<ResourceRequirement[]>(
+    `/api/v1/catalog/items/${itemId}/resource-requirements`,
+    body,
+  )
 }

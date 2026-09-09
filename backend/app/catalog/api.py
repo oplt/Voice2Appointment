@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,8 +32,10 @@ class CategoryOut(CategoryIn):
     id: int
 
 
-class CategoryPatch(CategoryIn):
+class CategoryPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    active: bool | None = None
 
 
 class ItemIn(BaseModel):
@@ -51,8 +53,19 @@ class ItemIn(BaseModel):
     metadata_json: dict[str, Any] = Field(default_factory=dict)
 
 
-class ItemPatch(ItemIn):
+class ItemPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    kind: Literal["service", "product", "addon", "package"] | None = None
+    category_id: int | None = None
+    description: str | None = None
+    active: bool | None = None
+    bookable: bool | None = None
+    sellable: bool | None = None
+    duration_minutes: int | None = Field(default=None, gt=0)
+    buffer_before_minutes: int | None = Field(default=None, ge=0)
+    buffer_after_minutes: int | None = Field(default=None, ge=0)
+    metadata_json: dict[str, Any] | None = None
     expected_version: int = Field(ge=1)
 
 
@@ -92,8 +105,11 @@ class OptionOut(OptionIn):
     catalog_item_id: int
 
 
-class OptionPatch(OptionIn):
+class OptionPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
+    active: bool | None = None
+    metadata_json: dict[str, Any] | None = None
 
 
 class ResourceRequirementIn(BaseModel):
@@ -119,7 +135,7 @@ def _owned_item(db: Session, organization_id: int, item_id: int) -> CatalogItem:
         raise HTTPException(status_code=404, detail="Catalog item not found") from exc
 
 
-def _catalog_http(exc: Exception) -> None:
+def _catalog_http(exc: Exception) -> NoReturn:
     if isinstance(exc, catalog_service.CatalogNotFoundError):
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if isinstance(exc, catalog_service.CatalogConflictError):

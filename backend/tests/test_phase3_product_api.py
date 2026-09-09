@@ -52,6 +52,12 @@ def test_product_routers_are_registered_with_required_contracts() -> None:
     assert "/customers" in _paths(customers_router)
     assert "/availability" in _paths(reservations_router)
     assert "/reservations" in _paths(reservations_router)
+    assert "/reservations/hold" in _paths(reservations_router)
+    assert "/reservations/{reservation_id}" in _paths(reservations_router)
+    assert "/reservations/{reservation_id}/commit" in _paths(reservations_router)
+    assert "/customers/{customer_id}" in _paths(customers_router)
+    assert "/customers/merge" in _paths(customers_router)
+    assert "/organizations" in _paths(tenancy_router)
     assert "/knowledge" in _paths(industries_router)
     assert "/industry-profile" in _paths(industries_router)
 

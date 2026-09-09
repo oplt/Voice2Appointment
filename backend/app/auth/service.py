@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import smtplib
 from email.message import EmailMessage
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -115,7 +116,7 @@ def request_password_reset(db: Session, email: str) -> str:
             # Unknown accounts still enqueue a no-op job to preserve the public
             # enumeration-safe behavior.
             token = mint_password_reset_token(db, user) if user is not None else None
-            publish_options: dict[str, str] = {
+            publish_options: dict[str, Any] = {
                 # Celery event/log metadata must not render the recipient or
                 # bearer token.  The message payload remains available only to
                 # the configured trusted broker and worker.

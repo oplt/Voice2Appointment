@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
@@ -36,12 +38,25 @@ def active_resources(
     return list(db.scalars(stmt).all())
 
 
+def _requirement_quantity(requirement: dict[str, Any]) -> int:
+    raw = requirement.get("quantity", 1)
+    if isinstance(raw, bool):
+        raise ValueError("requirement quantity must be positive")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    if isinstance(raw, str) and raw.strip():
+        return int(raw)
+    return 1
+
+
 def replace_service_requirements(
     db: Session,
     *,
     organization_id: int,
     catalog_item_id: int,
-    requirements: list[dict[str, object]],
+    requirements: list[dict[str, Any]],
 ) -> list[ServiceResourceRequirement]:
     item = db.scalar(
         select(CatalogItem).where(
@@ -51,7 +66,7 @@ def replace_service_requirements(
     if item is None:
         raise ValueError("catalog item not found")
     for requirement in requirements:
-        quantity = int(requirement.get("quantity", 1))
+        quantity = _requirement_quantity(requirement)
         if quantity <= 0:
             raise ValueError("requirement quantity must be positive")
     for row in requirements_for_service(db, catalog_item_id):
@@ -60,12 +75,12 @@ def replace_service_requirements(
     rows = [
         ServiceResourceRequirement(
             catalog_item_id=catalog_item_id,
-            resource_type=(str(item["resource_type"]) if item.get("resource_type") else None),
-            capability=(str(item["capability"]) if item.get("capability") else None),
-            quantity=int(item.get("quantity", 1)),
-            required=bool(item.get("required", True)),
+            resource_type=(str(req["resource_type"]) if req.get("resource_type") else None),
+            capability=(str(req["capability"]) if req.get("capability") else None),
+            quantity=_requirement_quantity(req),
+            required=bool(req.get("required", True)),
         )
-        for item in requirements
+        for req in requirements
     ]
     db.add_all(rows)
     return rows

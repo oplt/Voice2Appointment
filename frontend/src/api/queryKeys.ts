@@ -19,11 +19,14 @@ export const queryKeys = {
     items: (filters?: Record<string, unknown>) =>
       ['catalog', 'items', filters ?? {}] as const,
     categories: ['catalog', 'categories'] as const,
+    options: (itemId: number) => ['catalog', 'options', itemId] as const,
+    requirements: (itemId: number) => ['catalog', 'requirements', itemId] as const,
   },
   pricing: {
     all: ['pricing'] as const,
     books: ['pricing', 'books'] as const,
     prices: (bookId: number) => ['pricing', 'prices', bookId] as const,
+    locations: ['pricing', 'locations'] as const,
   },
   resources: {
     all: ['resources'] as const,
@@ -32,6 +35,8 @@ export const queryKeys = {
       ['resources', 'capabilities', resourceId] as const,
     availability: (resourceId: number) =>
       ['resources', 'availability', resourceId] as const,
+    exceptions: (resourceId: number) =>
+      ['resources', 'exceptions', resourceId] as const,
   },
   customers: {
     all: ['customers'] as const,
@@ -39,7 +44,9 @@ export const queryKeys = {
   },
   reservations: {
     all: ['reservations'] as const,
-    list: (status?: string) => ['reservations', 'list', status ?? ''] as const,
+    list: (filters?: Record<string, unknown>) =>
+      ['reservations', 'list', filters ?? {}] as const,
+    detail: (id: number) => ['reservations', 'detail', id] as const,
   },
   knowledge: {
     all: ['knowledge'] as const,

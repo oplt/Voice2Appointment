@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
@@ -14,16 +14,20 @@ from app.db.models import (
     AvailabilityException,
     AvailabilityRule,
     Location,
+    Reservation,
+    ReservationResource,
     Resource,
     ResourceAdjacency,
     ResourceCapability,
 )
 from app.resources.service import active_resources
-from app.tenancy.api import OrganizationId, require_org_permission
+from app.tenancy.api import OrganizationId, require_resources_permission
 
 router = APIRouter(
-    tags=["resources"], dependencies=[Depends(require_org_permission("organization.manage"))]
+    tags=["resources"], dependencies=[Depends(require_resources_permission())]
 )
+
+_FUTURE_BLOCKING_STATUSES = frozenset({"held", "confirmed", "pending", "pending_provider"})
 
 
 class ResourceIn(BaseModel):
@@ -35,9 +39,13 @@ class ResourceIn(BaseModel):
     capacity: int = Field(default=1, ge=1)
 
 
-class ResourcePatch(ResourceIn):
+class ResourcePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
     resource_type: str | None = Field(default=None, min_length=1, max_length=64)
+    location_id: int | None = None
+    active: bool | None = None
+    capacity: int | None = Field(default=None, ge=1)
 
 
 class ResourceOut(ResourceIn):
@@ -63,6 +71,13 @@ class AvailabilityRuleIn(BaseModel):
     end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
 
 
+class AvailabilityRulePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    weekday: int | None = Field(default=None, ge=0, le=6)
+    start_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+    end_time: str | None = Field(default=None, pattern=r"^\d{2}:\d{2}$")
+
+
 class AvailabilityRuleOut(AvailabilityRuleIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
@@ -78,11 +93,37 @@ class AvailabilityExceptionIn(BaseModel):
     reason: str | None = Field(default=None, max_length=255)
 
 
+class AvailabilityExceptionPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    starts_at: datetime | None = None
+    ends_at: datetime | None = None
+    available: bool | None = None
+    reason: str | None = Field(default=None, max_length=255)
+
+
 class AvailabilityExceptionOut(AvailabilityExceptionIn):
     model_config = ConfigDict(from_attributes=True)
     id: int
     resource_id: int | None
     location_id: int | None
+
+
+def _future_reservation_count(db: Session, *, organization_id: int, resource_id: int) -> int:
+    now = datetime.now(timezone.utc)
+    return int(
+        db.scalar(
+            select(func.count())
+            .select_from(ReservationResource)
+            .join(Reservation, Reservation.id == ReservationResource.reservation_id)
+            .where(
+                Reservation.organization_id == organization_id,
+                ReservationResource.resource_id == resource_id,
+                Reservation.status.in_(tuple(_FUTURE_BLOCKING_STATUSES)),
+                Reservation.end_datetime > now,
+            )
+        )
+        or 0
+    )
 
 
 def _resource(db: Session, organization_id: int, resource_id: int) -> Resource:
@@ -138,11 +179,28 @@ def patch_resource(
     resource_id: int,
     payload: ResourcePatch,
     organization_id: OrganizationId,
+    force: bool = Query(False),
     db: Session = Depends(require_db),
 ) -> Resource:
     row = _resource(db, organization_id, resource_id)
     values = payload.model_dump(exclude_unset=True)
     _owned_location(db, organization_id, values.get("location_id"))
+    if values.get("active") is False and row.active:
+        warning_count = _future_reservation_count(
+            db, organization_id=organization_id, resource_id=resource_id
+        )
+        if warning_count > 0 and not force:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "message": (
+                        f"Resource has {warning_count} future confirmed/held reservation(s). "
+                        "Pass force=true to deactivate anyway."
+                    ),
+                    "future_reservation_count": warning_count,
+                    "requires_force": True,
+                },
+            )
     for field, value in values.items():
         setattr(row, field, value)
     db.commit()
@@ -308,6 +366,55 @@ def create_capability(
     return row
 
 
+@router.patch(
+    "/resources/{resource_id}/capabilities/{capability_id}", response_model=CapabilityOut
+)
+def patch_capability(
+    resource_id: int,
+    capability_id: int,
+    payload: CapabilityIn,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> ResourceCapability:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(ResourceCapability).where(
+            ResourceCapability.id == capability_id,
+            ResourceCapability.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    row.capability = payload.capability
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete(
+    "/resources/{resource_id}/capabilities/{capability_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_capability(
+    resource_id: int,
+    capability_id: int,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> None:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(ResourceCapability).where(
+            ResourceCapability.id == capability_id,
+            ResourceCapability.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Capability not found")
+    db.delete(row)
+    db.commit()
+
+
 @router.get("/resources/{resource_id}/availability", response_model=list[AvailabilityRuleOut])
 def list_availability(
     resource_id: int, organization_id: OrganizationId, db: Session = Depends(require_db)
@@ -347,6 +454,78 @@ def create_availability(
     return row
 
 
+@router.patch(
+    "/resources/{resource_id}/availability/{rule_id}", response_model=AvailabilityRuleOut
+)
+def patch_availability(
+    resource_id: int,
+    rule_id: int,
+    payload: AvailabilityRulePatch,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> AvailabilityRule:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(AvailabilityRule).where(
+            AvailabilityRule.id == rule_id,
+            AvailabilityRule.organization_id == organization_id,
+            AvailabilityRule.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Availability rule not found")
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(row, field, value)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete(
+    "/resources/{resource_id}/availability/{rule_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_availability(
+    resource_id: int,
+    rule_id: int,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> None:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(AvailabilityRule).where(
+            AvailabilityRule.id == rule_id,
+            AvailabilityRule.organization_id == organization_id,
+            AvailabilityRule.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Availability rule not found")
+    db.delete(row)
+    db.commit()
+
+
+@router.get(
+    "/resources/{resource_id}/availability-exceptions",
+    response_model=list[AvailabilityExceptionOut],
+)
+def list_availability_exceptions(
+    resource_id: int, organization_id: OrganizationId, db: Session = Depends(require_db)
+) -> list[AvailabilityException]:
+    _resource(db, organization_id, resource_id)
+    return list(
+        db.scalars(
+            select(AvailabilityException)
+            .where(
+                AvailabilityException.organization_id == organization_id,
+                AvailabilityException.resource_id == resource_id,
+            )
+            .order_by(AvailabilityException.starts_at.desc())
+        ).all()
+    )
+
+
 @router.post(
     "/resources/{resource_id}/availability-exceptions",
     response_model=AvailabilityExceptionOut,
@@ -371,3 +550,61 @@ def create_availability_exception(
     db.commit()
     db.refresh(row)
     return row
+
+
+@router.patch(
+    "/resources/{resource_id}/availability-exceptions/{exception_id}",
+    response_model=AvailabilityExceptionOut,
+)
+def patch_availability_exception(
+    resource_id: int,
+    exception_id: int,
+    payload: AvailabilityExceptionPatch,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> AvailabilityException:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(AvailabilityException).where(
+            AvailabilityException.id == exception_id,
+            AvailabilityException.organization_id == organization_id,
+            AvailabilityException.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Availability exception not found")
+    values = payload.model_dump(exclude_unset=True)
+    starts = values.get("starts_at", row.starts_at)
+    ends = values.get("ends_at", row.ends_at)
+    if ends <= starts:
+        raise HTTPException(status_code=422, detail="ends_at must be after starts_at")
+    for field, value in values.items():
+        setattr(row, field, value)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
+@router.delete(
+    "/resources/{resource_id}/availability-exceptions/{exception_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_model=None,
+)
+def delete_availability_exception(
+    resource_id: int,
+    exception_id: int,
+    organization_id: OrganizationId,
+    db: Session = Depends(require_db),
+) -> None:
+    _resource(db, organization_id, resource_id)
+    row = db.scalar(
+        select(AvailabilityException).where(
+            AvailabilityException.id == exception_id,
+            AvailabilityException.organization_id == organization_id,
+            AvailabilityException.resource_id == resource_id,
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Availability exception not found")
+    db.delete(row)
+    db.commit()

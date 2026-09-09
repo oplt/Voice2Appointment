@@ -203,6 +203,36 @@ def stage_reschedule_notifications(
     return stage_confirmation_intent(db, appointment)
 
 
+def stage_reservation_lifecycle_notification(
+    db: Session,
+    appointment: Appointment,
+    *,
+    kind: str,
+    fingerprint: str | None = None,
+) -> NotificationDelivery | int | None:
+    """Stage cancel/reschedule/update intents for reservation lifecycle mutations.
+
+    Idempotent: cancel reuses pending-row cancellation; reschedule reuses the
+    slot-scoped confirmation key; other kinds key on ``fingerprint`` so repeats
+    of the same lifecycle operation do not mint duplicate outbox rows.
+    """
+    normalized = (kind or "").strip().lower()
+    if normalized in {"cancel", "cancellation", "cancelled"}:
+        return stage_cancellation(db, appointment.id)
+    if normalized in {"reschedule", "rescheduled"}:
+        return stage_reschedule_notifications(db, appointment)
+    # party_size / resource_assignment / other non-slot mutations
+    marker = (fingerprint or "update").strip()[:32] or "update"
+    key = f"lc:{normalized[:12]}:{appointment.id}:{marker}"[:64]
+    return _ensure_delivery(
+        db,
+        user_id=appointment.user_id,
+        appointment_id=appointment.id,
+        kind=KIND_CONFIRMATION,
+        idempotency_key=key,
+    )
+
+
 def cancel_pending_for_appointment(db: Session, appointment_id: int) -> int:
     """Self-committing wrapper for standalone callers outside a booking transaction."""
     count = _cancel_pending_rows(db, appointment_id)

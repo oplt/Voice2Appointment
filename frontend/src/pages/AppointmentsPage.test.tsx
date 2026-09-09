@@ -44,14 +44,28 @@ describe('AppointmentsPage pagination', () => {
   beforeEach(() => vi.mocked(listAppointments).mockReset())
 
   it('traverses beyond the first 100 rows without duplicates', async () => {
-    vi.mocked(listAppointments)
-      .mockResolvedValueOnce({ items: Array.from({ length: 100 }, (_, index) => appointment(index + 1)), next_cursor: 'next' })
-      .mockResolvedValueOnce({ items: [appointment(100), appointment(101)], next_cursor: null })
+    vi.mocked(listAppointments).mockImplementation(async (params = {}) => {
+      if (params.cursor === 'next') {
+        return { items: [appointment(100), appointment(101)], next_cursor: null }
+      }
+      return {
+        items: Array.from({ length: 100 }, (_, index) => appointment(index + 1)),
+        next_cursor: 'next',
+      }
+    })
     renderPage()
     await screen.findAllByText('Appointment 100')
     fireEvent.click(screen.getByRole('button', { name: /load more appointments/i }))
     await screen.findAllByText('Appointment 101')
-    await waitFor(() => expect(listAppointments).toHaveBeenLastCalledWith({ scope: 'upcoming', limit: 100, cursor: 'next' }))
+    await waitFor(() =>
+      expect(listAppointments).toHaveBeenCalledWith({
+        scope: 'upcoming',
+        limit: 100,
+        cursor: 'next',
+      }),
+    )
+    // Mobile + desktop both render; Map-dedup keeps a single logical row (2 DOM nodes).
     expect(screen.getAllByText('Appointment 100')).toHaveLength(2)
+    expect(screen.getAllByText('Appointment 101')).toHaveLength(2)
   })
 })
