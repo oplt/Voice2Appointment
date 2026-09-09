@@ -5,6 +5,7 @@ import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Checkbox from '@mui/material/Checkbox'
 import Chip from '@mui/material/Chip'
+import CircularProgress from '@mui/material/CircularProgress'
 import Dialog from '@mui/material/Dialog'
 import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
@@ -26,71 +27,26 @@ import TextField from '@mui/material/TextField'
 import Typography from '@mui/material/Typography'
 import useMediaQuery from '@mui/material/useMediaQuery'
 import { useTheme } from '@mui/material/styles'
-import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useState } from 'react'
 import { Link as RouterLink } from 'react-router-dom'
 
+import {
+  archiveCatalogItem,
+  bulkActivateCatalogItems,
+  bulkDeactivateCatalogItems,
+  createCatalogItem,
+  listCatalogItems,
+  listCategories,
+  patchCatalogItem,
+  type CatalogItem,
+  type CatalogKind,
+} from '../../api/catalog'
+import { ApiError } from '../../api/client'
+import { queryKeys } from '../../api/queryKeys'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { PageHeader } from '../../components/PageHeader'
-
-type CatalogKind = 'service' | 'product' | 'addon' | 'package'
-
-type CatalogRow = {
-  id: number
-  name: string
-  kind: CatalogKind
-  category: string
-  active: boolean
-  bookable: boolean
-  durationMinutes: number | null
-  priceLabel: string
-  voicePreview: string
-}
-
-const SEED: CatalogRow[] = [
-  {
-    id: 1,
-    name: 'General consultation',
-    kind: 'service',
-    category: 'Visits',
-    active: true,
-    bookable: true,
-    durationMinutes: 30,
-    priceLabel: '€65',
-    voicePreview: 'I can book a 30-minute general consultation for sixty-five euros.',
-  },
-  {
-    id: 2,
-    name: 'Haircut',
-    kind: 'service',
-    category: 'Salon',
-    active: true,
-    bookable: true,
-    durationMinutes: 45,
-    priceLabel: '€40',
-    voicePreview: 'A haircut takes about forty-five minutes and costs forty euros.',
-  },
-  {
-    id: 3,
-    name: 'Shampoo add-on',
-    kind: 'addon',
-    category: 'Salon',
-    active: true,
-    bookable: false,
-    durationMinutes: 10,
-    priceLabel: '€8',
-    voicePreview: 'You can add a shampoo treatment for eight euros.',
-  },
-  {
-    id: 4,
-    name: 'Gift card',
-    kind: 'product',
-    category: 'Retail',
-    active: false,
-    bookable: false,
-    durationMinutes: null,
-    priceLabel: 'from €25',
-    voicePreview: 'Gift cards start at twenty-five euros and are not bookable by phone.',
-  },
-]
+import { useSnackbar } from '../../components/SnackbarProvider'
 
 const EDITOR_TABS = [
   'Overview',
@@ -101,45 +57,205 @@ const EDITOR_TABS = [
   'Locations',
 ] as const
 
+type DraftItem = {
+  name: string
+  kind: CatalogKind
+  category_id: number | ''
+  description: string
+  active: boolean
+  bookable: boolean
+  duration_minutes: string
+}
+
+const emptyDraft = (): DraftItem => ({
+  name: '',
+  kind: 'service',
+  category_id: '',
+  description: '',
+  active: true,
+  bookable: false,
+  duration_minutes: '',
+})
+
+function voicePreview(item: CatalogItem): string {
+  const duration =
+    item.duration_minutes != null ? `${item.duration_minutes}-minute ` : ''
+  const bookable = item.bookable ? 'and is bookable by phone.' : 'and is not bookable by phone.'
+  return `I can describe ${duration}${item.name} ${bookable}`
+}
+
 export function CatalogView() {
   const theme = useTheme()
   const isMobile = useMediaQuery(theme.breakpoints.down('md'))
+  const { notify } = useSnackbar()
+  const queryClient = useQueryClient()
+
   const [listTab, setListTab] = useState(0)
   const [query, setQuery] = useState('')
   const [kindFilter, setKindFilter] = useState<'all' | CatalogKind>('all')
-  const [rows, setRows] = useState(SEED)
   const [selected, setSelected] = useState<number[]>([])
   const [editorId, setEditorId] = useState<number | null>(null)
   const [editorTab, setEditorTab] = useState(0)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [draft, setDraft] = useState<DraftItem>(emptyDraft)
+  const [editDraft, setEditDraft] = useState<DraftItem | null>(null)
+  const [archiveTarget, setArchiveTarget] = useState<CatalogItem | null>(null)
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    return rows.filter((row) => {
-      if (kindFilter !== 'all' && row.kind !== kindFilter) return false
-      if (listTab === 1 && row.kind !== 'service' && row.kind !== 'package') return false
-      if (listTab === 2 && row.kind !== 'product') return false
-      if (listTab === 3 && !row.category) return false
-      if (!q) return true
-      return (
-        row.name.toLowerCase().includes(q) ||
-        row.category.toLowerCase().includes(q) ||
-        row.kind.includes(q)
-      )
+  const kindParam: CatalogKind | undefined =
+    listTab === 2
+      ? 'product'
+      : listTab === 1 || kindFilter === 'all'
+        ? undefined
+        : kindFilter
+
+  const itemsQuery = useQuery({
+    queryKey: queryKeys.catalog.items({
+      query: query.trim() || undefined,
+      kind: kindParam,
+      listTab,
+    }),
+    queryFn: () =>
+      listCatalogItems({
+        query: query.trim() || undefined,
+        kind: kindParam,
+        limit: 100,
+      }),
+  })
+
+  const categoriesQuery = useQuery({
+    queryKey: queryKeys.catalog.categories,
+    queryFn: listCategories,
+  })
+
+  const items = itemsQuery.data?.items ?? []
+  const categories = categoriesQuery.data ?? []
+  const categoryName = (id: number | null) =>
+    id == null ? '—' : (categories.find((c) => c.id === id)?.name ?? `#${id}`)
+
+  const filtered =
+    listTab === 1
+      ? items.filter((row) => row.kind === 'service' || row.kind === 'package')
+      : listTab === 3
+        ? items
+        : items
+
+  const editor = items.find((r) => r.id === editorId) ?? null
+
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.catalog.all })
+  }
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      createCatalogItem({
+        name: draft.name.trim(),
+        kind: draft.kind,
+        category_id: draft.category_id === '' ? null : draft.category_id,
+        description: draft.description.trim() || null,
+        active: draft.active,
+        bookable: draft.bookable,
+        duration_minutes: draft.duration_minutes
+          ? Number(draft.duration_minutes)
+          : null,
+      }),
+    onSuccess: () => {
+      notify('Catalog item created', 'success')
+      setCreateOpen(false)
+      setDraft(emptyDraft())
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Create failed', 'error')
+    },
+  })
+
+  const patchMutation = useMutation({
+    mutationFn: (item: CatalogItem) => {
+      if (!editDraft) throw new Error('No draft')
+      return patchCatalogItem(item.id, {
+        expected_version: item.version,
+        name: editDraft.name.trim(),
+        kind: editDraft.kind,
+        category_id: editDraft.category_id === '' ? null : editDraft.category_id,
+        description: editDraft.description.trim() || null,
+        active: editDraft.active,
+        bookable: editDraft.bookable,
+        duration_minutes: editDraft.duration_minutes
+          ? Number(editDraft.duration_minutes)
+          : null,
+      })
+    },
+    onSuccess: (updated) => {
+      notify('Catalog item saved', 'success')
+      setEditorId(updated.id)
+      setEditDraft({
+        name: updated.name,
+        kind: updated.kind,
+        category_id: updated.category_id ?? '',
+        description: updated.description ?? '',
+        active: updated.active,
+        bookable: updated.bookable,
+        duration_minutes: updated.duration_minutes != null ? String(updated.duration_minutes) : '',
+      })
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Save failed', 'error')
+    },
+  })
+
+  const bulkMutation = useMutation({
+    mutationFn: async (active: boolean) => {
+      if (active) return bulkActivateCatalogItems(selected)
+      return bulkDeactivateCatalogItems(selected)
+    },
+    onSuccess: (_data, active) => {
+      notify(active ? 'Items enabled' : 'Items disabled', 'success')
+      setSelected([])
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Bulk update failed', 'error')
+    },
+  })
+
+  const archiveMutation = useMutation({
+    mutationFn: (item: CatalogItem) => archiveCatalogItem(item.id, item.version),
+    onSuccess: () => {
+      notify('Item archived', 'success')
+      setArchiveTarget(null)
+      setEditorId(null)
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Archive failed', 'error')
+    },
+  })
+
+  const openEditor = (item: CatalogItem) => {
+    setEditorId(item.id)
+    setEditorTab(0)
+    setEditDraft({
+      name: item.name,
+      kind: item.kind,
+      category_id: item.category_id ?? '',
+      description: item.description ?? '',
+      active: item.active,
+      bookable: item.bookable,
+      duration_minutes: item.duration_minutes != null ? String(item.duration_minutes) : '',
     })
-  }, [rows, query, kindFilter, listTab])
-
-  const editor = rows.find((r) => r.id === editorId) ?? null
+  }
 
   const toggleSelected = (id: number) => {
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
   }
 
-  const setActiveBulk = (active: boolean) => {
-    setRows((prev) =>
-      prev.map((row) => (selected.includes(row.id) ? { ...row, active } : row)),
-    )
-    setSelected([])
-  }
+  const listError =
+    itemsQuery.error == null
+      ? null
+      : itemsQuery.error instanceof ApiError
+        ? itemsQuery.error.message
+        : 'Failed to load catalog'
 
   return (
     <Stack spacing={3}>
@@ -147,20 +263,20 @@ export function CatalogView() {
         title="Services & Products"
         subtitle="Catalog items the assistant can describe, sell, and book."
         actions={
-          <Button variant="contained" startIcon={<AddIcon />} disabled>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => {
+              setDraft(emptyDraft())
+              setCreateOpen(true)
+            }}
+          >
             New item
           </Button>
         }
       />
 
-      <Alert severity="info">
-        Local preview shell — wire to org catalog APIs when HTTP routes ship. Price books also live
-        under{' '}
-        <Button component={RouterLink} to="/pricing" size="small">
-          Pricing
-        </Button>
-        .
-      </Alert>
+      {listError ? <Alert severity="error">{listError}</Alert> : null}
 
       <Tabs
         value={listTab}
@@ -184,6 +300,33 @@ export function CatalogView() {
           <Button component={RouterLink} to="/pricing" variant="outlined" sx={{ alignSelf: 'flex-start' }}>
             Open pricing
           </Button>
+        </Stack>
+      ) : listTab === 3 ? (
+        <Stack spacing={2}>
+          {categoriesQuery.isPending ? (
+            <CircularProgress size={24} />
+          ) : categories.length === 0 ? (
+            <Typography color="text.secondary">No categories yet.</Typography>
+          ) : (
+            <TableContainer>
+              <Table size="small" aria-label="Catalog categories">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Name</TableCell>
+                    <TableCell>Status</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {categories.map((cat) => (
+                    <TableRow key={cat.id}>
+                      <TableCell>{cat.name}</TableCell>
+                      <TableCell>{cat.active ? 'Active' : 'Inactive'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
         </Stack>
       ) : (
         <>
@@ -213,6 +356,7 @@ export function CatalogView() {
               value={kindFilter}
               onChange={(e) => setKindFilter(e.target.value as 'all' | CatalogKind)}
               sx={{ minWidth: 160 }}
+              disabled={listTab === 1 || listTab === 2}
             >
               <MenuItem value="all">All kinds</MenuItem>
               <MenuItem value="service">Service</MenuItem>
@@ -222,21 +366,25 @@ export function CatalogView() {
             </TextField>
             <Button
               variant="outlined"
-              disabled={!selected.length}
-              onClick={() => setActiveBulk(true)}
+              disabled={!selected.length || bulkMutation.isPending}
+              onClick={() => bulkMutation.mutate(true)}
             >
               Enable
             </Button>
             <Button
               variant="outlined"
-              disabled={!selected.length}
-              onClick={() => setActiveBulk(false)}
+              disabled={!selected.length || bulkMutation.isPending}
+              onClick={() => bulkMutation.mutate(false)}
             >
               Disable
             </Button>
           </Stack>
 
-          {isMobile ? (
+          {itemsQuery.isPending ? (
+            <CircularProgress size={28} />
+          ) : filtered.length === 0 ? (
+            <Typography color="text.secondary">No catalog items found.</Typography>
+          ) : isMobile ? (
             <Stack spacing={1.5}>
               {filtered.map((row) => (
                 <Box
@@ -257,13 +405,13 @@ export function CatalogView() {
                     <Stack spacing={0.5} sx={{ flex: 1, minWidth: 0 }}>
                       <Typography variant="subtitle1">{row.name}</Typography>
                       <Typography variant="caption" color="text.secondary">
-                        {row.kind} · {row.category} · {row.priceLabel}
+                        {row.kind} · {categoryName(row.category_id)}
                       </Typography>
                       <Stack direction="row" spacing={0.5} useFlexGap sx={{ flexWrap: 'wrap' }}>
                         {row.active ? null : <Chip size="small" label="Disabled" />}
                         {row.bookable ? <Chip size="small" label="Bookable" variant="outlined" /> : null}
                       </Stack>
-                      <Button size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => setEditorId(row.id)}>
+                      <Button size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => openEditor(row)}>
                         Edit
                       </Button>
                     </Stack>
@@ -291,7 +439,7 @@ export function CatalogView() {
                     <TableCell>Name</TableCell>
                     <TableCell>Kind</TableCell>
                     <TableCell>Category</TableCell>
-                    <TableCell>Price</TableCell>
+                    <TableCell>Duration</TableCell>
                     <TableCell>Status</TableCell>
                     <TableCell align="right">Actions</TableCell>
                   </TableRow>
@@ -308,11 +456,13 @@ export function CatalogView() {
                       </TableCell>
                       <TableCell>{row.name}</TableCell>
                       <TableCell>{row.kind}</TableCell>
-                      <TableCell>{row.category}</TableCell>
-                      <TableCell>{row.priceLabel}</TableCell>
+                      <TableCell>{categoryName(row.category_id)}</TableCell>
+                      <TableCell>
+                        {row.duration_minutes != null ? `${row.duration_minutes} min` : '—'}
+                      </TableCell>
                       <TableCell>{row.active ? 'Active' : 'Disabled'}</TableCell>
                       <TableCell align="right">
-                        <Button size="small" onClick={() => { setEditorId(row.id); setEditorTab(0) }}>
+                        <Button size="small" onClick={() => openEditor(row)}>
                           Edit
                         </Button>
                       </TableCell>
@@ -326,15 +476,111 @@ export function CatalogView() {
       )}
 
       <Dialog
+        open={createOpen}
+        onClose={() => !createMutation.isPending && setCreateOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>New catalog item</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="Name"
+              value={draft.name}
+              onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+              fullWidth
+              required
+            />
+            <TextField
+              select
+              label="Kind"
+              value={draft.kind}
+              onChange={(e) => setDraft({ ...draft, kind: e.target.value as CatalogKind })}
+              fullWidth
+            >
+              <MenuItem value="service">Service</MenuItem>
+              <MenuItem value="product">Product</MenuItem>
+              <MenuItem value="addon">Add-on</MenuItem>
+              <MenuItem value="package">Package</MenuItem>
+            </TextField>
+            <TextField
+              select
+              label="Category"
+              value={draft.category_id}
+              onChange={(e) =>
+                setDraft({
+                  ...draft,
+                  category_id: e.target.value === '' ? '' : Number(e.target.value),
+                })
+              }
+              fullWidth
+            >
+              <MenuItem value="">None</MenuItem>
+              {categories.map((c) => (
+                <MenuItem key={c.id} value={c.id}>
+                  {c.name}
+                </MenuItem>
+              ))}
+            </TextField>
+            <TextField
+              label="Description"
+              value={draft.description}
+              onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+              fullWidth
+              multiline
+              minRows={2}
+            />
+            <TextField
+              label="Duration (minutes)"
+              type="number"
+              value={draft.duration_minutes}
+              onChange={(e) => setDraft({ ...draft, duration_minutes: e.target.value })}
+              fullWidth
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={draft.active}
+                  onChange={(e) => setDraft({ ...draft, active: e.target.checked })}
+                />
+              }
+              label="Active"
+            />
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={draft.bookable}
+                  onChange={(e) => setDraft({ ...draft, bookable: e.target.checked })}
+                />
+              }
+              label="Bookable"
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCreateOpen(false)} disabled={createMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!draft.name.trim() || createMutation.isPending}
+            onClick={() => createMutation.mutate()}
+          >
+            Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
         open={editor != null}
         onClose={() => setEditorId(null)}
         fullWidth
         maxWidth="md"
         fullScreen={isMobile}
       >
-        {editor ? (
+        {editor && editDraft ? (
           <>
-            <DialogTitle>{editor.name}</DialogTitle>
+            <DialogTitle>{editDraft.name || editor.name}</DialogTitle>
             <DialogContent dividers>
               <Tabs
                 value={editorTab}
@@ -350,11 +596,60 @@ export function CatalogView() {
               </Tabs>
               {editorTab === 0 ? (
                 <Stack spacing={2}>
-                  <TextField label="Name" value={editor.name} fullWidth disabled />
-                  <TextField label="Kind" value={editor.kind} fullWidth disabled />
-                  <TextField label="Category" value={editor.category} fullWidth disabled />
+                  <TextField
+                    label="Name"
+                    value={editDraft.name}
+                    onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                    fullWidth
+                  />
+                  <TextField
+                    select
+                    label="Kind"
+                    value={editDraft.kind}
+                    onChange={(e) =>
+                      setEditDraft({ ...editDraft, kind: e.target.value as CatalogKind })
+                    }
+                    fullWidth
+                  >
+                    <MenuItem value="service">Service</MenuItem>
+                    <MenuItem value="product">Product</MenuItem>
+                    <MenuItem value="addon">Add-on</MenuItem>
+                    <MenuItem value="package">Package</MenuItem>
+                  </TextField>
+                  <TextField
+                    select
+                    label="Category"
+                    value={editDraft.category_id}
+                    onChange={(e) =>
+                      setEditDraft({
+                        ...editDraft,
+                        category_id: e.target.value === '' ? '' : Number(e.target.value),
+                      })
+                    }
+                    fullWidth
+                  >
+                    <MenuItem value="">None</MenuItem>
+                    {categories.map((c) => (
+                      <MenuItem key={c.id} value={c.id}>
+                        {c.name}
+                      </MenuItem>
+                    ))}
+                  </TextField>
+                  <TextField
+                    label="Description"
+                    value={editDraft.description}
+                    onChange={(e) => setEditDraft({ ...editDraft, description: e.target.value })}
+                    fullWidth
+                    multiline
+                    minRows={2}
+                  />
                   <FormControlLabel
-                    control={<Switch checked={editor.active} disabled />}
+                    control={
+                      <Switch
+                        checked={editDraft.active}
+                        onChange={(e) => setEditDraft({ ...editDraft, active: e.target.checked })}
+                      />
+                    }
                     label="Active"
                   />
                   <Box
@@ -368,31 +663,90 @@ export function CatalogView() {
                     <Typography variant="subtitle2" sx={{ mb: 0.5 }}>
                       Voice preview
                     </Typography>
-                    <Typography variant="body1">{editor.voicePreview}</Typography>
+                    <Typography variant="body1">{voicePreview(editor)}</Typography>
                   </Box>
                 </Stack>
               ) : null}
               {editorTab === 1 ? (
-                <Typography variant="body1">List price: {editor.priceLabel}</Typography>
+                <Typography variant="body1" color="text.secondary">
+                  Manage amounts in{' '}
+                  <Button component={RouterLink} to="/pricing" size="small">
+                    Pricing
+                  </Button>
+                  .
+                </Typography>
               ) : null}
               {editorTab === 2 ? (
-                <Typography variant="body1">
-                  Duration: {editor.durationMinutes != null ? `${editor.durationMinutes} min` : 'n/a'}
-                  {editor.bookable ? ' · bookable' : ' · not bookable'}
-                </Typography>
+                <Stack spacing={2}>
+                  <TextField
+                    label="Duration (minutes)"
+                    type="number"
+                    value={editDraft.duration_minutes}
+                    onChange={(e) =>
+                      setEditDraft({ ...editDraft, duration_minutes: e.target.value })
+                    }
+                    fullWidth
+                  />
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={editDraft.bookable}
+                        onChange={(e) =>
+                          setEditDraft({ ...editDraft, bookable: e.target.checked })
+                        }
+                      />
+                    }
+                    label="Bookable"
+                  />
+                </Stack>
               ) : null}
               {editorTab >= 3 ? (
                 <Alert severity="info">
-                  {EDITOR_TABS[editorTab]} editing awaits catalog option / availability APIs.
+                  {EDITOR_TABS[editorTab]} editing uses catalog option / availability APIs —
+                  wire deeper editors in a follow-up.
                 </Alert>
               ) : null}
             </DialogContent>
             <DialogActions>
+              <Button
+                color="error"
+                onClick={() => setArchiveTarget(editor)}
+                disabled={archiveMutation.isPending}
+              >
+                Archive
+              </Button>
+              <Box sx={{ flex: 1 }} />
               <Button onClick={() => setEditorId(null)}>Close</Button>
+              <Button
+                variant="contained"
+                disabled={!editDraft.name.trim() || patchMutation.isPending}
+                onClick={() => patchMutation.mutate(editor)}
+              >
+                Save
+              </Button>
             </DialogActions>
           </>
         ) : null}
       </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(archiveTarget)}
+        title="Archive catalog item?"
+        description={
+          archiveTarget
+            ? `“${archiveTarget.name}” will be archived and deactivated.`
+            : undefined
+        }
+        confirmLabel="Archive"
+        confirmColor="error"
+        loading={archiveMutation.isPending}
+        onClose={() => {
+          if (!archiveMutation.isPending) setArchiveTarget(null)
+        }}
+        onConfirm={() => {
+          if (archiveTarget) archiveMutation.mutate(archiveTarget)
+        }}
+      />
     </Stack>
   )
 }

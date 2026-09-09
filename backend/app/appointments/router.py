@@ -118,7 +118,7 @@ def get_appointment(
     if row is None:
         raise_http(NotFoundError("Appointment not found"))
     payload = AppointmentOut.model_validate(row)
-    if row.content_purged_at is not None:
+    if row.transcript_purged_at is not None:
         payload.transcript = None
     return payload
 

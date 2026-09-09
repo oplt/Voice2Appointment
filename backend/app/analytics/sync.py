@@ -82,13 +82,16 @@ def upsert_twilio_calls(
 
     dialect = db.get_bind().dialect.name
     if dialect == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
+        from sqlalchemy.dialects.postgresql import insert as postgres_insert
+
+        stmt: Any = postgres_insert(TwilioCall).values(rows)
     elif dialect == "sqlite":
-        from sqlalchemy.dialects.sqlite import insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(TwilioCall).values(rows)
     else:
         raise RuntimeError(f"Twilio upsert does not support database dialect {dialect}")
 
-    stmt = insert(TwilioCall).values(rows)
     excluded = stmt.excluded
     terminals = tuple(TERMINAL_CALL_STATUSES)
     incoming_terminal = excluded.status.in_(terminals)
@@ -136,12 +139,14 @@ def upsert_twilio_calls(
         ),
         "updated_at": excluded.updated_at,
     }
-    conflict = (
-        {"constraint": "uq_twilio_call_user_sid"}
-        if dialect == "postgresql"
-        else {"index_elements": ["user_id", "sid"]}
-    )
-    stmt = stmt.on_conflict_do_update(**conflict, set_=update_cols, where=newer)
+    if dialect == "postgresql":
+        stmt = stmt.on_conflict_do_update(
+            constraint="uq_twilio_call_user_sid", set_=update_cols, where=newer
+        )
+    else:
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["user_id", "sid"], set_=update_cols, where=newer
+        )
     return len(db.scalars(stmt.returning(TwilioCall.id)).all())
 
 

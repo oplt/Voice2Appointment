@@ -102,9 +102,9 @@ return {count, ttl}
 def _redis_allow(key: str, *, limit: int, window_seconds: int) -> bool | None:
     """Return True/False from Redis, or None if Redis unavailable."""
     try:
-        from app.core.cache import _redis
+        from app.core.cache_backend import redis_client
 
-        client = _redis()
+        client = redis_client()
         if client is None:
             return None
         redis_key = f"rl:{key}"

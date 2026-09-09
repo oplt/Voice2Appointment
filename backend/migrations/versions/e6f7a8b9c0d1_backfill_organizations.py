@@ -1,7 +1,7 @@
 """Backfill one organization per existing user and add parallel organization IDs.
 
 Revision ID: g9b0c1d2e3f4
-Revises: f8a9b0c1d2e3
+Revises: b0c1d2e3f4a5
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from alembic import op
 
 revision = "g9b0c1d2e3f4"
-down_revision = "f8a9b0c1d2e3"
+down_revision = "b0c1d2e3f4a5"
 branch_labels = None
 depends_on = None
 

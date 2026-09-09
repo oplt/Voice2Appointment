@@ -31,7 +31,11 @@ class HandoffPolicy(BaseModel):
 
 
 class PrivacyPolicy(BaseModel):
-    """Operational privacy knobs — not a compliance claim."""
+    """Operational privacy knobs — not a regulatory certification or HIPAA claim.
+
+    ``compliance_claimed`` must remain False unless an independent assessment
+    completes; see ``app.industries.compliance``.
+    """
 
     redact_medical_from_analytics: bool = False
     redact_medical_from_logs: bool = False

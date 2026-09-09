@@ -7,6 +7,19 @@ from typing import Any
 from app.calendars import tools as calendar_tools
 from app.calendars.tool_schemas import VOICE_TOOL_DEFINITIONS
 from app.voice.registry import handlers_industry as industry
+from app.voice.registry import handlers_restaurant as restaurant
+from app.voice.registry import handlers_salon as salon
+from app.voice.registry.args_models import (
+    BookSalonServiceArgs,
+    CancelReservationArgs,
+    CheckOrderStatusArgs,
+    CreateAppointmentArgs,
+    CreateReservationArgs,
+    ModifyReservationArgs,
+    ModifySalonBookingArgs,
+    PromoteWaitlistArgs,
+    SendSecureLinkArgs,
+)
 from app.voice.registry.core import ToolRegistry
 from app.voice.registry.types import (
     IdempotencyPolicy,
@@ -39,6 +52,7 @@ def _tool(
     mutation_confirm: bool = False,
     clinic_redact: bool = False,
     timeout: TimeoutPolicy | None = None,
+    args_model: type | None = None,
 ) -> ToolDefinition:
     return ToolDefinition(
         name=name,
@@ -61,6 +75,7 @@ def _tool(
         ),
         redaction=RedactionPolicy(clinic_medical_redact=clinic_redact),
         legacy_names=legacy_names,
+        args_model=args_model,
     )
 
 
@@ -203,7 +218,7 @@ def build_default_registry() -> ToolRegistry:
     registry.register(
         _tool(
             name="create_reservation",
-            handler=industry.create_reservation_tool,
+            handler=restaurant.create_reservation_tool,
             kind=ToolKind.MUTATION,
             capability="reservation",
             description="Create a restaurant reservation using capacity allocation",
@@ -216,10 +231,31 @@ def build_default_registry() -> ToolRegistry:
                 "client_phone": {"type": "string"},
                 "seating_preference": {"type": "string"},
                 "dietary_notes": {"type": "string"},
+                "accessibility_notes": {"type": "string"},
+                "special_occasion": {"type": "string"},
                 "confirmed": {"type": "boolean"},
             },
             required=["catalog_item_id", "datetime_start", "party_size"],
             mutation_confirm=True,
+            args_model=CreateReservationArgs,
+        )
+    )
+    registry.register(
+        _tool(
+            name="modify_reservation",
+            handler=restaurant.modify_reservation_tool,
+            kind=ToolKind.MUTATION,
+            capability="reservation",
+            description="Modify party size and/or reschedule a restaurant reservation",
+            properties={
+                "reservation_id": {"type": "integer"},
+                "party_size": {"type": "integer"},
+                "datetime_start": _dt_prop("New start time"),
+                "confirmed": {"type": "boolean"},
+            },
+            required=["reservation_id"],
+            mutation_confirm=True,
+            args_model=ModifyReservationArgs,
         )
     )
     registry.register(
@@ -235,6 +271,7 @@ def build_default_registry() -> ToolRegistry:
             },
             required=["reservation_id"],
             mutation_confirm=True,
+            args_model=CancelReservationArgs,
         )
     )
     registry.register(
@@ -257,16 +294,145 @@ def build_default_registry() -> ToolRegistry:
     )
     registry.register(
         _tool(
+            name="promote_waitlist",
+            handler=restaurant.promote_waitlist_tool,
+            kind=ToolKind.MUTATION,
+            capability="waitlist",
+            description="Promote a waitlist entry when a table becomes available",
+            properties={
+                "waitlist_id": {"type": "integer"},
+                "confirmed": {"type": "boolean"},
+            },
+            required=["waitlist_id"],
+            mutation_confirm=True,
+            args_model=PromoteWaitlistArgs,
+        )
+    )
+    registry.register(
+        _tool(
+            name="find_salon_services",
+            handler=salon.find_salon_services,
+            kind=ToolKind.READ,
+            capability="salon",
+            description="List salon services from the catalog",
+            properties={"query": {"type": "string"}},
+        )
+    )
+    registry.register(
+        _tool(
+            name="find_available_staff",
+            handler=salon.find_available_staff,
+            kind=ToolKind.READ,
+            capability="salon",
+            description="List salon staff optionally filtered by skill",
+            properties={
+                "skill": {"type": "string"},
+                "location_id": {"type": "integer"},
+            },
+        )
+    )
+    registry.register(
+        _tool(
+            name="find_salon_availability",
+            handler=salon.find_salon_availability,
+            kind=ToolKind.READ,
+            capability="salon",
+            description="Find multi-resource salon availability slots",
+            properties={
+                "catalog_item_id": {"type": "integer"},
+                "datetime_start": _dt_prop("Window start"),
+                "datetime_end": _dt_prop("Window end"),
+                "location_id": {"type": "integer"},
+                "preferred_staff_id": {"type": "integer"},
+                "required_capability": {"type": "string"},
+            },
+            required=["catalog_item_id", "datetime_start"],
+        )
+    )
+    registry.register(
+        _tool(
+            name="estimate_service_price",
+            handler=salon.estimate_service_price,
+            kind=ToolKind.READ,
+            capability="salon",
+            description="Estimate salon service price including add-ons",
+            properties={
+                "catalog_item_id": {"type": "integer"},
+                "addon_item_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                },
+                "location_id": {"type": "integer"},
+            },
+            required=["catalog_item_id"],
+        )
+    )
+    registry.register(
+        _tool(
+            name="book_salon_service",
+            handler=salon.book_salon_service,
+            kind=ToolKind.MUTATION,
+            capability="salon",
+            description="Book a salon service with optional staff and add-ons",
+            properties={
+                "catalog_item_id": {"type": "integer"},
+                "datetime_start": _dt_prop("Appointment start"),
+                "addon_item_ids": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                },
+                "preferred_staff_id": {"type": "integer"},
+                "required_capability": {"type": "string"},
+                "location_id": {"type": "integer"},
+                "client_name": {"type": "string"},
+                "client_phone": {"type": "string"},
+                "confirmed": {"type": "boolean"},
+            },
+            required=["catalog_item_id", "datetime_start"],
+            mutation_confirm=True,
+            args_model=BookSalonServiceArgs,
+        )
+    )
+    registry.register(
+        _tool(
+            name="modify_salon_booking",
+            handler=salon.modify_salon_booking,
+            kind=ToolKind.MUTATION,
+            capability="salon",
+            description="Reschedule a salon booking and/or change preferred staff",
+            properties={
+                "reservation_id": {"type": "integer"},
+                "datetime_start": _dt_prop("New start time"),
+                "preferred_staff_id": {"type": "integer"},
+                "confirmed": {"type": "boolean"},
+            },
+            required=["reservation_id"],
+            mutation_confirm=True,
+            args_model=ModifySalonBookingArgs,
+        )
+    )
+    create_appointment_props = dict(legacy["create_calendar_event"]["parameters"]["properties"])
+    create_appointment_props.update(
+        {
+            "catalog_item_id": {"type": "integer"},
+            "practitioner_id": {"type": "integer"},
+            "location_id": {"type": "integer"},
+            "utterance": {"type": "string"},
+        }
+    )
+    registry.register(
+        _tool(
             name="create_appointment",
             handler=industry.create_appointment_tool,
             kind=ToolKind.MUTATION,
             capability="reservation",
             description="Create an administrative appointment after confirmation",
-            properties=legacy["create_calendar_event"]["parameters"]["properties"],
+            properties=create_appointment_props,
             required=list(legacy["create_calendar_event"]["parameters"]["required"]),
             mutation_confirm=True,
             clinic_redact=True,
             legacy_names=("create_calendar_event",),
+            args_model=CreateAppointmentArgs,
         )
     )
     registry.register(
@@ -349,7 +515,13 @@ def build_default_registry() -> ToolRegistry:
             kind=ToolKind.MUTATION,
             capability="payments",
             description="Queue a secure payment or product link",
-            properties={"purpose": {"type": "string"}},
+            properties={
+                "purpose": {"type": "string"},
+                "client_phone": {"type": "string"},
+                "client_email": {"type": "string"},
+                "client_name": {"type": "string"},
+            },
+            args_model=SendSecureLinkArgs,
         )
     )
     registry.register(
@@ -361,6 +533,7 @@ def build_default_registry() -> ToolRegistry:
             description="Check order status when connected",
             properties={"order_id": {"type": "string"}},
             required=["order_id"],
+            args_model=CheckOrderStatusArgs,
         )
     )
     return registry

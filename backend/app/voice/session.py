@@ -9,6 +9,7 @@ import logging
 import time
 from collections import deque
 from contextvars import ContextVar
+from typing import Any
 
 from app.calendars.tools import (
     voice_calendar_service,
@@ -41,6 +42,10 @@ from app.voice.providers.deepgram import (
     wait_for_message_type,
 )
 from app.voice.registry.core import get_tool_registry
+from app.voice.registry.validation import (
+    is_invalid_arguments_result,
+    validate_tool_arguments,
+)
 from app.voice.tool_runtime import get_voice_tool_runtime
 from app.voice.transcript import BoundedTranscript
 from app.voice.twilio_media import (
@@ -89,7 +94,7 @@ def execute_function_call(func_name: str, arguments: dict) -> dict:
     db = voice_db.get()
     user_id = voice_user_id.get()
     if definition is None:
-        result = {"error": f"Unknown function: {func_name}"}
+        result: dict[str, Any] = {"error": f"Unknown function: {func_name}"}
         log_event(logger, "function_call_unknown", operation=func_name)
         return result
     if not registry.is_allowed(db, user_id=user_id, tool_name=func_name):
@@ -100,7 +105,11 @@ def execute_function_call(func_name: str, arguments: dict) -> dict:
         }
         log_event(logger, "function_call_denied", operation=func_name)
         return result
-    result = definition.handler(**arguments)
+    validated = validate_tool_arguments(definition, arguments)
+    if is_invalid_arguments_result(validated):
+        log_event(logger, "function_call_invalid_args", operation=func_name)
+        return validated
+    result = definition.handler(**validated)
     if definition.redaction.clinic_medical_redact and isinstance(result, dict):
         result = redact_clinic_payload(result)
     log_event(
@@ -336,7 +345,7 @@ async def sts_receiver(
         raise
 
 
-async def cancel_tasks(*tasks: asyncio.Task) -> None:
+async def cancel_tasks(*tasks: asyncio.Task[Any] | None) -> None:
     """Cancel pending tasks and await them (Phase 7.3)."""
     pending = [t for t in tasks if t is not None and not t.done()]
     for task in pending:
@@ -480,6 +489,7 @@ class VoiceSession(TwilioMediaMixin):
         """Time-bounded, idempotent fallback independent of Deepgram."""
         if self._twilio_done.is_set() or self.call_context is None or SessionLocal is None:
             return {"success": False, "action": "disconnected"}
+        ctx = self.call_context
 
         def _fallback() -> dict[str, str | bool]:
             from app.db.models import User
@@ -487,11 +497,11 @@ class VoiceSession(TwilioMediaMixin):
 
             db = SessionLocal()
             try:
-                user = db.get(User, self.call_context.user_id)
+                user = db.get(User, ctx.user_id)
                 if user is None:
                     return {"success": False, "action": "unavailable"}
                 return execute_controlled_fallback(
-                    db, user=user, call_sid=self.call_context.call_sid
+                    db, user=user, call_sid=ctx.call_sid
                 )
             finally:
                 db.close()

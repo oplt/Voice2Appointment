@@ -1,10 +1,27 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-mui-color-scheme="light">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
     <title>Voice2Appointment</title>
+    <script>
+      ;(function () {
+        try {
+          var mode = localStorage.getItem('v2a-color-mode') || 'light'
+          var scheme = mode
+          if (mode === 'system') {
+            scheme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+          }
+          if (scheme !== 'light' && scheme !== 'dark') scheme = 'light'
+          document.documentElement.setAttribute('data-mui-color-scheme', scheme)
+          document.documentElement.style.colorScheme = scheme
+        } catch (e) {
+          document.documentElement.setAttribute('data-mui-color-scheme', 'light')
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

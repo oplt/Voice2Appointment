@@ -288,7 +288,7 @@ class TwilioMediaMixin:
             transcript = self.transcript.text() if consented else None
             if transcript is not None and capture.redact_phone_numbers:
                 transcript = redact_phones(transcript)
-            metadata = self.transcript.metadata()
+            metadata: dict[str, Any] = self.transcript.metadata()
             metadata.update(
                 {
                     "storage": "consented" if consented else "not_stored_no_consent",

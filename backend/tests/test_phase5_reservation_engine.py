@@ -11,6 +11,7 @@ from app.catalog.service import create_catalog_item
 from app.customers.service import get_or_create_customer
 from app.db.base import Base
 from app.db.models import (
+    Appointment,
     AvailabilityRule,
     Location,
     Price,
@@ -24,11 +25,17 @@ from app.db.models import (
 )
 from app.reservations.service import (
     ReservationConflictError,
+    add_line_item,
     book_reservation,
+    cancel_reservation,
+    change_resource_assignment,
     commit_reservation,
     expire_stale_holds,
     find_availability,
     hold_reservation,
+    remove_line_item,
+    reschedule_reservation,
+    update_party_size,
 )
 from app.reservations.types import AvailabilityRequest
 from app.tenancy.service import create_organization_for_user
@@ -178,7 +185,7 @@ def test_single_resource_availability_and_booking() -> None:
 
 def test_multi_resource_and_capacity_modes() -> None:
     db = _session()
-    _, organization, location = _seed_org(db)
+    user, organization, location = _seed_org(db)
     coloring = create_catalog_item(
         db,
         organization_id=organization.id,
@@ -415,3 +422,112 @@ def test_commit_verifies_hold_and_snapshots_once() -> None:
     again = commit_reservation(db, held.id, owner_user_id=user.id, sync_calendar=True)
     assert again.id == committed.id
     assert again.status == "confirmed"
+
+
+def test_reservation_lifecycle_mutations_are_idempotent() -> None:
+    db = _session()
+    user, organization, location = _seed_org(db)
+    dinner = create_catalog_item(
+        db,
+        organization_id=organization.id,
+        name="Dinner",
+        duration_minutes=60,
+        bookable=True,
+    )
+    dessert = create_catalog_item(
+        db,
+        organization_id=organization.id,
+        name="Dessert",
+        duration_minutes=15,
+        bookable=True,
+    )
+    first_table = Resource(
+        organization_id=organization.id,
+        location_id=location.id,
+        resource_type="capacity_pool",
+        name="Main dining room",
+        capacity=4,
+    )
+    second_table = Resource(
+        organization_id=organization.id,
+        location_id=location.id,
+        resource_type="capacity_pool",
+        name="Patio",
+        capacity=4,
+    )
+    db.add_all((dinner, dessert, first_table, second_table))
+    db.flush()
+    db.add(
+        ServiceResourceRequirement(
+            catalog_item_id=dinner.id,
+            resource_type="capacity_pool",
+            quantity=1,
+            required=True,
+        )
+    )
+    book = PriceBook(organization_id=organization.id, name="Menu", currency="EUR")
+    db.add(book)
+    db.flush()
+    db.add_all(
+        (
+            Price(
+                price_book_id=book.id,
+                catalog_item_id=dinner.id,
+                amount_minor=2500,
+                currency="EUR",
+            ),
+            Price(
+                price_book_id=book.id,
+                catalog_item_id=dessert.id,
+                amount_minor=700,
+                currency="EUR",
+            ),
+        )
+    )
+    db.commit()
+
+    reservation = book_reservation(
+        db,
+        organization_id=organization.id,
+        catalog_item_id=dinner.id,
+        location_id=location.id,
+        start_datetime=datetime(2030, 1, 8, 12, 0, tzinfo=timezone.utc),
+        party_size=1,
+        scheduling_mode="capacity",
+        price_book_id=book.id,
+        owner_user_id=user.id,
+        sync_calendar=True,
+    )
+    resized = update_party_size(
+        db, reservation.id, party_size=2, idempotency_key="party-2"
+    )
+    assert resized.party_size == 2
+    moved = reschedule_reservation(
+        db,
+        reservation.id,
+        start_datetime=datetime(2030, 1, 8, 14, 0, tzinfo=timezone.utc),
+        idempotency_key="move-14",
+    )
+    assert moved.start_datetime.hour == 14
+    assigned = change_resource_assignment(
+        db,
+        reservation.id,
+        resource_ids=(second_table.id,),
+        idempotency_key="patio",
+    )
+    assert assigned.allocation_json["resources"][0]["resource_id"] == second_table.id
+    addon = add_line_item(
+        db,
+        reservation.id,
+        catalog_item_id=dessert.id,
+        price_book_id=book.id,
+        idempotency_key="dessert",
+    )
+    assert addon.unit_price_minor == 700
+    remove_line_item(db, reservation.id, line_item_id=addon.id, idempotency_key="no-dessert")
+    cancelled = cancel_reservation(db, reservation.id, idempotency_key="cancel")
+    retried = cancel_reservation(db, reservation.id, idempotency_key="cancel")
+    assert cancelled.status == retried.status == "cancelled"
+    appointment = db.get(Appointment, reservation.appointment_id)
+    assert appointment is not None
+    assert appointment.status == "cancelled"

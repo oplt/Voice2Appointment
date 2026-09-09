@@ -82,8 +82,8 @@ def get_events(
     db: Session = Depends(require_db),
 ) -> CalendarEventsOut:
     try:
-        return calendars_service.list_events(
-            db, current_user.id, timeMin, timeMax, timezone
+        return CalendarEventsOut.model_validate(
+            calendars_service.list_events(db, current_user.id, timeMin, timeMax, timezone)
         )
     except Exception as exc:
         raise_http(map_exception(exc))

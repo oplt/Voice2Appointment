@@ -331,6 +331,19 @@ def retry_pending_notifications(*, limit: int = 200) -> dict:
         db.close()
 
 
+@celery_app.task(name="deliver_secure_links")
+def deliver_secure_links(*, limit: int = 50) -> dict:
+    if SessionLocal is None:
+        raise RuntimeError("DATABASE_URL is not configured")
+    from app.notifications.secure_link_worker import deliver_scheduled_secure_links
+
+    db = SessionLocal()
+    try:
+        return deliver_scheduled_secure_links(db, limit=limit)
+    finally:
+        db.close()
+
+
 @celery_app.task(name="purge_expired_retained_content")
 def purge_expired_retained_content(*, limit: int = 200) -> dict:
     if SessionLocal is None:

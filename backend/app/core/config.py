@@ -147,6 +147,9 @@ class Settings:
     )
     google_request_retries: int = int(os.getenv("GOOGLE_REQUEST_RETRIES", "2"))
 
+    stripe_secret_key: str | None = os.getenv("STRIPE_SECRET_KEY")
+    stripe_webhook_secret: str | None = os.getenv("STRIPE_WEBHOOK_SECRET")
+
     # Comma-separated CIDRs of reverse proxies allowed to set X-Forwarded-For.
     trusted_proxy_cidrs: str = os.getenv(
         "TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128,10.0.0.0/8,172.16.0.0/12"
@@ -211,6 +214,18 @@ class Settings:
     enable_catalog_domain: bool = field(default=False)
     enable_reservation_domain: bool = field(default=False)
     enable_industry_voice_tools: bool = field(default=False)
+
+    # FHIR EHR adapter (opt-in; not a compliance claim). Default disabled.
+    fhir_enabled: bool = os.getenv("FHIR_ENABLED", "false").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    fhir_base_url: str = os.getenv("FHIR_BASE_URL", "").strip()
+    fhir_bearer_token: str | None = (
+        os.getenv("FHIR_BEARER_TOKEN", "").strip() or None
+    )
+    fhir_timeout_seconds: float = float(os.getenv("FHIR_TIMEOUT_SECONDS", "15"))
 
     redis_socket_connect_timeout: float = float(
         os.getenv("REDIS_SOCKET_CONNECT_TIMEOUT", "0.5")

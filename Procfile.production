@@ -1,11 +1,13 @@
 # Production-style process split (Honcho / Heroku-like).
 # Local day-to-day: use Procfile (combined API+WS for convenience).
 
+# HTTP/voice: DB_POOL_SIZE=5 (default). Celery children: DB_POOL_SIZE=2 — see
+# docs/phase3-connection-budget.md (prefork concurrency × pool).
 web: cd backend && PYTHONPATH=. ../.venv/bin/gunicorn asgi:app -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 --workers 2
 voice: cd backend && PYTHONPATH=. ../.venv/bin/uvicorn voice_asgi:app --host 0.0.0.0 --port 8001
-worker_critical: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q critical --concurrency 2 --loglevel=INFO
-worker_notifications: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q notifications --concurrency 2 --loglevel=INFO
-worker_provider_sync: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q provider_sync --concurrency 2 --loglevel=INFO
-worker_media: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q media --concurrency 1 --loglevel=INFO
-worker_maintenance: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q maintenance --concurrency 1 --loglevel=INFO
+worker_critical: cd backend && DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q critical --concurrency 2 --loglevel=INFO
+worker_notifications: cd backend && DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q notifications --concurrency 2 --loglevel=INFO
+worker_provider_sync: cd backend && DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q provider_sync --concurrency 2 --loglevel=INFO
+worker_media: cd backend && DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q media --concurrency 1 --loglevel=INFO
+worker_maintenance: cd backend && DB_POOL_SIZE=2 DB_MAX_OVERFLOW=0 PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app worker -Q maintenance --concurrency 1 --loglevel=INFO
 beat: cd backend && PYTHONPATH=. ../.venv/bin/celery -A app.workers.celery_app.celery_app beat --loglevel=INFO

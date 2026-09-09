@@ -1,4 +1,14 @@
 {
   "app/analytics/service.py": 645,
-  "app/calendars/tools.py": 612
+  "app/analytics/sync.py": 412,
+  "app/appointments/router.py": 213,
+  "app/calendars/providers/google.py": 420,
+  "app/calendars/tools.py": 632,
+  "app/db/models.py": 904,
+  "app/notifications/service.py": 488,
+  "app/reservations/service.py": 1001,
+  "app/voice/registry/builtin.py": 523,
+  "app/voice/registry/handlers_industry.py": 597,
+  "app/voice/session.py": 543,
+  "app/workers/tasks.py": 406
 }

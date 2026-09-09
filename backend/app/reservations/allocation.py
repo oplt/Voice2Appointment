@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
+from itertools import combinations
 from typing import Iterable
 
 from sqlalchemy import Select, or_, select
@@ -12,12 +14,15 @@ from app.db.models import (
     Reservation,
     ReservationResource,
     Resource,
+    ResourceAdjacency,
     ResourceCapability,
     ServiceResourceRequirement,
 )
 from app.reservations.types import ResourceAllocation, SchedulingMode
 
 _ACTIVE_STATUSES = frozenset({"held", "confirmed", "pending", "pending_provider"})
+_EXCLUSIVE_CAPACITY_TYPES = frozenset({"table", "dining_area"})
+_COMBO_MAX_TABLES = 3
 
 
 class AllocationError(ValueError):
@@ -158,6 +163,93 @@ def _candidate_resources(
     ]
 
 
+def _adjacency_neighbor_ids(
+    db: Session,
+    *,
+    organization_id: int,
+    resource_ids: set[int],
+) -> set[int]:
+    if not resource_ids:
+        return set()
+    rows = db.execute(
+        select(ResourceAdjacency.resource_a_id, ResourceAdjacency.resource_b_id).where(
+            ResourceAdjacency.organization_id == organization_id,
+            ResourceAdjacency.active.is_(True),
+            or_(
+                ResourceAdjacency.resource_a_id.in_(resource_ids),
+                ResourceAdjacency.resource_b_id.in_(resource_ids),
+            ),
+        )
+    )
+    neighbors: set[int] = set()
+    for left, right in rows:
+        neighbors.add(int(left))
+        neighbors.add(int(right))
+    return neighbors
+
+
+def _load_adjacency_graph(
+    db: Session,
+    *,
+    organization_id: int,
+    resource_ids: Iterable[int],
+) -> dict[int, set[int]]:
+    ids = {int(resource_id) for resource_id in resource_ids}
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(ResourceAdjacency.resource_a_id, ResourceAdjacency.resource_b_id).where(
+            ResourceAdjacency.organization_id == organization_id,
+            ResourceAdjacency.active.is_(True),
+            ResourceAdjacency.resource_a_id.in_(ids),
+            ResourceAdjacency.resource_b_id.in_(ids),
+        )
+    )
+    graph: dict[int, set[int]] = defaultdict(set)
+    for left, right in rows:
+        a, b = int(left), int(right)
+        graph[a].add(b)
+        graph[b].add(a)
+    return graph
+
+
+def matching_resource_ids(
+    db: Session,
+    *,
+    organization_id: int,
+    location_id: int | None,
+    requirements: list[ServiceResourceRequirement],
+    preferred_resource_ids: tuple[int, ...] = (),
+    required_capabilities: tuple[str, ...] = (),
+) -> tuple[int, ...]:
+    """Return every resource that could satisfy the requested allocation.
+
+    Callers use this set to acquire deterministic resource locks before the
+    allocation's overlapping-usage query is evaluated. Adjacency neighbors of
+    table/dining candidates are included so combo bookings lock the full set.
+    """
+    resource_ids: set[int] = set()
+    for requirement in requirements:
+        if not requirement.required:
+            continue
+        resource_ids.update(
+            resource.id
+            for resource in _candidate_resources(
+                db,
+                organization_id=organization_id,
+                location_id=location_id,
+                resource_type=requirement.resource_type,
+                capability=requirement.capability,
+                preferred_resource_ids=preferred_resource_ids,
+                extra_capabilities=required_capabilities,
+            )
+        )
+    resource_ids |= _adjacency_neighbor_ids(
+        db, organization_id=organization_id, resource_ids=resource_ids
+    )
+    return tuple(sorted(resource_ids))
+
+
 def _pick_exclusive(
     candidates: list[Resource],
     usage: dict[int, int],
@@ -203,6 +295,65 @@ def _pick_capacity(
     return None
 
 
+def _is_connected(node_ids: set[int], graph: dict[int, set[int]]) -> bool:
+    if not node_ids:
+        return False
+    start = next(iter(node_ids))
+    seen = {start}
+    stack = [start]
+    while stack:
+        current = stack.pop()
+        for neighbor in graph.get(current, ()):
+            if neighbor in node_ids and neighbor not in seen:
+                seen.add(neighbor)
+                stack.append(neighbor)
+    return seen == node_ids
+
+
+def _pick_capacity_combo(
+    candidates: list[Resource],
+    usage: dict[int, int],
+    graph: dict[int, set[int]],
+    *,
+    party_size: int,
+) -> list[ResourceAllocation] | None:
+    """Combine adjacent exclusive tables/dining areas (max 3) to fit party_size."""
+    free = [
+        r
+        for r in candidates
+        if usage.get(r.id, 0) <= 0
+        and (r.resource_type or "").casefold() in _EXCLUSIVE_CAPACITY_TYPES
+    ]
+    if len(free) < 2:
+        return None
+    by_id = {r.id: r for r in free}
+    free_ids = sorted(by_id)
+    best: tuple[int, int, tuple[int, ...]] | None = None
+    for size in range(2, min(_COMBO_MAX_TABLES, len(free_ids)) + 1):
+        for combo in combinations(free_ids, size):
+            if not _is_connected(set(combo), graph):
+                continue
+            total = sum(by_id[rid].capacity for rid in combo)
+            if total < party_size:
+                continue
+            key = (size, total - party_size, combo)
+            if best is None or key < best:
+                best = key
+        if best is not None and best[0] == size:
+            break
+    if best is None:
+        return None
+    return [
+        ResourceAllocation(
+            resource_id=rid,
+            resource_name=by_id[rid].name,
+            resource_type=by_id[rid].resource_type,
+            quantity=by_id[rid].capacity,
+        )
+        for rid in best[2]
+    ]
+
+
 def allocate_resources(
     db: Session,
     *,
@@ -213,6 +364,7 @@ def allocate_resources(
     requirements: list[ServiceResourceRequirement],
     party_size: int = 1,
     preferred_resource_ids: tuple[int, ...] = (),
+    allowed_resource_ids: tuple[int, ...] = (),
     required_capabilities: tuple[str, ...] = (),
     scheduling_mode: SchedulingMode | None = None,
     exclude_reservation_id: int | None = None,
@@ -224,7 +376,6 @@ def allocate_resources(
 
     allocations: list[ResourceAllocation] = []
     claimed: set[int] = set()
-
     for requirement in requirements:
         if not requirement.required:
             continue
@@ -241,6 +392,9 @@ def allocate_resources(
             )
             if resource.id not in claimed
         ]
+        if allowed_resource_ids:
+            allowed = set(allowed_resource_ids)
+            candidates = [resource for resource in candidates if resource.id in allowed]
         if not candidates:
             raise AllocationError("no matching resources for requirement")
         usage = overlapping_resource_usage(
@@ -253,13 +407,30 @@ def allocate_resources(
         )
         quantity = max(1, int(requirement.quantity or 1))
         if mode == "capacity":
-            pick = _pick_capacity(candidates, usage, party_size=max(party_size, quantity))
+            need = max(party_size, quantity)
+            rtype = (requirement.resource_type or "").casefold()
+            single = _pick_capacity(candidates, usage, party_size=need)
+            if single is not None:
+                picks = [single]
+            elif rtype in _EXCLUSIVE_CAPACITY_TYPES:
+                graph = _load_adjacency_graph(
+                    db,
+                    organization_id=organization_id,
+                    resource_ids=[resource.id for resource in candidates],
+                )
+                picks = _pick_capacity_combo(candidates, usage, graph, party_size=need) or []
+                if not picks:
+                    raise AllocationError("insufficient resource capacity for requested slot")
+            else:
+                raise AllocationError("insufficient resource capacity for requested slot")
         else:
             pick = _pick_exclusive(candidates, usage, quantity=quantity)
-        if pick is None:
-            raise AllocationError("insufficient resource capacity for requested slot")
-        allocations.append(pick)
-        claimed.add(pick.resource_id)
+            if pick is None:
+                raise AllocationError("insufficient resource capacity for requested slot")
+            picks = [pick]
+        for pick in picks:
+            allocations.append(pick)
+            claimed.add(pick.resource_id)
 
     if mode == "single_resource" and len(allocations) > 1:
         mode = "multi_resource"

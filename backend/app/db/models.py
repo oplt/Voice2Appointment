@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     Boolean,
+    CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
@@ -73,6 +74,27 @@ class OrganizationMember(TimestampMixin, Base):
         Integer, ForeignKey("res_user.id", ondelete="CASCADE"), nullable=False, index=True
     )
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="owner")
+
+
+class OrganizationInvitation(TimestampMixin, Base):
+    __tablename__ = "organization_invitation"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "email", name="uq_org_invitation_email"),
+        Index("ix_org_invitation_token_hash", "token_hash", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    invited_by_user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("res_user.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
 
 class User(Base):
@@ -582,6 +604,9 @@ class CatalogItem(TimestampMixin, Base):
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     buffer_before_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     buffer_after_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=1, server_default="1"
+    )
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
     )
@@ -615,7 +640,14 @@ class PriceBook(TimestampMixin, Base):
 
 class Price(TimestampMixin, Base):
     __tablename__ = "price"
-    __table_args__ = (Index("ix_price_book_item_effective", "price_book_id", "catalog_item_id", "effective_from"),)
+    __table_args__ = (
+        CheckConstraint("amount_minor >= 0", name="ck_price_amount_minor_nonnegative"),
+        CheckConstraint(
+            "effective_until IS NULL OR effective_from IS NULL OR effective_until > effective_from",
+            name="ck_price_effective_window",
+        ),
+        Index("ix_price_book_item_effective", "price_book_id", "catalog_item_id", "effective_from"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     price_book_id: Mapped[int] = mapped_column(
@@ -662,6 +694,28 @@ class ResourceCapability(Base):
         Integer, ForeignKey("resource.id", ondelete="CASCADE"), nullable=False, index=True
     )
     capability: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
+class ResourceAdjacency(TimestampMixin, Base):
+    """Undirected adjacency between combinable resources (e.g. restaurant tables)."""
+
+    __tablename__ = "resource_adjacency"
+    __table_args__ = (
+        UniqueConstraint("resource_a_id", "resource_b_id", name="uq_resource_adjacency_pair"),
+        CheckConstraint("resource_a_id < resource_b_id", name="ck_resource_adjacency_ordered"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    resource_a_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("resource.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    resource_b_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("resource.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
 
 class ServiceResourceRequirement(Base):
@@ -714,6 +768,98 @@ class Customer(TimestampMixin, Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     consent_preferences: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class Order(TimestampMixin, Base):
+    """Minimal order status surface for voice/product lookups."""
+
+    __tablename__ = "customer_order"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "external_id", name="uq_customer_order_org_external"),
+        Index("ix_customer_order_org_status", "organization_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    external_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(64), nullable=False, default="unknown")
+    customer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("customer.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+
+
+class SecureLinkDelivery(TimestampMixin, Base):
+    """Tokenized secure-link outbox (payment / portal / intake)."""
+
+    __tablename__ = "secure_link_delivery"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_secure_link_delivery_idem"),
+        Index("ix_secure_link_delivery_org_status", "organization_id", "status"),
+        Index("ix_secure_link_delivery_token_hash", "token_hash", unique=True),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    customer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("customer.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False, default="payment")
+    channel: Mapped[str] = mapped_column(String(16), nullable=False)
+    recipient: Mapped[str] = mapped_column(String(255), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    token_ciphertext: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="scheduled", server_default="scheduled"
+    )
+    expires_at: Mapped[datetime] = mapped_column(TZDateTime, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sent_at: Mapped[datetime | None] = mapped_column(TZDateTime, nullable=True)
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+
+
+class PaymentIntent(TimestampMixin, Base):
+    """Deposit / fee / payment capture intent (manual link or Stripe)."""
+
+    __tablename__ = "payment_intent"
+    __table_args__ = (Index("ix_payment_intent_org_status", "organization_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reservation_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("reservation.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    customer_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("customer.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False, default="EUR")
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False, default="deposit")
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="manual")
+    provider_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="pending", server_default="pending"
+    )
+    secure_link_delivery_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("secure_link_delivery.id", ondelete="SET NULL"), nullable=True
+    )
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
 
 
 class Reservation(TimestampMixin, Base):
@@ -769,6 +915,41 @@ class ReservationLineItem(Base):
     unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     tax_metadata: Mapped[dict[str, Any]] = mapped_column(JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'"))
+
+
+class ReservationLifecycleOperation(TimestampMixin, Base):
+    """Durable idempotency record for reservation mutations.
+
+    Reservation creation has its own idempotency key.  Lifecycle changes need
+    separate keys so a retried cancellation, reschedule, or line-item change
+    never gets mistaken for the original booking request.
+    """
+
+    __tablename__ = "reservation_lifecycle_operation"
+    __table_args__ = (
+        UniqueConstraint(
+            "reservation_id", "operation", "idempotency_key",
+            name="uq_reservation_lifecycle_operation_idem",
+        ),
+        Index("ix_reservation_lifecycle_operation_org", "organization_id", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    organization_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("organization.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    reservation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("reservation.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
+    payload: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
+    result: Mapped[dict[str, Any]] = mapped_column(
+        JSON_TYPE, nullable=False, default=dict, server_default=text("'{}'")
+    )
 
 
 class KnowledgeEntry(TimestampMixin, Base):

@@ -95,13 +95,15 @@ class VoiceToolRuntime:
                     labels={"operation": operation, "result": result},
                 )
 
-        submitted = self._executor.submit(invoke)
-        while not submitted.done():
-            # Do not use the event loop's shared default executor; this runtime
-            # owns its bounded workers. A short cooperative poll also works for
-            # event loops that are recreated by isolated voice tests.
-            await asyncio.sleep(0.001)
-        return submitted.result()
+        try:
+            submitted = self._executor.submit(invoke)
+        except Exception:
+            # Admission was taken before submit; release if the executor rejects work.
+            self._admission.release()
+            metrics.incr("voice_tool_admission", labels={"result": "submit_failed"})
+            raise
+        # Prefer wrap_future over 1ms polling — fewer event-loop wakeups.
+        return await asyncio.wrap_future(submitted)
 
     def shutdown(self) -> None:
         self._closed = True

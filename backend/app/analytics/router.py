@@ -15,11 +15,16 @@ from app.core.config import settings
 from app.core.errors import ProviderUnavailableError, ValidationAppError, raise_http
 from app.core.rate_limit import rate_limit
 from app.db.models import User
+from app.tenancy.api import require_org_permission
 
 router = APIRouter(prefix="/analytics", tags=["analytics"])
 
 
-@router.get("/meta", response_model=AnalyticsMetaResponse)
+@router.get(
+    "/meta",
+    response_model=AnalyticsMetaResponse,
+    dependencies=[Depends(require_org_permission("analytics.read"))],
+)
 def get_meta(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
@@ -28,7 +33,11 @@ def get_meta(
     return analytics_service.analytics_meta(db, current_user.id)
 
 
-@router.get("/summary", response_model=AnalyticsSummaryResponse)
+@router.get(
+    "/summary",
+    response_model=AnalyticsSummaryResponse,
+    dependencies=[Depends(require_org_permission("analytics.read"))],
+)
 def get_summary(
     start: date | None = Query(None),
     end: date | None = Query(None),
@@ -47,7 +56,8 @@ def get_summary(
 @router.post(
     "/fetch-twilio",
     dependencies=[
-        Depends(rate_limit(limit=5, window_seconds=60, name="fetch-twilio"))
+        Depends(rate_limit(limit=5, window_seconds=60, name="fetch-twilio")),
+        Depends(require_org_permission("integration.manage")),
     ],
 )
 def fetch_twilio(

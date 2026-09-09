@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
-from sqlalchemy import event, inspect
+from sqlalchemy import event, inspect, update
 from sqlalchemy.orm import Session
 
 _PENDING = "cache_generation_pending"
@@ -25,7 +25,8 @@ def _invalidations(instance: Any) -> tuple[int | None, frozenset[str]]:
     if isinstance(instance, GoogleCalendarAuth):
         return instance.user_id, frozenset({"calendar", "dashboard"})
     if isinstance(instance, User):
-        if instance in inspect(instance).session.new:
+        instance_session = inspect(instance).session
+        if instance_session is not None and instance in instance_session.new:
             return instance.id, frozenset({"settings", "dashboard"})
         tracked = (
             "username",
@@ -69,15 +70,17 @@ def _after_flush(session: Session, _context: Any) -> None:
     for user_id, namespace in pending:
         by_user[user_id].add(namespace)
     columns = {
-        "calendar": User.__table__.c.cache_calendar_version,
-        "dashboard": User.__table__.c.cache_dashboard_version,
-        "analytics": User.__table__.c.cache_analytics_version,
-        "settings": User.__table__.c.cache_settings_version,
+        "calendar": "cache_calendar_version",
+        "dashboard": "cache_dashboard_version",
+        "analytics": "cache_analytics_version",
+        "settings": "cache_settings_version",
     }
     for user_id, namespaces in by_user.items():
-        values = {columns[name]: columns[name] + 1 for name in namespaces}
+        values = {
+            columns[name]: getattr(User, columns[name]) + 1 for name in namespaces
+        }
         session.execute(
-            User.__table__.update().where(User.__table__.c.id == user_id).values(values)
+            update(User).where(User.id == user_id).values(values)
         )
         memo = session.info.get("cache_generation_memo")
         if isinstance(memo, dict):
@@ -94,20 +97,20 @@ def advance_cache_generations(
     from app.db.models import User
 
     columns = {
-        "calendar": User.__table__.c.cache_calendar_version,
-        "dashboard": User.__table__.c.cache_dashboard_version,
-        "analytics": User.__table__.c.cache_analytics_version,
-        "settings": User.__table__.c.cache_settings_version,
+        "calendar": "cache_calendar_version",
+        "dashboard": "cache_dashboard_version",
+        "analytics": "cache_analytics_version",
+        "settings": "cache_settings_version",
     }
     values = {
-        columns[name]: columns[name] + 1
+        columns[name]: getattr(User, columns[name]) + 1
         for name in set(namespaces)
         if name in columns
     }
     if not values:
         return
     session.execute(
-        User.__table__.update().where(User.__table__.c.id == user_id).values(values)
+        update(User).where(User.id == user_id).values(values)
     )
     memo = session.info.get("cache_generation_memo")
     if isinstance(memo, dict):

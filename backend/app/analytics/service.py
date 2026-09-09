@@ -10,6 +10,12 @@ import phonenumbers
 import pycountry
 from sqlalchemy.orm import Session
 
+from app.analytics.sync import fetch_and_store_twilio as _fetch_and_store_twilio
+from app.analytics.sync import upsert_twilio_calls
+from app.telephony.providers.twilio import TwilioProvider
+
+__all__ = ["fetch_and_store_twilio", "upsert_twilio_calls"]
+
 WEEKDAY_ORDER = [0, 1, 2, 3, 4, 5, 6]
 WEEKDAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
@@ -598,10 +604,6 @@ def analytics_summary(
 
     cache_set(cache_key, processed, ttl_seconds=ttl)
     return processed
-
-
-from app.analytics.sync import fetch_and_store_twilio as _fetch_and_store_twilio, upsert_twilio_calls  # noqa: E402,F401
-from app.telephony.providers.twilio import TwilioProvider  # noqa: E402
 
 
 def fetch_and_store_twilio(*args: Any, **kwargs: Any) -> dict[str, Any]:

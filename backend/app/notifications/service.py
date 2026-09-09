@@ -277,7 +277,7 @@ def _claim_delivery(db: Session, delivery_id: int, *, now: datetime) -> bool:
         .execution_options(synchronize_session=False)
     )
     db.commit()
-    return result.rowcount == 1
+    return int(getattr(result, "rowcount", 0) or 0) == 1
 
 
 def deliver_notification(

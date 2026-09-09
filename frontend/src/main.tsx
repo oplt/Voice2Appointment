@@ -12,7 +12,7 @@ import theme from './theme/theme'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider theme={theme}>
+    <ThemeProvider theme={theme} defaultMode="light" modeStorageKey="v2a-color-mode">
       <CssBaseline />
       <BrowserRouter>
         <AppProviders>

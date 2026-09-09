@@ -65,3 +65,49 @@ def list_waitlist(
             )
         ).all()
     )
+
+
+def promote_waitlist(
+    db: Session,
+    entry_id: int,
+    *,
+    organization_id: int,
+    actor_user_id: int | None = None,
+) -> WaitlistEntry:
+    entry = db.get(WaitlistEntry, entry_id)
+    if entry is None or entry.organization_id != organization_id:
+        raise ValueError("waitlist entry not found")
+    if entry.status in {"cancelled", "promoted"}:
+        raise ValueError(f"waitlist entry is already {entry.status}")
+    metadata = dict(entry.metadata_json or {})
+    metadata["promoted_at"] = datetime.now(timezone.utc).isoformat()
+    if actor_user_id is not None:
+        metadata["promoted_by_user_id"] = actor_user_id
+    # NotificationDelivery is appointment-scoped; record intent for outbound later.
+    metadata["notify_pending"] = True
+    entry.metadata_json = metadata
+    entry.status = "promoted"
+    db.flush()
+    return entry
+
+
+def cancel_waitlist_entry(
+    db: Session,
+    entry_id: int,
+    *,
+    organization_id: int,
+    actor_user_id: int | None = None,
+) -> WaitlistEntry:
+    entry = db.get(WaitlistEntry, entry_id)
+    if entry is None or entry.organization_id != organization_id:
+        raise ValueError("waitlist entry not found")
+    if entry.status == "cancelled":
+        return entry
+    metadata = dict(entry.metadata_json or {})
+    metadata["cancelled_at"] = datetime.now(timezone.utc).isoformat()
+    if actor_user_id is not None:
+        metadata["cancelled_by_user_id"] = actor_user_id
+    entry.metadata_json = metadata
+    entry.status = "cancelled"
+    db.flush()
+    return entry

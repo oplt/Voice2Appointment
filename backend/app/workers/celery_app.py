@@ -37,6 +37,7 @@ celery_app.conf.update(
         "send_appointment_confirmation": {"queue": "notifications"},
         "send_appointment_reminders": {"queue": "notifications"},
         "retry_pending_notifications": {"queue": "notifications"},
+        "deliver_secure_links": {"queue": "notifications"},
         "process_password_reset_request": {"queue": "notifications"},
         "sync_twilio_for_user": {"queue": "provider_sync"},
         "sync_all_twilio_analytics": {"queue": "provider_sync"},
@@ -72,6 +73,10 @@ celery_app.conf.update(
         "retry-pending-notifications": {
             "task": "retry_pending_notifications",
             "schedule": crontab(minute="*/5"),
+        },
+        "deliver-secure-links": {
+            "task": "deliver_secure_links",
+            "schedule": crontab(minute="*/2"),
         },
         "purge-expired-retained-content": {
             "task": "purge_expired_retained_content",

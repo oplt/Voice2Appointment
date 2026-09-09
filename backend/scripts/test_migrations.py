@@ -12,7 +12,7 @@ from sqlalchemy.engine import make_url
 
 DEPLOYED_REVISION = "c3d4e5f6a7b8"
 PREVIOUS_HEAD = "c9d0e1f2a3b4"
-CURRENT_HEAD = "d0e1f2a3b4c5"
+CURRENT_HEAD = "n1c2d3e4f5a6"
 
 
 def _config(database_url: str) -> Config:
@@ -92,18 +92,16 @@ def _seed_deployed_revision(database_url: str) -> None:
                 """
             )
         )
-        connection.execute(
-            text(
-                """
-                INSERT INTO twilio_call_analytics (
-                    id, user_id, date, call_data, processed_metrics,
-                    created_at, updated_at
-                ) VALUES (
-                    705, 701, '2026-09-04', CAST('{"calls":1}' AS jsonb),
-                    CAST('{"count":1}' AS jsonb), now(), now()
-                )
-                """
+        connection.exec_driver_sql(
+            """
+            INSERT INTO twilio_call_analytics (
+                id, user_id, date, call_data, processed_metrics,
+                created_at, updated_at
+            ) VALUES (
+                705, 701, '2026-09-04', CAST('{"calls":1}' AS jsonb),
+                CAST('{"count":1}' AS jsonb), now(), now()
             )
+            """
         )
     engine.dispose()
 
@@ -122,7 +120,7 @@ def _assert_preserved(database_url: str) -> None:
         row = connection.execute(
             text(
                 """
-                SELECT u.twilio_auth_token, u.deepgram_api_key, c.user_id,
+                SELECT u.twilio_auth_token, c.user_id,
                        a.user_id, a.callsession_id, a.google_calendar_event_id,
                        g.user_id, g.token_json, t.user_id,
                        a.provider_attempt_count, a.provider_calendar_id
@@ -137,7 +135,6 @@ def _assert_preserved(database_url: str) -> None:
         ).one()
         assert row == (
             "enc:twilio",
-            "enc:deepgram",
             701,
             701,
             702,

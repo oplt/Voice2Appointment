@@ -147,3 +147,76 @@ def ehr_lookup_patient(
     return (adapter or get_ehr_adapter()).lookup_patient(
         organization_id=organization_id, phone=phone, email=email
     )
+
+
+def verify_patient_identity(
+    db: Session,
+    *,
+    organization_id: int,
+    phone: str | None = None,
+    email: str | None = None,
+    require_ehr: bool = False,
+    adapter: EHRPort | None = None,
+    actor_user_id: int | None = None,
+) -> dict[str, Any]:
+    """Match local customer + optional EHR patient. Administrative only."""
+    from app.db.models import Customer
+    from app.industries.compliance import record_clinic_audit, require_consent_flag
+
+    local = None
+    if phone or email:
+        stmt = select(Customer).where(Customer.organization_id == organization_id)
+        if phone:
+            stmt = stmt.where(Customer.phone == phone)
+        elif email:
+            stmt = stmt.where(Customer.email == email)
+        local = db.scalar(stmt)
+    ehr = ehr_lookup_patient(
+        organization_id=organization_id, phone=phone, email=email, adapter=adapter
+    )
+    verified = local is not None or ehr is not None
+    consent_ok = require_consent_flag(local, "identity_verification", default=True)
+    if require_ehr and ehr is None:
+        result = {
+            "verified": False,
+            "reason": "ehr_patient_required",
+            "action": "request_human_handoff",
+            "customer_id": local.id if local is not None else None,
+            "consent_ok": consent_ok,
+        }
+    else:
+        result = {
+            "verified": verified,
+            "reason": "matched" if verified else "not_found",
+            "customer_id": local.id if local is not None else None,
+            "ehr_external_id": ehr.external_id if ehr is not None else None,
+            "consent_ok": consent_ok,
+        }
+    record_clinic_audit(
+        db,
+        organization_id,
+        actor_user_id=actor_user_id,
+        action="verify_patient_identity",
+        entity_type="customer",
+        entity_id=str(local.id) if local is not None else None,
+        data={
+            "verified": result["verified"],
+            "reason": result["reason"],
+            "consent_ok": consent_ok,
+            "ehr_matched": ehr is not None,
+        },
+    )
+    return result
+
+
+def practitioner_external_id(db: Session, resource: Resource) -> str | None:
+    """External EHR id when stored as capability ``ehr:<id>``."""
+    for capability in db.scalars(
+        select(ResourceCapability.capability).where(
+            ResourceCapability.resource_id == resource.id
+        )
+    ):
+        text = str(capability)
+        if text.startswith("ehr:"):
+            return text.split(":", 1)[1] or None
+    return None

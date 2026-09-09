@@ -13,6 +13,7 @@ from app.appointments.router import router as appointments_router
 from app.auth.router import router as auth_router
 from app.calendars.router import router as calendars_router
 from app.calls.router import router as calls_router
+from app.catalog.api import router as catalog_router
 from app.core.config import settings
 from app.core.errors import register_exception_handlers
 from app.core.logging import setup_logging
@@ -24,9 +25,16 @@ from app.core.middleware import (
     SecurityHeadersMiddleware,
 )
 from app.core.sentry import init_sentry
+from app.customers.api import router as customers_router
 from app.dashboard.router import router as dashboard_router
 from app.health.router import router as health_router
+from app.industries.api import router as industries_router
+from app.payments.api import router as payments_router
+from app.pricing.api import router as pricing_router
+from app.reservations.api import router as reservations_router
+from app.resources.api import router as resources_router
 from app.telephony.router import router as telephony_router
+from app.tenancy.api import router as tenancy_router
 from app.users.router import router as users_router
 from app.voice.gateway import router as voice_router
 
@@ -35,6 +43,18 @@ from app.voice.gateway import router as voice_router
 async def lifespan(_app: FastAPI):
     settings.require_runtime_secrets()
     init_sentry()
+    if settings.fhir_enabled and settings.fhir_base_url:
+        from app.industries.ehr import set_ehr_adapter
+        from app.industries.fhir import FhirEHRAdapter
+
+        set_ehr_adapter(
+            FhirEHRAdapter(
+                base_url=settings.fhir_base_url,
+                bearer_token=settings.fhir_bearer_token,
+                enabled=True,
+                timeout_seconds=settings.fhir_timeout_seconds,
+            )
+        )
     try:
         yield
     finally:
@@ -111,6 +131,14 @@ def create_app(
         application.include_router(calendars_router, prefix="/api/v1")
         application.include_router(analytics_router, prefix="/api/v1")
         application.include_router(telephony_router, prefix="/api/v1")
+        application.include_router(tenancy_router, prefix="/api/v1")
+        application.include_router(catalog_router, prefix="/api/v1")
+        application.include_router(pricing_router, prefix="/api/v1")
+        application.include_router(resources_router, prefix="/api/v1")
+        application.include_router(customers_router, prefix="/api/v1")
+        application.include_router(reservations_router, prefix="/api/v1")
+        application.include_router(industries_router, prefix="/api/v1")
+        application.include_router(payments_router, prefix="/api/v1")
 
     if include_voice:
         application.include_router(voice_router)

@@ -27,6 +27,13 @@ def reconcile_pending_appointment(
     provider_update: ProviderCall | None = None,
     provider_delete: ProviderCall | None = None,
 ) -> dict[str, Any]:
+    def sync_reservation() -> None:
+        # A reservation may be the domain owner for this appointment.  Keep its
+        # visible lifecycle state aligned after a retry finalizes or fails.
+        from app.reservations.service import synchronize_reservation_from_appointment
+
+        synchronize_reservation_from_appointment(db, row.id)
+
     if row.provider_sync_status != "pending_provider":
         return {"id": row.id, "action": "skip"}
     operation = row.provider_operation or "create"
@@ -36,6 +43,7 @@ def reconcile_pending_appointment(
             row.status = "failed"
         row.provider_next_retry_at = None
         db.commit()
+        sync_reservation()
         return {"id": row.id, "action": "failed", "operation": operation}
     hook = {
         "create": provider_create,
@@ -47,6 +55,7 @@ def reconcile_pending_appointment(
         if claimed is None:
             return {"id": row.id, "action": "leased", "operation": operation}
         _record_failure(db, row.id, RuntimeError("provider hook unavailable"))
+        sync_reservation()
         db.expire_all()
         current = db.get(Appointment, row.id)
         action = "failed" if current and current.provider_sync_status == "failed" else "retry"
@@ -61,6 +70,8 @@ def reconcile_pending_appointment(
         else:
             raise RuntimeError("unknown provider operation")
     except Exception:
+        sync_reservation()
         return {"id": row.id, "action": "retry", "operation": operation}
+    sync_reservation()
     action = "finalized" if result.provider_sync_status == "confirmed" else "leased"
     return {"id": row.id, "action": action, "operation": operation}

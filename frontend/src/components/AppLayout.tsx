@@ -1,15 +1,18 @@
+import CalendarMonthOutlinedIcon from '@mui/icons-material/CalendarMonthOutlined'
 import MenuIcon from '@mui/icons-material/Menu'
 import AppBar from '@mui/material/AppBar'
 import Box from '@mui/material/Box'
 import Drawer from '@mui/material/Drawer'
 import IconButton from '@mui/material/IconButton'
 import Toolbar from '@mui/material/Toolbar'
+import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
 import { useEffect, useState } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Link as RouterLink, Outlet, useLocation } from 'react-router-dom'
 
 import { designTokens } from '../theme/tokens'
 import { SkipLink } from './SkipLink'
+import { ThemeModeToggle } from './ThemeModeToggle'
 import { AppSidebar } from './navigation/AppSidebar'
 import {
   NAV_COLLAPSED_WIDTH,
@@ -62,7 +65,7 @@ export function AppLayout() {
           transition: `width ${designTokens.motion.duration} ${designTokens.motion.easing}, margin ${designTokens.motion.duration} ${designTokens.motion.easing}`,
         }}
       >
-        <Toolbar>
+        <Toolbar sx={{ gap: 0.5 }}>
           <IconButton
             color="inherit"
             edge="start"
@@ -77,6 +80,18 @@ export function AppLayout() {
           <Typography variant="h5" component="p" sx={{ flexGrow: 1, m: 0 }}>
             {active?.label ?? 'App'}
           </Typography>
+          <ThemeModeToggle />
+          <Tooltip title="Calendar">
+            <IconButton
+              color="inherit"
+              component={RouterLink}
+              to="/calendar"
+              aria-label="Open calendar"
+              size="small"
+            >
+              <CalendarMonthOutlinedIcon />
+            </IconButton>
+          </Tooltip>
         </Toolbar>
       </AppBar>
 

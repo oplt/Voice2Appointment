@@ -150,6 +150,7 @@ def _price_estimate(
     catalog_item: CatalogItem,
     location_id: int | None,
     price_book_id: int | None,
+    channel: str | None,
 ) -> PriceEstimate | None:
     book_id = price_book_id
     if book_id is None:
@@ -163,7 +164,11 @@ def _price_estimate(
     if book_id is None:
         return None
     price = active_price(
-        db, price_book_id=book_id, catalog_item_id=catalog_item.id, location_id=location_id
+        db,
+        price_book_id=book_id,
+        catalog_item_id=catalog_item.id,
+        location_id=location_id,
+        channel=channel,
     )
     if price is None:
         return None
@@ -214,6 +219,7 @@ def search_availability(db: Session, request: AvailabilityRequest) -> Availabili
         catalog_item=item,
         location_id=request.location_id,
         price_book_id=request.price_book_id,
+        channel=request.channel,
     )
 
     range_start = _aware(request.start_date)

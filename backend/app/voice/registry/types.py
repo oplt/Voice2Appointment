@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Callable, Literal
 
+from pydantic import BaseModel
+
 ToolHandler = Callable[..., dict[str, Any]]
 
 
@@ -54,6 +56,7 @@ class ToolDefinition:
     idempotency: IdempotencyPolicy = field(default_factory=IdempotencyPolicy)
     redaction: RedactionPolicy = field(default_factory=RedactionPolicy)
     legacy_names: tuple[str, ...] = ()
+    args_model: type[BaseModel] | None = None
 
     def deepgram_schema(self) -> dict[str, Any]:
         payload = dict(self.schema)

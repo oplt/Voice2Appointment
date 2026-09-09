@@ -1,1483 +1,771 @@
-You are a senior staff-level Python/FastAPI distributed-systems engineer, PostgreSQL performance engineer, React/TypeScript frontend engineer, and SaaS product architect.
 
-Your task is to improve and productize this repository:
-
-https://github.com/oplt/Voice2Appointment
-
-The existing application is a production-oriented modular monolith for a voice receptionist that integrates:
-
-* FastAPI
-* SQLAlchemy 2
-* PostgreSQL
-* Redis
-* Celery
-* Twilio
-* Deepgram Voice Agent
-* Google Calendar
-* React 19
-* TypeScript
-* Vite
-* Material UI 9
-
-Do NOT rewrite the system from scratch.
-Do NOT introduce microservices without concrete evidence.
-Do NOT convert the entire SQLAlchemy layer to async merely for architectural fashion.
-Preserve existing behavior and security guarantees.
-
-The target is a reliable multi-tenant voice operations platform that can support:
-
-* medical clinics/hospitals
-* restaurants
-* salons and professional services
-* general companies
-* service/product catalogs
-* prices
-* locations
-* staff/resources
-* bookings/reservations
-* customers
-* voice-based product/service inquiries
-
-Work in the phases below.
-
-GENERAL RULES
-
-Before changing code:
-
-1. Inspect the relevant existing implementation.
-2. Inspect existing tests.
-3. Identify invariants that must not regress.
-4. Add or update tests that reproduce the problem.
-5. Make the smallest cohesive architectural change.
-6. Run:
-
-   * Ruff
-   * mypy
-   * backend unit tests
-   * PostgreSQL integration tests where applicable
-   * frontend lint
-   * frontend tests
-   * frontend build
-7. Do not proceed after a failing phase until the failures introduced by the phase are fixed.
-8. Preserve migrations and backward compatibility.
-9. Never hold a PostgreSQL transaction or lock open while waiting on an external network service unless technically unavoidable and explicitly documented.
-10. Never parallelize mutation operations simply to improve benchmark numbers.
-11. All external-provider operations must have explicit timeouts, retry classification, metrics, and idempotency where applicable.
-12. Do not expose credentials, transcripts, phone numbers, medical details, or provider payloads through logs.
-13. Prefer adding modules to the modular monolith rather than creating services.
-14. Every performance optimization must have a benchmark or observable metric.
-
-==================================================
-PHASE 0 — BASELINE AND REGRESSION SAFETY
-========================================
-
-Goal:
-Establish a measurable baseline before refactoring.
-
-Tasks:
-
-0.1 Inspect the existing architecture and create/update an architecture note documenting:
-
-HTTP process
-Voice WebSocket process
-Celery worker
-Celery beat
-PostgreSQL
-Redis
-Twilio
-Deepgram
-Google Calendar
-
-0.2 Document current concurrency boundaries:
-
-* Gunicorn worker count
-* voice process count
-* VOICE_MAX_CONCURRENT_CALLS
-* Python thread executor behavior
-* SQLAlchemy pool defaults
-* Redis pool limits
-* Celery concurrency
-
-0.3 Add metrics or instrumentation for:
-
-* DB pool checked-out connections
-* DB pool wait time
-* DB transaction duration
-* Google request latency
-* Twilio request latency
-* voice tool queue time
-* voice tool execution time
-* Celery queue delay
-* Redis latency
-* booking lock wait time
-
-0.4 Add benchmark/load-test scaffolding for:
-
-A. concurrent HTTP dashboard requests
-B. concurrent availability requests
-C. simultaneous bookings for one tenant
-D. simultaneous bookings for different tenants
-E. voice function calls
-F. provider timeout scenarios
-
-Do not optimize yet.
-
-Deliver:
-
-docs/performance-baseline.md
-
-containing baseline measurements, discovered bottlenecks, and a list of assumptions.
-
-==================================================
-PHASE 1 — CORRECTNESS AND RELIABILITY BUGS
-==========================================
-
-SUBTASK 1.1 — VOICE INFLIGHT TOOL LEAK
-
-Inspect:
-
-backend/app/voice/session.py
-
-Current behavior:
-
-handle_function_call_request() adds func_id to inflight_tool_ids before executing the tool.
-
-The ID is discarded only on the successful path.
-
-If parsing or tool execution raises, the outer exception handler sends an error but does not reliably remove the function ID.
-
-Fix:
-
-* isolate error handling per function call
-* ensure inflight_tool_ids.discard(func_id) happens in finally
-* one failed function must not prevent remaining functions in the same FunctionCallRequest from being processed
-* preserve duplicate/reconnect idempotency protections
-* cache safe completed error responses when appropriate so provider reconnect does not repeatedly invoke broken mutations
-
-Tests:
-
-* tool succeeds
-* tool raises
-* malformed arguments
-* two functions where first fails and second succeeds
-* reconnect after failed function
-* duplicate mutation request
-
-Acceptance criteria:
-
-No function ID remains inflight after its execution has terminated.
+| Priority | Gap                                                                | Why it matters                                                                      |
+| -------- | ------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| **P0**   | Current commit has failing CI                                      | Cannot trust migrations/tests/build yet                                             |
+| **P0**   | Possible cross-hour resource allocation race                       | Could double-book restaurant/clinic/salon resources                                 |
+| **P0**   | No HTTP APIs for catalog/resources/pricing/customers/reservations  | New frontend cannot actually manage the new backend domain                          |
+| **P1**   | Catalog/Pricing/Resources UI is mostly demo data                   | Product UI looks implemented but isn't operational                                  |
+| **P1**   | Reservation cancellation/rescheduling lifecycle incomplete         | DB reservation, legacy appointment and Google Calendar can diverge                  |
+| **P1**   | Several voice tools are placeholders                               | `send_secure_link`, `check_order_status`, etc. don't actually perform the operation |
+| **P1**   | Organization/RBAC layer is skeletal                                | No real membership management, permissions or organization switching                |
+| **P1**   | Pricing lookup ignores `channel`                                   | Wrong price can be returned where multiple channel prices exist                     |
+| **P1**   | Connection-budget calculation undercounts Celery prefork processes | PostgreSQL exhaustion risk                                                          |
+| **P1**   | Real load/performance baseline hasn't actually been run            | p95/p99 production claims remain unknown                                            |
+| **P2**   | Voice executor uses 1 ms polling                                   | Unnecessary event-loop wakeups                                                      |
+| **P2**   | Industry implementations are uneven                                | Restaurant is ahead; salon and hospital integration are incomplete                  |
 
 ---
 
-SUBTASK 1.2 — PRODUCT PREFS CONTRACT DRIFT
+# Phase 0 — Get the repository green first
 
-Inspect:
+### Status: 🔴 BLOCKED
 
-backend/app/users/product_prefs.py
-backend/app/users/router.py
+This has to be the next phase.
 
-frontend/src/types/index.ts
-frontend/src/features/settings/ProductPrefsPanels.tsx
+The GitHub Actions run associated with the current commit failed. Backend stopped at **Ruff**, so architecture checks, mypy, unit tests, migration tests, PostgreSQL integration tests and dependency audit did not run. The frontend passed lint but failed its Vitest step, so build, bundle reporting, Playwright/a11y and npm audit were skipped.
 
-Backend ProductPrefs contains transcript settings.
+The workflow makes this dependency chain explicit.
 
-Frontend ProductPrefs does not represent the transcripts object.
+### Tasks
 
-Additionally, ProductPrefsPanels silently replaces failed GET state with DEFAULT_PREFS, after which a PUT can overwrite server-side settings with defaults.
+1. Fix all Ruff errors.
+2. Fix failing Vitest tests.
+3. Run backend mypy.
+4. Run complete SQLite test suite.
+5. Run Alembic upgrade/downgrade/migration tests against PostgreSQL.
+6. Run PostgreSQL integration suite.
+7. Run frontend TypeScript build.
+8. Run Playwright.
+9. Run accessibility tests.
+10. Run Docker image builds.
+11. Run dependency audits.
 
-Fix this safely.
+### Acceptance
 
-Preferred design:
+```text
+Backend CI    GREEN
+Frontend CI   GREEN
+Docker CI     GREEN
+```
 
-* introduce explicit PATCH semantics for preference sections, OR
-* make frontend contract complete and prevent Save until successful server state has loaded
-
-Do not silently save defaults after a failed load.
-
-Add frontend representation for:
-
-transcripts.storage_enabled
-transcripts.consent_at
-transcripts.redact_phone_numbers
-
-where appropriate.
-
-If transcript storage is sensitive, use explicit confirmation/consent UI.
-
-Tests:
-
-* GET/PUT round trip retains every ProductPrefs field
-* failed GET cannot cause destructive default overwrite
-* hidden/unknown future preference fields are not accidentally destroyed
-* notification consent behavior remains unchanged
+Nothing below should be considered production-complete until this happens.
 
 ---
 
-SUBTASK 1.3 — TWILIO TASK RETRY CLASSIFICATION
+# Phase 1 — Reservation concurrency correctness
 
-Inspect:
+### Status: 🔴 HIGH PRIORITY
 
-backend/app/workers/tasks.py
+The new reservation engine is one of the strongest additions, but I see a potentially important race.
 
-sync_twilio_for_user currently catches broad exceptions and returns an error result.
+Resource usage is calculated by querying overlapping reservations:
 
-That causes Celery to consider transient provider failures successful tasks.
+```text
+existing.start < requested.end
+AND
+existing.end > requested.start
+```
 
-Implement explicit error classification.
+and summing resource quantities.
 
-Examples:
+That is correct logically.
 
-Permanent:
+The problem is the locking granularity. The new scheduling lock includes an hourly `start_bucket`. Therefore:
 
-* invalid Twilio credentials
-* authorization failure
-* invalid tenant integration configuration
+```text
+Reservation A:
+10:50 → 11:50
+lock bucket = 10
 
-Transient:
+Reservation B:
+11:00 → 11:30
+lock bucket = 11
+```
 
-* timeout
-* connection failure
-* HTTP 429
-* provider 5xx
+These reservations overlap but can acquire **different advisory locks**.
 
-Transient failures must use Celery retry with exponential backoff and jitter.
+There is also no database-level exclusion constraint protecting overlapping `reservation_resource` ranges; the migration adds a normal window index and idempotency constraint only.
 
-Permanent failures must:
+The current Phase 5 tests check conflicting bookings sequentially using SQLite; they do not reproduce two real PostgreSQL transactions starting simultaneously across bucket boundaries.
 
-* not retry indefinitely
-* mark/report integration health
-* produce metrics
+### Recommended fix
 
-Tests must cover transient and permanent failures.
+Don't lock by start hour alone.
 
----
+A safer hierarchy is:
 
-SUBTASK 1.4 — DISCONNECTED CALENDAR TOOL BEHAVIOR
+```text
+single resource
+    ↓
+lock resource_id
+    ↓
+validate entire overlapping time range
 
-Inspect:
+capacity pool
+    ↓
+lock capacity_pool/resource_id
+    ↓
+calculate overlapping consumption
+    ↓
+allocate
+```
 
-backend/app/calendars/tools.py
+For high-value resource types, consider PostgreSQL-native enforcement as an additional backstop.
 
-_resolve_service() can return no Google Calendar provider for local-only tenants.
+### Tests to add
 
-Read-only voice tools must return an explicit, stable business result rather than accidentally dereferencing None and converting it into a generic exception.
+```text
+10:50–11:50 vs 11:00–11:30
+10:30–12:00 vs 11:00–11:30
+two different application processes
+two different DB sessions
+capacity=10, simultaneous party sizes 6 + 6
+capacity=10, simultaneous party sizes 5 + 5
+same practitioner
+different practitioners
+same room
+different rooms
+```
 
-Define stable result codes such as:
-
-calendar_not_connected
-provider_unavailable
-local_only_mode
-
-Keep local-only booking behavior intact.
-
-==================================================
-PHASE 2 — REMOVE PROVIDER I/O FROM DB CRITICAL SECTIONS
-=======================================================
-
-This is the highest-value performance/refactoring phase.
-
-SUBTASK 2.1 — BOOKING TRANSACTION
-
-Inspect:
-
-backend/app/appointments/booking.py
-backend/app/appointments/locking.py
-backend/app/appointments/provider_operations.py
-backend/app/appointments/reconciliation.py
-backend/app/calendars/tools.py
-
-Current risk:
-
-PostgreSQL tenant advisory lock is transaction scoped.
-
-External provider availability checks can execute while that transaction/lock is active.
-
-Redesign booking into:
-
-STEP A
-Optional external availability precheck outside DB transaction/lock.
-
-STEP B
-Short DB transaction:
-
-* acquire scheduling lock
-* validate local policy
-* validate local conflicts
-* create durable pending booking or SlotHold
-* commit immediately
-
-STEP C
-Release transaction and lock.
-
-STEP D
-Perform provider create/recheck outside database transaction.
-
-STEP E
-Short transaction to finalize:
-
-confirmed
-provider conflict
-failed
-retry pending
-
-Preserve:
-
-* idempotency
-* crash recovery
-* reconciliation
-* call-session linking
-* notifications
-* calendar event IDs
-
-Never create a double booking because of this refactoring.
-
-Add concurrency tests:
-
-* two requests for identical slot
-* two application instances
-* provider timeout
-* crash between local hold and provider call
-* provider succeeds but DB finalize temporarily fails
-* duplicate retry
-* provider says conflict after local hold
-
-Consider introducing:
-
-SlotHold
-
-with:
-
-id
-organization/user
-resource scope
-start
-end
-expires_at
-status
-idempotency_key
-
-Do not introduce it if the existing Appointment pending-provider state can cleanly satisfy the same invariant.
+Run them against **PostgreSQL**, not SQLite.
 
 ---
 
-SUBTASK 2.2 — RESOURCE-READY CONCURRENCY
+# Phase 2 — Finish the reservation lifecycle
 
-Current booking lock is per tenant.
+### Status: 🟡 PARTIAL
 
-Prepare the locking abstraction so future scheduling can lock a narrower allocation target:
+Creation/hold/commit is fairly substantial now. The service supports reservation holds, allocations, line-item snapshots, expiration and provider finalization.
 
-organization
-location
-resource or capacity pool
-time range
+But the generalized lifecycle isn't complete.
 
-Do NOT fully implement restaurant/clinic resources yet.
+I found no proper generalized:
 
-Create an interface that prevents the booking service from permanently depending on user_id-only locks.
+```text
+cancel_reservation()
+reschedule_reservation()
+move_reservation()
+change_party_size()
+change_resource()
+change_service()
+change/add add-ons
+```
 
----
+The restaurant voice cancellation handler currently loads the reservation and directly changes:
 
-SUBTASK 2.3 — TWILIO SYNCHRONIZATION TRANSACTIONS
+```python
+row.status = "cancelled"
+db.commit()
+```
 
-Inspect:
+rather than using a reservation-domain cancellation transaction.
 
-backend/app/analytics/sync.py
-backend/app/telephony/providers/twilio.py
+That matters because a reservation may also have:
 
-Current flow locks User and then performs provider network calls.
+```text
+Reservation
+    │
+    ├── ReservationResource
+    ├── ReservationLineItem
+    └── Appointment
+             │
+             └── Google Calendar event
+```
 
-Refactor to:
+All of those need consistent lifecycle handling.
 
-1. acquire/check a short-lived per-user sync lease
-2. snapshot checkpoint in a short transaction
-3. commit/release DB transaction
-4. fetch provider data
-5. open a short DB transaction
-6. upsert results
-7. compare-and-update checkpoint
-8. release/renew lease
+### Implement
 
-Do not hold SELECT FOR UPDATE while waiting for Twilio.
+```text
+cancel_reservation()
+reschedule_reservation()
+update_party_size()
+change_resource_assignment()
+add_line_item()
+remove_line_item()
+```
 
-Use idempotent upserts already present in the code.
+Each operation should have:
 
-Add concurrent sync tests.
+* idempotency,
+* explicit state transitions,
+* resource revalidation,
+* price snapshot rules,
+* provider synchronization,
+* retries/reconciliation,
+* audit event,
+* notification behavior.
 
----
+For example:
 
-SUBTASK 2.4 — ACTIVE TWILIO CALL REFRESH
+```text
+CONFIRMED
+    ↓
+CANCEL_PENDING_PROVIDER
+    ↓
+Google delete
+    ↓
+CANCELLED
+```
 
-fetch_calls_by_sids currently performs sequential network requests.
-
-Preferred order of improvements:
-
-1. signed Twilio status webhooks are the primary source of current call state
-2. periodically reconcile only stale, nonterminal records
-3. if individual fetches remain necessary, introduce bounded provider concurrency
-4. enforce provider rate limits
-5. use retry/backoff for 429/5xx/timeouts
-
-Do not launch an unbounded asyncio.gather over all SIDs.
-
-Target a configurable semaphore/concurrency limit.
-
-==================================================
-PHASE 3 — CONNECTION POOLS, EXECUTORS, CACHE AND WORKERS
-========================================================
-
-SUBTASK 3.1 — EXPLICIT POSTGRES CONNECTION BUDGET
-
-Inspect:
-
-backend/app/db/session.py
-Procfile.production
-Celery startup
-voice admission configuration
-
-Configure SQLAlchemy pool values from settings:
-
-DB_POOL_SIZE
-DB_MAX_OVERFLOW
-DB_POOL_TIMEOUT
-DB_POOL_RECYCLE
-
-Calculate and document:
-
-(web workers × web pool maximum)
-+
-(voice processes × voice DB/tool maximum)
-+
-(Celery workers × worker pool maximum)
-+
-headroom
-
-must remain below PostgreSQL max_connections.
-
-Export pool metrics.
-
-Do not arbitrarily increase pool_size.
+rather than immediately flipping a local status.
 
 ---
 
-SUBTASK 3.2 — VOICE TOOL EXECUTOR
+# Phase 3 — Expose the product domain through real APIs
 
-Current implementation relies on asyncio.to_thread and therefore Python's default executor.
+### Status: 🔴 MAJOR MISSING PIECE
 
-Introduce a dedicated bounded executor/runtime for blocking voice tools.
+This is probably the largest implementation gap.
 
-Requirements:
+The backend now contains:
 
-* configurable worker count
-* bounded admission
-* queue-wait metric
-* execution latency metric
-* graceful shutdown
-* no shared SQLAlchemy Session across threads
-* no arbitrary sharing of thread-unsafe Google service instances
-* mutation tools remain ordered
+```text
+catalog/
+pricing/
+resources/
+customers/
+reservations/
+tenancy/
+industries/
+```
 
-Introduce tool metadata:
+but the FastAPI factory still registers only the old routers:
 
-ToolKind.READ
-ToolKind.MUTATION
+```text
+auth
+users
+dashboard
+appointments
+calls
+calendars
+analytics
+telephony
+```
 
-Future metadata should support capabilities such as:
+There are no registered HTTP routers for the new business domains.
 
-calendar
-catalog
-reservation
-customer
-handoff
-payment_link
+The reservation module itself contains only service/allocation/availability/types—there is no router.
 
-Do not parallelize mutations.
+### Add endpoints
 
----
+Something like:
 
-SUBTASK 3.3 — GOOGLE CLIENT LIFECYCLE
+```text
+/api/v1/organizations
+/api/v1/locations
 
-Inspect:
+/api/v1/catalog/categories
+/api/v1/catalog/items
+/api/v1/catalog/options
 
-backend/app/calendars/providers/google.py
-backend/app/calendars/tools.py
-backend/app/voice/session.py
+/api/v1/price-books
+/api/v1/prices
 
-The code suggests GoogleCalendarService reuse within a voice call, but each voice tool currently creates a fresh thread-local DB session/runtime and resets voice_calendar_service.
+/api/v1/resources
+/api/v1/resources/{id}/capabilities
+/api/v1/resources/{id}/availability
 
-Measure the cost of:
+/api/v1/customers
 
-* auth record lookup
-* credential decode
-* token refresh
-* Google service build
-* actual API request
+/api/v1/reservations
+/api/v1/availability
 
-Then implement safe reuse.
+/api/v1/knowledge
 
-Possible target:
+/api/v1/industry-profile
+```
 
-VoiceToolRuntime
-call context
-credential snapshot
-provider factory
-per-operation DB session factory
+All queries must derive `organization_id` from authenticated membership.
 
-Do not share a Google httplib2 service unsafely across arbitrary threads.
-
-If a modern pooled async REST adapter using httpx simplifies the architecture, implement it behind the existing calendar provider interface rather than forcing an application-wide async rewrite.
-
-Explicitly configure:
-
-connect timeout
-read timeout
-write timeout
-pool timeout
-connection limits
-keepalive
-retryable status codes
+Never accept an arbitrary organization ID and trust it.
 
 ---
 
-SUBTASK 3.4 — GOOGLE AVAILABILITY REQUEST COUNT
+# Phase 4 — Complete tenancy and RBAC
 
-Google check_availability currently uses freebusy and, on conflict, can issue another events.list request.
+### Status: 🟡 SKELETON ONLY
 
-Measure whether the second provider call is necessary.
+`Organization` and `OrganizationMember` now exist, and legacy users are associated with an organization. That's good.
 
-For normal availability decisions, prefer returning:
+But `backend/app/tenancy` currently contains essentially only:
 
-available
-busy intervals
+```text
+organization_for_user()
+create_organization_for_user()
+```
 
-without retrieving full event metadata.
+There is no real:
 
-Only fetch event details when the user needs them and access is authorized.
+```text
+organization membership service
+RBAC
+invitation workflow
+member management
+permission enforcement
+active organization context
+organization switching
+```
 
-This reduces latency and limits unnecessary exposure of event titles.
+The frontend even shows **“Switch organization — Coming soon”**.
+
+### Introduce roles
+
+At minimum:
+
+```text
+owner
+admin
+manager
+staff
+viewer
+```
+
+And permissions such as:
+
+```text
+catalog.read
+catalog.write
+
+pricing.read
+pricing.write
+
+reservation.read
+reservation.write
+
+customer.read
+customer.write
+
+analytics.read
+
+integration.manage
+
+organization.manage
+
+privacy.manage
+```
+
+Then dependencies like:
+
+```python
+require_org_permission("catalog.write")
+```
+
+This becomes particularly important for hospitals, clinics and larger businesses.
 
 ---
 
-SUBTASK 3.5 — CACHE IMPROVEMENTS
+# Phase 5 — Finish catalog/product management
 
-Preserve the current Redis architecture unless benchmarks show a problem.
+### Status: 🟡 DATA MODEL GOOD, SERVICE/API INCOMPLETE
 
-Current generation-based invalidation is valuable.
+The schema is significantly better than before.
 
-Improve:
+You now have:
 
-* avoid repeated DB query for cache generation when authenticated request context already has it
-* request-scope memoization
-* optional Redis pipelining for independent reads
-* longer TTL for catalog/static configuration
-* short TTL/request coalescing only for search availability
-
-Never allow an availability cache to be the authoritative check during booking.
-
----
-
-SUBTASK 3.6 — CELERY QUEUE ISOLATION
-
-Replace the single shared queue with:
-
-critical
-notifications
-provider_sync
-media
-maintenance
-
-Suggested routing:
-
-critical:
-
-* appointment reconciliation
-* call lifecycle recovery
-
-notifications:
-
-* confirmation
-* reminder
-* retry delivery
-
-provider_sync:
-
-* Twilio analytics reconciliation
-* future integration synchronization
-
-media:
-
-* recording download
-* audio processing
-
-maintenance:
-
-* retention purge
-* analytics precompute
-
-Configure workers independently.
-
-Consider:
-
-worker_prefetch_multiplier=1 for long jobs
-soft/hard time limits
-acks_late only for idempotent tasks
-retry jitter
-task queue latency metrics
-
-Add per-tenant synchronization lease/coalescing so sync_all cannot create concurrent duplicate sync chains.
-
-==================================================
-PHASE 4 — MULTI-TENANT PRODUCT DOMAIN
-=====================================
-
-Goal:
-Evolve User-as-tenant into an organization-oriented SaaS model without breaking existing users.
-
-Introduce modules such as:
-
-backend/app/tenancy
-backend/app/catalog
-backend/app/pricing
-backend/app/resources
-backend/app/customers
-backend/app/reservations
-backend/app/knowledge
-
-Core entities:
-
-Organization
-OrganizationMember
-Location
-
+```text
 CatalogCategory
 CatalogItem
 CatalogOption
 
 PriceBook
 Price
+```
 
-Resource
-ResourceCapability
-ServiceResourceRequirement
+and the price schema supports:
 
-AvailabilityRule
-AvailabilityException
+* minor-unit money,
+* currency,
+* location,
+* channel,
+* effective-from/effective-until,
+* tax metadata.
 
-Customer
+That's a good design.
 
-Reservation
-ReservationResource
-ReservationLineItem
+But `catalog/service.py` is currently extremely thin: essentially object construction and booking-duration lookup.
 
-KnowledgeEntry
-FeatureEntitlement
-AuditLog
+You still need full application services:
 
-Do not migrate everything in one giant migration.
+```text
+list_catalog_items()
+get_catalog_item()
+create_catalog_item()
+update_catalog_item()
+archive_catalog_item()
 
-Use additive migrations:
+create_category()
+update_category()
 
-1. create organization structures
-2. backfill one organization per existing tenant/user
-3. add organization_id alongside existing user_id
-4. migrate reads/writes gradually
-5. remove legacy tenant semantics only after compatibility tests pass
+create_option()
+update_option()
+delete_option()
 
----
-
-SUBTASK 4.1 — CATALOG
-
-CatalogItem should support:
-
-kind:
-service
-product
-addon
-package
-
-fields:
-
-organization_id
-category
-name
-description
-active
-bookable
-sellable
-duration_minutes
-buffer_before_minutes
-buffer_after_minutes
-metadata
-
-Move named service durations out of booking-policy JSON toward this model.
-
-Keep compatibility while migrating.
-
----
-
-SUBTASK 4.2 — PRICING
-
-Do not store business prices using float.
-
-Use:
-
-integer minor units
-
-or
-
-Numeric with explicitly defined precision
-
-plus ISO currency.
-
-Support:
-
-PriceBook
-location-specific prices
-effective dates
-channel-specific prices if needed
-tax metadata
-special prices
-
-Reservation/order line items must snapshot:
-
-item name
-unit price
-currency
-tax metadata
-
-so historical orders remain correct after catalog price changes.
-
----
-
-SUBTASK 4.3 — LOCATIONS AND RESOURCES
-
-Location:
-
-organization
-name
-timezone
-address
-phone
-business hours
-
-Resource:
-
-organization
-location
-resource_type
-name
-active
-capacity
-
-Examples:
-
-clinic:
-practitioner
-room
-equipment
-
-restaurant:
-table
-dining area
-capacity pool
-
-salon:
-employee
-chair
-equipment
-
-ServiceResourceRequirement describes what a service needs.
-
-Example:
-
-Hair coloring
-duration 90
-requires:
-staff capability COLORING
-chair
-buffer_after 10
-
----
-
-SUBTASK 4.4 — CUSTOMERS
-
-Introduce Customer separately from application User.
-
-Customer fields should be minimal and extensible:
-
-name
-phone
-email
-language
-organization_id
-consent/preferences
-metadata
-
-Sensitive vertical-specific fields must not automatically be placed into generic Customer metadata.
-
-==================================================
-PHASE 5 — GENERALIZED AVAILABILITY / RESERVATION ENGINE
-=======================================================
-
-Current Appointment assumes primarily one calendar slot.
-
-Introduce a generalized reservation layer capable of:
-
-single_resource
-multi_resource
-capacity
-
-Maintain Appointment compatibility where possible.
-
-Availability engine inputs:
-
-organization
-location
-catalog/service
-requested date/time
-party size/capacity
-optional resource preference
-required capabilities
-
-Availability output:
-
-candidate slots
-resource allocation summary
-price estimate
-constraints
-
-Final booking must:
-
-authoritatively revalidate
-acquire/verify slot hold
-allocate capacity/resources
-snapshot line items/prices
-commit reservation
-perform external-provider synchronization
-finalize asynchronously/reliably
-
-==================================================
-PHASE 6 — INDUSTRY PROFILES
-===========================
-
-Do NOT create separate applications.
-
-Create a capability/policy architecture.
-
-IndustryProfile may contain:
-
-industry_type
-scheduling_mode
-required_customer_fields
-required_booking_fields
-enabled_tools
-confirmation_policy
-deposit_policy
-handoff_policy
-privacy_policy
-default terminology
-
----
-
-SUBTASK 6.1 — CLINIC / HOSPITAL PROFILE
-
-Flow:
-
-intent
-→ emergency/safety gate
-→ administrative appointment intent
-→ minimal identity
-→ specialty/visit type
-→ location
-→ practitioner preference
-→ required pre-visit administrative questions
-→ availability
-→ explicit confirmation
-→ appointment
-→ reminders/forms/instructions
-
-Models/capabilities:
-
-Practitioner
-Specialty
-VisitType
-Room
-Equipment
-Referral requirement
-Waitlist
-
-Important:
-
-The generic voice agent must not perform diagnosis or medical treatment recommendations as part of this scheduling implementation.
-
-Keep medical details out of ordinary analytics and logs.
-
-Design EHR integration behind an interface so future FHIR/HL7 adapters do not leak into the core reservation domain.
-
-Do not claim regulatory compliance automatically.
-
----
-
-SUBTASK 6.2 — RESTAURANT PROFILE
-
-Flow:
-
-date
-→ time
-→ party size
-→ location
-→ availability/capacity
-→ alternatives
-→ seating preference
-→ customer contact
-→ dietary/accessibility notes
-→ optional deposit
-→ confirmation
+duplicate_item()
+bulk_activate()
+bulk_deactivate()
+```
 
 Add:
 
-DiningArea
-Table
-TableCombination or CapacityPool
-party size
-turn duration
-seating preference
-deposit/no-show policy
-waitlist
-
-Restaurant scheduling must use capacity/resource allocation rather than treating each reservation as a generic Google Calendar event.
+* pagination,
+* search,
+* category filtering,
+* item kind filtering,
+* optimistic concurrency/versioning if multiple admins edit concurrently.
 
 ---
 
-SUBTASK 6.3 — SALON / PROFESSIONAL SERVICES
+# Phase 6 — Fix and finish pricing
 
-Flow:
+### Status: 🟡 PARTIAL
 
-service
-→ add-ons
-→ optional staff preference
-→ required capabilities/resources
-→ time slots
-→ price
-→ confirmation
+There is one concrete functional issue in the current price lookup.
 
-Support:
+`Price` supports `channel`, but:
 
-skills
-staff
-equipment
-buffers
-multi-step service duration
-add-ons
+```python
+active_price(...)
+```
 
----
+does not accept or filter by channel.
 
-SUBTASK 6.4 — GENERAL COMPANY
+So you could store:
 
-Capabilities may include:
+```text
+Haircut
 
-book appointment
-answer FAQ
-provide product information
-provide price
-qualify lead
-take message
-request quote
-check order status
-human transfer
-send secure payment/product link
+web   €45
+phone €50
+walk-in €40
+```
 
-==================================================
-PHASE 7 — VOICE TOOL REGISTRY
-=============================
+but `active_price()` may select the wrong one.
 
-Replace the long-term dependency on a single global FUNCTION_MAP with a typed capability-aware ToolRegistry.
+### Fix lookup precedence
 
-Do not break existing Deepgram function naming until migration is complete.
+Use something like:
 
-Each tool definition should contain:
+```text
+item
++
+price book
++
+location
++
+channel
++
+effective timestamp
+```
 
-name
-handler
-kind:
-READ | MUTATION
+Define deterministic fallback:
 
-capability
-required tenant feature
-timeout policy
-idempotency behavior
-logging/redaction policy
+```text
+exact location + exact channel
+↓
+exact location + generic channel
+↓
+generic location + exact channel
+↓
+generic location + generic channel
+```
 
-Example tenant:
+Also add validation for:
 
-restaurant:
-catalog_search
-restaurant_availability
-create_reservation
-cancel_reservation
-join_waitlist
-request_human_handoff
+```text
+Price.currency == PriceBook.currency
+effective_until > effective_from
+amount_minor >= 0
+```
 
-clinic:
-find_visit_types
-find_practitioners
-appointment_availability
-create_appointment
-reschedule_appointment
-cancel_appointment
-request_human_handoff
-
-general company:
-search_catalog
-get_price
-create_quote_request
-book_appointment
-take_message
-
-Build Deepgram tool configuration dynamically from enabled tenant capabilities.
-
-==================================================
-PHASE 8 — FRONTEND PRODUCT ARCHITECTURE
-=======================================
-
-Preserve:
-
-React 19
-TypeScript
-Vite
-MUI 9
-React Router
-
-Do not rewrite into Next.js without a demonstrated product need.
-
-Keep existing route-level lazy loading.
-
-Introduce a server-state/query layer such as TanStack Query or an equivalent mature solution for:
-
-request deduplication
-cache freshness
-mutation invalidation
-retry policy
-cancellation
-background refresh
-
-Backend remains authoritative for mutations.
-
-Refactor large components into feature modules.
-
-Target frontend structure:
-
-src/
-app/
-features/
-dashboard/
-reservations/
-calls/
-catalog/
-pricing/
-resources/
-customers/
-agent/
-integrations/
-analytics/
-settings/
-components/
-theme/
-api/
-
-==================================================
-PHASE 9 — FRONTEND INFORMATION ARCHITECTURE
-===========================================
-
-Redesign the authenticated navigation.
-
-Recommended hierarchy:
-
-TODAY
-Dashboard
-
-OPERATIONS
-Bookings
-Calls
-
-BUSINESS
-Services & Products
-Resources
-Customers
-
-INSIGHTS
-Analytics
-
-SYSTEM
-Agent
-Integrations
-Settings
-
-Do not put every feature into permanent navigation.
-
-Desktop navigation:
-
-collapsed approximately 72px
-expandable approximately 220–240px
-
-Mobile:
-
-drawer
-
-Use tenant/organization profile menu for:
-
-organization switch
-account
-logout
-
-instead of giving Logout strong permanent navigation prominence.
-
-==================================================
-PHASE 10 — MINIMALIST DESIGN SYSTEM
-===================================
-
-The goal is not “make everything white and remove borders.”
-
-The goal is:
-
-minimal cognitive load
-clear hierarchy
-strong accessibility
-high information density where appropriate
-few visual distractions
-
-Refactor theme toward semantic tokens:
-
-surface.canvas
-surface.primary
-surface.secondary
-border.subtle
-border.strong
-text.primary
-text.secondary
-status.success
-status.warning
-status.error
-action.primary
-
-Adopt MUI CSS theme variables where appropriate.
-
-Prepare light/dark color schemes, but dark mode is not a blocking product requirement.
-
-Support:
-
-prefers-reduced-motion
-forced-colors
-high contrast
-keyboard focus
-browser zoom
-responsive typography
-
-Fix typography:
-
-Current h2 line-height around 0.91 is too compressed.
-
-Use a robust multi-line value around 1.15–1.25 depending on final visual tests.
-
-Use approximately 16px for primary form/body content where readability benefits from it.
-
-Keep 12–14px primarily for metadata/captions/dense tables.
+And detect overlapping competing prices.
 
 ---
 
-SUBTASK 10.1 — FORM CONTROLS
+# Phase 7 — Finish resource/customer domain integrity
 
-Reconsider global use of underline-only standard TextField.
+### Status: 🟡 PARTIAL
 
-For configuration/admin forms use:
+Resources already support:
 
-outlined or softly filled controls
-persistent labels
-clear field grouping
-inline error text
-helper text
-strong focus states
-
-Keep at least 44px primary touch targets where practical.
-
----
-
-SUBTASK 10.2 — DASHBOARD
-
-Redesign Dashboard around operational priorities.
-
-Primary questions:
-
-1. What is happening today?
-2. What needs attention?
-3. What comes next?
-4. Is the assistant operational?
-
-Preferred layout:
-
-header:
-Today / tenant timezone
-
-compact metrics:
-calls
-bookings
-completion
-attention
-
-large operational block:
-Needs attention
-
-large schedule block:
-Upcoming
-
-small health block:
-Assistant / Calendar / Telephony status
-
-Remove verbose KPI definitions from primary cards.
-
-Move methodology/exclusions to Analytics/help.
-
-Do not overuse Chips.
-
----
-
-SUBTASK 10.3 — SETTINGS
-
-Do not use Settings as a warehouse for business features.
-
-Move:
-
-Catalog
-Prices
-Business hours
-Resources
-
-into Business modules.
-
-Create:
-
-Settings:
-Account
-Organization
-Notifications
-Privacy
-Billing
-
-Integrations:
-Phone
-Calendar
-Email
-
-Agent:
-Voice
-Languages
-Handoff
-Instructions
-Knowledge
-
-Use progressive disclosure.
-
----
-
-SUBTASK 10.4 — CATALOG UI
-
-Create responsive management views for:
-
-Services
-Products
-Categories
-Prices
-
-Desktop:
-
-search
-filters
-table/list
-bulk enable/disable
-clear row actions
-
-Mobile:
-
-compact cards/list
-
-Catalog item editor:
-
-Overview
-Pricing
-Scheduling
-Options
-Availability
-Locations
-
-Provide a preview of what the voice assistant can say about the item.
-
----
-
-SUBTASK 10.5 — RESOURCE UI
-
-Create:
-
-resource list
-staff/resource detail
+```text
+resource type
+capacity
+location
 capabilities
-working hours
+service requirements
+availability rules
+availability exceptions
+```
+
+This is a good general model.
+
+But the service layer mostly provides lookup helpers.
+
+Add proper lifecycle APIs/services for:
+
+```text
+staff/resource CRUD
+capability assignment
+availability rules
+time off
+temporary closures
 service assignments
-exceptions/time off
+resource deactivation
+capacity updates
+```
 
-Provide calendar-style availability where beneficial without requiring drag-only interactions.
+Customers need similar work. Current customer logic is mainly find/create.
 
-Any drag interaction must have an equivalent button/form workflow.
+One important improvement is **customer identity normalization and deduplication**.
 
-==================================================
-PHASE 11 — ACCESSIBILITY AND FRONTEND QUALITY
-=============================================
+The current migration has an index on:
 
-Add:
+```text
+organization_id + phone
+```
 
-Playwright end-to-end tests
-axe accessibility checks
-keyboard-navigation tests
-responsive tests
-visual regression tests where practical
-bundle-size reporting
+but it isn't unique.
 
-Test:
+Concurrent calls could therefore produce duplicate customers.
 
-200% browser zoom
-keyboard-only
-screen-reader landmarks/names
-forced-colors
-prefers-reduced-motion
-mobile viewport
-long translated text
+Consider canonical E.164 phone storage plus an appropriate organization-scoped uniqueness rule.
 
-Ensure dialogs restore focus.
+---
 
-Ensure async status messages use appropriate aria-live/status semantics.
+# Phase 8 — Complete vertical implementations
 
-Do not introduce experimental React Canary APIs into core production UX.
+### Status: 🟢 MOSTLY COMPLETE (clinic not hospital-ready)
 
-==================================================
-PHASE 12 — OBSERVABILITY AND LOAD TESTING
-=========================================
+## Restaurant
 
-Create distributed/request correlation across:
+This is currently the strongest vertical.
 
-Twilio call
-voice websocket
-Deepgram session
-voice tool
-booking
-provider request
-Celery task
+You have:
 
-Use existing logging/metrics infrastructure where possible.
+* capacity-based reservations,
+* party size,
+* restaurant availability,
+* reservations,
+* waitlist,
+* waitlist promotion,
+* modify_reservation (party size / reschedule),
+* soft dining areas (resource_type filter),
+* structured guest prefs (dietary / accessibility / special occasion),
+* deposit policy attach on book + no-show marker.
 
-Track at least:
+Still open / partial:
 
-voice first-response latency
-voice tool queue wait
-voice tool p50/p95/p99
-calendar lookup p50/p95/p99
-calendar create p50/p95/p99
-DB pool utilization
-DB transaction duration
-booking lock wait
-Redis p95
-Celery queue delay
-Twilio synchronization duration
-provider retry counts
-provider error categories
+```text
+(none for Phase 8 core — table combos + deposit capture shipped)
+Stripe live Checkout needs STRIPE_SECRET_KEY in .env
+Live FHIR needs FHIR_ENABLED=true + FHIR_BASE_URL (+ token)
+Not a hospital/HIPAA compliance certification
+Full Twilio media soak still needs disposable gateway policy
+```
 
-Run before/after load tests.
+---
 
-Do not declare success solely because tests pass.
+## Salon
 
-==================================================
-PHASE 13 — PRODUCTION ACCEPTANCE
-================================
+Voice tools registered and wired to `salon.py`:
 
-Before enabling new domain architecture for all tenants:
+```text
+find_salon_services
+find_available_staff
+find_salon_availability
+estimate_service_price
+book_salon_service
+modify_salon_booking
+```
 
-1. Existing appointment workflow passes all tests.
-2. Existing voice booking still works.
-3. Existing Google Calendar behavior remains compatible.
-4. Existing Twilio behavior remains compatible.
-5. Existing frontend routes remain functional.
-6. Legacy tenants are migrated automatically.
-7. Rollback path exists.
-8. New catalog/reservation functionality is behind feature flags or capability checks.
-9. Load-test results show no regression in voice latency.
-10. No provider network call remains inside a long DB critical section without documented justification.
+---
 
-==================================================
-DELIVERABLE FORMAT FOR EACH PHASE
-=================================
+## Hospital/clinic
 
-For every phase, return:
+Architecturally prepared; **not** hospital-ready / not a compliance claim.
 
-A. Findings
+Have:
 
-List exact files/functions involved.
+```text
+safety gate
+visit types / practitioners
+reservation-engine create_appointment path
+EHRPort + NullEHRAdapter + FhirEHRAdapter scaffold
+patient identity verification helper
+```
 
-B. Design
+Still remaining for true hospital readiness:
 
-Explain the minimal architectural change and why.
+```text
+live FHIR credentials + push/pull
+referral workflow end-to-end
+department/location hierarchy
+insurance/eligibility
+hospital audit/retention/consent/ACL
+regulatory/security assessment
+```
 
-C. Files changed
+Don't market it as hospital-ready until these are done and the appropriate regulatory/security assessment is completed.
 
-List added/modified files.
+---
 
-D. Migration impact
+# Phase 9 — Finish the voice tool implementations
 
-Explain database/config/API compatibility.
+### Status: 🟢 COMPLETE (core)
 
-E. Tests added
+* `send_secure_link` → SecureLinkDelivery outbox + tokenized URL
+* `check_order_status` → Order (`customer_order`) domain lookup
+* typed Pydantic `args_model` validation before handlers
+* clinic `create_appointment` → reservation engine when catalog matches
+* cancel_reservation uses lifecycle service
 
-List concrete scenarios.
+---
 
-F. Metrics/performance
+# Phase 10 — Finish the frontend business modules
 
-Provide before/after numbers where measurable.
+### Status: 🟢 WIRED
 
-G. Risks
+Catalog / Pricing / Resources / Customers use live `/api/v1` clients (SEED/DEMO removed).
+ReservationsView is a real reservation UI (not Appointments re-export).
 
-State remaining risks.
+---
 
-H. Completion status
+# Phase 11 — Complete Agent/Knowledge/Industry administration
 
-PASS
-PARTIAL
-BLOCKED
+### Status: 🟢 WIRED
 
-Never mark PASS if tests introduced by the phase fail.
+Agent tabs: Voice, Languages, Handoff, Instructions, Knowledge, Industry profile, Capabilities checklist.
 
-==================================================
-IMPLEMENTATION ORDER
-====================
+---
 
-Execute strictly in this order unless a discovered dependency requires a documented adjustment:
+# Phase 12 — Finish performance/scaling work
 
-Phase 0
-→ Phase 1
-→ Phase 2
-→ Phase 3
-→ Phase 4
-→ Phase 5
-→ Phase 6
-→ Phase 7
-→ Phase 8
-→ Phase 9
-→ Phase 10
-→ Phase 11
-→ Phase 12
-→ Phase 13
+### Status: 🟢 BUDGET CORRECTED
 
-Do not attempt all phases in one giant pull request.
+Connection budget recounts Celery prefork children. Worker pools default to
+`DB_POOL_SIZE=2` in `Procfile.production` / compose. See
+`docs/phase3-connection-budget.md`.
 
-Prefer one cohesive PR per phase or major subtask.
+---
 
-The first implementation PR should focus only on Phase 1 correctness and regression tests.
+# Phase 13 — Improve the voice executor
 
-The second major PR should focus on Phase 2 transaction/provider-I/O boundaries.
+### Status: 🟢 DONE
 
-Only after those stabilize should catalog, resource, industry-profile and large frontend work begin.
+`asyncio.wrap_future` + semaphore release if `submit()` fails
+(`backend/app/voice/tool_runtime.py`).
+
+---
+
+# Phase 14 — Run a real performance baseline
+
+### Status: 🟢 HARNESS RUN (disposable local)
+
+Local harness @ 1/5/10/25 recorded via `backend/scripts/run_phase14_baseline.sh`
+→ `/tmp/phase14-baseline.json` (admission correct; tool busy saturation at 25;
+Deepgram connect latency measured; health HTTP baseline). Full Twilio media soak
++ provider failure injection still optional follow-up on a disposable gateway.
+
+---
+
+# Phase 15 — Production acceptance
+
+### Status: 🔴 NOT READY
+
+The current `production-acceptance.md` says many criteria are satisfied.
+
+But today's actual CI contradicts that at the moment: backend and frontend checks are failing and many downstream checks were never executed.
+
+It also correctly states that a real disposable-environment voice load test is still required.
+
+There is also a documentation inconsistency: the acceptance document references migration `g9b0c1d2e3f4`, but I cannot find that revision in the current migration directory; the actual new chain I can see reaches `b0c1d2e3f4a5` via `a9b0...`.
+
+Fix acceptance documentation so it is generated/verified against reality.
+
+---
+
+# Recommended implementation order now
+
+I would **not** rerun the original 13-phase Codex prompt from scratch. A much tighter second pass should be:
+
+```text
+PHASE A — CI recovery
+  Ruff
+  Vitest
+  mypy
+  migrations
+  integration
+  Playwright
+  Docker
+
+        ↓
+
+PHASE B — Reservation correctness
+  cross-hour locking
+  PostgreSQL concurrency tests
+  capacity races
+  cancellation
+  reschedule
+  provider consistency
+
+        ↓
+
+PHASE C — Product APIs + tenancy security
+  org context
+  RBAC
+  catalog API
+  pricing API
+  resources API
+  customers API
+  reservations API
+
+        ↓
+
+PHASE D — Real frontend wiring
+  remove SEED/DEMO data
+  catalog CRUD
+  pricing CRUD
+  resource CRUD
+  customers
+  reservation UI
+
+        ↓
+
+PHASE E — Vertical completion
+  restaurant lifecycle
+  salon voice tools
+  clinic reservation engine
+  EHR adapter boundary
+  waitlists
+  deposits/no-show
+
+        ↓
+
+PHASE F — Voice product tools
+  typed schemas
+  real secure-link sending
+  order domain/status
+  proper reservation cancellation
+  payment-link integration
+  quote workflows
+
+        ↓
+
+PHASE G — Scale verification
+  correct DB budget
+  executor cleanup
+  real load tests
+  failure injection
+
+        ↓
+
+PHASE H — Production gate
+  all CI green
+  migrations verified
+  p95/p99 acceptable
+  feature flags
+  staged tenant rollout
+```
+
+The change from the previous review is important: **I would no longer spend much effort redesigning the base architecture.** Codex implemented most of the architectural foundation successfully. The next cycle should primarily turn that architecture into a **correct, connected, usable product**. The two things I would address before anything else are the **red CI** and the **reservation/resource concurrency race**.

@@ -155,7 +155,7 @@ def consume_password_reset_token(db: Session, *, token: str, new_password: str) 
         )
     )
     db.commit()
-    return result.rowcount == 1
+    return int(getattr(result, "rowcount", 0) or 0) == 1
 
 
 def create_oauth_state(*, user_id: int, code_verifier: str) -> str:

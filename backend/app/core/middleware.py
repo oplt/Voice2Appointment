@@ -24,6 +24,7 @@ _CSRF_EXEMPT_PREFIXES = (
     "/openapi.json",
     "/ws/",
     "/api/v1/telephony/twilio/",
+    "/api/v1/payments/",
 )
 
 

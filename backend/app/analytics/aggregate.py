@@ -336,7 +336,11 @@ def _countries_from_numbers(
                 "avg_duration_min": 0.0,
             }
         )
-    ranked.sort(key=lambda r: -int(r["calls"]))
+    def _call_count(row: dict[str, Any]) -> int:
+        value = row.get("calls", 0)
+        return int(value) if isinstance(value, (int, float, str)) else 0
+
+    ranked.sort(key=lambda row: -_call_count(row))
     top = ranked[:15]
     geo = [
         {"country": c["country"], "iso3": c["iso3"], "calls": c["calls"]}

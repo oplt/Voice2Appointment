@@ -109,7 +109,8 @@ services:
       dockerfile: docker/Dockerfile.backend
     # Local convenience worker; production uses the independently isolated
     # queue workers declared in Procfile.production.
-    command: celery -A app.workers.celery_app.celery_app worker -Q critical,notifications,provider_sync,media,maintenance --loglevel=INFO
+    # Pin concurrency so local pool math matches docs/phase3-connection-budget.md
+    command: celery -A app.workers.celery_app.celery_app worker -Q critical,notifications,provider_sync,media,maintenance --concurrency 4 --loglevel=INFO
     env_file:
       - .env
     environment:
@@ -119,6 +120,8 @@ services:
       REDIS_URL: redis://redis:6379/0
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/0
+      DB_POOL_SIZE: "2"
+      DB_MAX_OVERFLOW: "0"
       COOKIE_SECURE: ${COOKIE_SECURE:-true}
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-https://localhost}
     depends_on:

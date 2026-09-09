@@ -37,6 +37,7 @@ class AvailabilityRequest:
     preferred_resource_ids: tuple[int, ...] = ()
     required_capabilities: tuple[str, ...] = ()
     price_book_id: int | None = None
+    channel: str | None = None
     slot_step_minutes: int = 15
     scheduling_mode: SchedulingMode | None = None
 
