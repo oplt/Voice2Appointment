@@ -1,7 +1,13 @@
-"""Global kill switches for new product-domain surfaces (Phase 13).
+"""Global kill switches for new product-domain surfaces (Phase 3).
 
-Per-organization entitlements still gate tools when flags are on.
-Legacy calendar appointment tools remain available when flags are off.
+Contract: global domain flags are interpreted as *product availability* gates.
+
+* When a domain flag is OFF, the corresponding HTTP surfaces are considered
+  unavailable (HTTP 404 via exception mapping).
+* When a domain flag is OFF, capability-aware voice tools are not exposed.
+
+Per-organization entitlements/permissions still gate tools when flags are ON.
+Legacy calendar appointment tools remain available when flags are OFF.
 """
 
 from __future__ import annotations
@@ -41,6 +47,13 @@ def require_reservation_domain() -> None:
     if not reservation_domain_enabled():
         raise FeatureDisabledError(
             "reservation domain disabled (ENABLE_RESERVATION_DOMAIN=false)"
+        )
+
+
+def require_industry_voice_tools() -> None:
+    if not industry_voice_tools_enabled():
+        raise FeatureDisabledError(
+            "industry voice tools disabled (ENABLE_INDUSTRY_VOICE_TOOLS=false)"
         )
 
 

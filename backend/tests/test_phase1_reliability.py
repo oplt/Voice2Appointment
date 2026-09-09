@@ -11,6 +11,7 @@ from app.users.product_prefs import (
     load_product_prefs,
     update_product_prefs,
 )
+from app.voice import function_calls as voice_function_calls
 from app.voice import session as voice_session
 from app.voice.context import CallContext
 from app.voice.latency import LatencyTracker
@@ -303,3 +304,62 @@ def test_twilio_sync_marks_permanent_provider_failure(monkeypatch) -> None:
 
     assert result == {"ok": False, "user_id": 8, "error_code": "twilio_auth"}
     assert json.loads(user.config_json)["integration_health"]["twilio_sync"]["status"] == "permanent_failure"
+
+
+
+def test_voice_read_calls_are_batched_with_mutation_barrier(monkeypatch) -> None:
+    socket = _Socket()
+    order: list[str] = []
+
+    class _Meta:
+        def __init__(self, kind: str) -> None:
+            self.kind = kind
+
+    async def fake_run(_name: str, fn):
+        return fn()
+
+    def fake_tool(name, _arguments, _ctx):
+        order.append(name)
+        return {"tool": name}
+
+    class _Runtime:
+        async def run(self, name, fn):
+            await asyncio.sleep(0 if name != 'mutate' else 0.01)
+            return fn()
+
+    from app.voice.tool_runtime import ToolKind
+
+    monkeypatch.setattr(voice_session, "_run_tool_in_thread", fake_tool)
+    monkeypatch.setattr(voice_function_calls, "get_voice_tool_runtime", lambda: _Runtime())
+    monkeypatch.setattr(
+        voice_function_calls,
+        "get_tool_metadata",
+        lambda name: _Meta(ToolKind.MUTATION if name == "mutate" else ToolKind.READ),
+    )
+
+    req = {
+        "functions": [
+            _function("1", "read_a", "{}"),
+            _function("2", "read_b", "{}"),
+            _function("3", "mutate", "{}"),
+            _function("4", "read_c", "{}"),
+        ]
+    }
+    asyncio.run(
+        voice_session.handle_function_call_request(
+            req,
+            socket,
+            ctx=_CTX,
+            latency=LatencyTracker(),
+            tool_results={},
+            inflight_tool_ids=set(),
+        )
+    )
+
+    assert [json.loads(m["content"])["tool"] for m in socket.messages] == [
+        "read_a",
+        "read_b",
+        "mutate",
+        "read_c",
+    ]
+    assert order == ["read_a", "read_b", "mutate", "read_c"]

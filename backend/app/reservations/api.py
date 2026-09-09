@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user, require_db
 from app.calendars.service import booking_provider_hooks
 from app.core.errors import map_exception, raise_http
+from app.core.feature_flags import require_reservation_domain
 from app.db.models import (
     CatalogItem,
     Customer,
@@ -24,6 +23,21 @@ from app.db.models import (
     User,
 )
 from app.industries.service import sync_calendar_for_org
+from app.reservations.schemas import (
+    AvailabilityIn,
+    CancelIn,
+    HoldIn,
+    LineItemIn,
+    LineItemOut,
+    LineItemPatch,
+    PartySizeIn,
+    RescheduleIn,
+    ReservationDetailOut,
+    ReservationIn,
+    ReservationOut,
+    ReservationPageOut,
+    ResourceAssignmentIn,
+)
 from app.reservations.service import (
     add_line_item,
     book_reservation,
@@ -41,126 +55,12 @@ from app.reservations.types import AvailabilityRequest
 from app.tenancy.api import OrganizationId, require_domain_permission
 
 router = APIRouter(
-    tags=["reservations"], dependencies=[Depends(require_domain_permission("reservation"))]
+    tags=["reservations"],
+    dependencies=[
+        Depends(require_reservation_domain),
+        Depends(require_domain_permission("reservation")),
+    ],
 )
-
-
-class AvailabilityIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    catalog_item_id: int
-    start_date: datetime
-    end_date: datetime | None = None
-    location_id: int | None = None
-    party_size: int = Field(default=1, gt=0)
-    preferred_resource_ids: list[int] = Field(default_factory=list)
-    required_capabilities: list[str] = Field(default_factory=list)
-    price_book_id: int | None = None
-    channel: str | None = Field(default=None, max_length=32)
-    slot_step_minutes: int = Field(default=15, ge=5, le=120)
-    scheduling_mode: Literal["single_resource", "multi_resource", "capacity"] | None = None
-
-
-class ReservationIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    catalog_item_id: int
-    start_datetime: datetime
-    end_datetime: datetime | None = None
-    location_id: int | None = None
-    customer_id: int | None = None
-    party_size: int = Field(default=1, gt=0)
-    preferred_resource_ids: list[int] = Field(default_factory=list)
-    required_capabilities: list[str] = Field(default_factory=list)
-    price_book_id: int | None = None
-    channel: str | None = Field(default=None, max_length=32)
-    scheduling_mode: Literal["single_resource", "multi_resource", "capacity"] | None = None
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class HoldIn(ReservationIn):
-    hold_ttl_seconds: int = Field(default=300, ge=30, le=3600)
-
-
-class ReservationOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    location_id: int | None
-    customer_id: int | None
-    catalog_item_id: int | None
-    appointment_id: int | None
-    scheduling_mode: str
-    status: str
-    start_datetime: datetime
-    end_datetime: datetime
-    party_size: int
-    hold_expires_at: datetime | None
-    provider_sync_status: str
-    allocation_json: dict[str, Any]
-
-
-class ReservationPageOut(BaseModel):
-    items: list[ReservationOut]
-    total: int
-    limit: int
-    offset: int
-
-
-class LineItemOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    id: int
-    catalog_item_id: int | None
-    item_name: str
-    quantity: int
-    unit_price_minor: int
-    currency: str
-    tax_metadata: dict[str, Any] = Field(default_factory=dict)
-
-
-class ReservationDetailOut(ReservationOut):
-    line_items: list[LineItemOut] = Field(default_factory=list)
-    resource_ids: list[int] = Field(default_factory=list)
-
-
-class CancelIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    reason: str | None = Field(default=None, max_length=1000)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class RescheduleIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    start_datetime: datetime
-    end_datetime: datetime | None = None
-    catalog_item_id: int | None = None
-    party_size: int | None = Field(default=None, gt=0)
-    price_book_id: int | None = None
-    channel: str | None = Field(default=None, max_length=32)
-    preferred_resource_ids: list[int] = Field(default_factory=list)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class PartySizeIn(BaseModel):
-    party_size: int = Field(gt=0)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class ResourceAssignmentIn(BaseModel):
-    resource_ids: list[int] = Field(min_length=1)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class LineItemIn(BaseModel):
-    catalog_item_id: int
-    quantity: int = Field(default=1, gt=0)
-    price_book_id: int | None = None
-    channel: str | None = Field(default=None, max_length=32)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
-
-class LineItemPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    quantity: int = Field(gt=0)
-    idempotency_key: str | None = Field(default=None, max_length=128)
-
 
 def _reservation(db: Session, organization_id: int, reservation_id: int) -> Reservation:
     row = db.scalar(

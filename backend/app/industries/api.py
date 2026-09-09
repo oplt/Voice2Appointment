@@ -10,13 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
+from app.core.feature_flags import require_industry_voice_tools
 from app.db.models import IndustryProfile, KnowledgeEntry
 from app.industries.service import assign_industry_profile, get_industry_profile
 from app.tenancy.api import OrganizationId, require_org_permission
 
 router = APIRouter(
     tags=["industry", "knowledge"],
-    dependencies=[Depends(require_org_permission("agent.manage"))],
+    dependencies=[Depends(require_industry_voice_tools), Depends(require_org_permission("agent.manage"))],
 )
 
 

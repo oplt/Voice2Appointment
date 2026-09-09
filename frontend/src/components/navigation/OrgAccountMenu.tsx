@@ -1,7 +1,9 @@
 import AccountCircleOutlinedIcon from '@mui/icons-material/AccountCircleOutlined'
 import BusinessOutlinedIcon from '@mui/icons-material/BusinessOutlined'
 import CheckOutlinedIcon from '@mui/icons-material/CheckOutlined'
+import ExtensionOutlinedIcon from '@mui/icons-material/ExtensionOutlined'
 import LogoutIcon from '@mui/icons-material/Logout'
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined'
 import SwapHorizOutlinedIcon from '@mui/icons-material/SwapHorizOutlined'
 import Avatar from '@mui/material/Avatar'
 import CircularProgress from '@mui/material/CircularProgress'
@@ -204,6 +206,28 @@ export function OrgAccountMenu({ collapsed = false }: OrgAccountMenuProps) {
             </MenuItem>
           ))
         )}
+        <MenuItem
+          onClick={() => {
+            setAnchorEl(null)
+            navigate('/integrations')
+          }}
+        >
+          <ListItemIcon>
+            <ExtensionOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary="Integrations" />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setAnchorEl(null)
+            navigate('/settings')
+          }}
+        >
+          <ListItemIcon>
+            <SettingsOutlinedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary="Settings" />
+        </MenuItem>
         <MenuItem
           onClick={() => {
             setAnchorEl(null)

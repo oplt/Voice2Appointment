@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from threading import Lock
 from typing import Any
 
 from app.core.config import settings
@@ -18,6 +19,7 @@ _reset_count = 0
 _pool_exhaustion_count = 0
 _recovery_count = 0
 _degraded = False
+_state_lock = Lock()
 
 
 def _is_pool_exhaustion(exc: BaseException) -> bool:
@@ -33,14 +35,16 @@ def _is_connection_failure(exc: BaseException) -> bool:
 
 def _close_client() -> None:
     global _client, _reset_count
-    if _client is None:
-        return
+    with _state_lock:
+        client = _client
+        if client is None:
+            return
+        _client = None
+        _reset_count += 1
     try:
-        _client.close()
+        client.close()
     except Exception:  # noqa: BLE001
         pass
-    _client = None
-    _reset_count += 1
     metrics.incr("cache_events", labels={"cache": "redis", "result": "reset"})
 
 
@@ -84,10 +88,11 @@ def note_success(operation: str, *, latency_ms: float | None = None) -> None:
 
 def redis_client() -> Any | None:
     global _client, _retry_after, _degraded, _recovery_count
-    if _client is not None:
-        return _client
-    if time.monotonic() < _retry_after:
-        return None
+    with _state_lock:
+        if _client is not None:
+            return _client
+        if time.monotonic() < _retry_after:
+            return None
     try:
         import redis
 
@@ -104,14 +109,22 @@ def redis_client() -> Any | None:
         started = time.perf_counter()
         client.ping()
         note_success("connect", latency_ms=(time.perf_counter() - started) * 1000.0)
-        _client = client
-        if _degraded:
-            _degraded = False
-            _recovery_count += 1
-            metrics.incr(
-                "cache_events", labels={"cache": "redis", "result": "recovery"}
-            )
-        return _client
+        with _state_lock:
+            if _client is None:
+                _client = client
+                if _degraded:
+                    _degraded = False
+                    _recovery_count += 1
+                    metrics.incr(
+                        "cache_events", labels={"cache": "redis", "result": "recovery"}
+                    )
+                return _client
+        try:
+            client.close()
+        except Exception:  # noqa: BLE001
+            pass
+        with _state_lock:
+            return _client
     except Exception as exc:  # noqa: BLE001
         logger.warning("Redis cache unavailable: %s", type(exc).__name__)
         note_failure(exc, "connect")

@@ -148,7 +148,7 @@ export function ReservationsView() {
 
   const customersQuery = useQuery({
     queryKey: queryKeys.customers.list(),
-    queryFn: () => listCustomers(),
+    queryFn: () => listCustomers({ limit: 100, offset: 0 }),
   })
 
   const resourcesQuery = useQuery({
@@ -167,7 +167,7 @@ export function ReservationsView() {
   }
   const customerName = (id: number | null) => {
     if (id == null) return '—'
-    const row = customersQuery.data?.find((c) => c.id === id)
+    const row = customersQuery.data?.items.find((c) => c.id === id)
     if (!row) return `#${id}`
     return row.name || row.phone || row.email || `#${id}`
   }

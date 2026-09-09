@@ -16,7 +16,7 @@ from app.industries.salon import (
 from app.reservations.availability import search_availability
 from app.reservations.service import reschedule_reservation
 from app.reservations.types import AvailabilityRequest
-from app.voice.registry.handlers_industry import _as_bool, _org_context, _parse_dt
+from app.voice.registry.handlers_common import _as_bool, _org_context, _parse_dt
 
 
 def find_salon_services(*, query: str = "", **_: Any) -> dict[str, Any]:

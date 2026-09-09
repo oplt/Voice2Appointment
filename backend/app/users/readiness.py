@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.appointments.policy import load_booking_policy
 from app.calendars.service import calendar_status
 from app.core.config import settings
+from app.core.feature_flags import flag_snapshot
 from app.db.models import User
 from app.users.product_prefs import load_product_prefs
 
@@ -170,6 +171,7 @@ def compute_readiness(db: Session, user: User) -> dict[str, Any]:
         "items": items,
         "completed_required": sum(1 for i in required if i["ok"]),
         "total_required": len(required),
+        "features": flag_snapshot(),
         "test_call_hint": (
             "Place a non-production test call to your Twilio number after readiness. "
             "Do not book real client appointments during verification."

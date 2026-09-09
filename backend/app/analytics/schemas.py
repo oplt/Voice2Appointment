@@ -68,6 +68,17 @@ class ComparisonBlock(BaseModel):
     total_duration: ComparisonMetric
 
 
+
+
+class TwilioSyncStatus(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    status: Literal["queued", "syncing", "healthy", "error"]
+    last_synced_at: str | None = None
+    error_code: str | None = None
+    updated_at: str | None = None
+
+
 class AnalyticsMetaResponse(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -76,6 +87,7 @@ class AnalyticsMetaResponse(BaseModel):
     default_range_days: int
     max_range_days: int
     default_range: dict[str, str]
+    twilio_sync: TwilioSyncStatus | None = None
 
 
 class AnalyticsSummaryResponse(BaseModel):
@@ -110,3 +122,7 @@ class AnalyticsSummaryResponse(BaseModel):
     geo_country_counts: list[dict[str, Any]] = Field(default_factory=list)
     funnel: FunnelBlock | None = None
     comparison: ComparisonBlock | None = None
+
+
+class TwilioSyncStatusResponse(TwilioSyncStatus):
+    pass

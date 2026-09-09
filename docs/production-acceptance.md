@@ -41,6 +41,7 @@ curl -s http://127.0.0.1:8000/health/features
 2. Confirm `/health/features` all `false`.
 3. Do **not** reverse org backfill (`g9b0c1d2e3f4`) in production without a DB snapshot.
 4. Stop Celery reservation maintenance tasks if a bad path shipped while flags were on.
+5. Legacy calendar/voice booking tools remain available while product-domain flags are off.
 
 ## Migration chain (relevant)
 
@@ -52,6 +53,8 @@ curl -s http://127.0.0.1:8000/health/features
 ```
 
 ## Load / latency
+
+Track voice latency and HTTP enqueue latency before flipping product-domain flags for all tenants.
 
 ```bash
 bash backend/scripts/run_phase14_baseline.sh

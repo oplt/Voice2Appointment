@@ -90,8 +90,8 @@ export type ListCatalogItemsParams = {
   offset?: number
 }
 
-export function listCategories() {
-  return api.get<CatalogCategory[]>('/api/v1/catalog/categories')
+export function listCategories(signal?: AbortSignal) {
+  return api.get<CatalogCategory[]>('/api/v1/catalog/categories', { signal })
 }
 
 export function createCategory(body: { name: string; active?: boolean }) {
@@ -105,7 +105,10 @@ export function patchCategory(
   return api.patch<CatalogCategory>(`/api/v1/catalog/categories/${categoryId}`, body)
 }
 
-export function listCatalogItems(params: ListCatalogItemsParams = {}) {
+export function listCatalogItems(
+  params: ListCatalogItemsParams = {},
+  signal?: AbortSignal,
+) {
   const search = new URLSearchParams()
   if (params.active != null) search.set('active', String(params.active))
   if (params.query) search.set('query', params.query)
@@ -114,7 +117,9 @@ export function listCatalogItems(params: ListCatalogItemsParams = {}) {
   if (params.limit != null) search.set('limit', String(params.limit))
   if (params.offset != null) search.set('offset', String(params.offset))
   const qs = search.toString()
-  return api.get<CatalogItemPage>(`/api/v1/catalog/items${qs ? `?${qs}` : ''}`)
+  return api.get<CatalogItemPage>(`/api/v1/catalog/items${qs ? `?${qs}` : ''}`, {
+    signal,
+  })
 }
 
 export function createCatalogItem(body: CatalogItemCreate) {
@@ -133,6 +138,12 @@ export function archiveCatalogItem(itemId: number, expectedVersion: number) {
   return api.post<CatalogItem>(
     `/api/v1/catalog/items/${itemId}/archive?expected_version=${expectedVersion}`,
   )
+}
+
+export function duplicateCatalogItem(itemId: number, name?: string | null) {
+  return api.post<CatalogItem>(`/api/v1/catalog/items/${itemId}/duplicate`, {
+    name: name ?? null,
+  })
 }
 
 export function bulkActivateCatalogItems(itemIds: number[]) {
@@ -166,9 +177,10 @@ export function deleteCatalogOption(itemId: number, optionId: number) {
   return api.delete<void>(`/api/v1/catalog/items/${itemId}/options/${optionId}`)
 }
 
-export function listResourceRequirements(itemId: number) {
+export function listResourceRequirements(itemId: number, signal?: AbortSignal) {
   return api.get<ResourceRequirement[]>(
     `/api/v1/catalog/items/${itemId}/resource-requirements`,
+    { signal },
   )
 }
 

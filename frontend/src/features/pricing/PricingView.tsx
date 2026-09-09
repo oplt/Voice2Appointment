@@ -131,7 +131,7 @@ export function PricingView() {
 
   const locationsQuery = useQuery({
     queryKey: queryKeys.pricing.locations,
-    queryFn: listLocations,
+    queryFn: ({ signal }) => listLocations(signal),
   })
 
   const catalogItems = catalogQuery.data?.items ?? []

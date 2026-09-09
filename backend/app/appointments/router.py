@@ -7,21 +7,29 @@ from sqlalchemy.orm import Session
 
 from app.appointments import booking as booking_service
 from app.appointments import service as appointments_service
-from app.appointments.policy import resolve_slot_end, validate_slot
+from app.appointments.patch import patch_appointment
 from app.appointments.schemas import (
     AppointmentCreate,
     AppointmentListItemOut,
     AppointmentListOut,
     AppointmentOut,
     AppointmentUpdate,
-    assert_status_transition,
 )
 from app.auth.deps import get_current_user, require_db
 from app.calendars import service as calendars_service
 from app.core.errors import NotFoundError, map_exception, raise_http
+from app.core.feature_flags import require_reservation_domain
 from app.db.models import User
+from app.tenancy.api import require_domain_permission
 
-router = APIRouter(prefix="/appointments", tags=["appointments"])
+router = APIRouter(
+    prefix="/appointments",
+    tags=["appointments"],
+    dependencies=[
+        Depends(require_reservation_domain),
+        Depends(require_domain_permission("reservation")),
+    ],
+)
 
 
 def _provider_hooks(db: Session, user_id: int):
@@ -95,9 +103,7 @@ def create_appointment(
             client_phone=payload.client_phone,
             client_email=payload.client_email,
             notes=payload.notes,
-            # Disconnected calendars are local-only and confirmed for both
-            # HTTP and voice; do not leak the HTTP DTO's pending default into
-            # the shared command.
+            # Disconnected calendars stay local-only; do not leak DTO pending default.
             status=payload.status.value if hooks.create_event is not None else None,
             calendar_id=hooks.calendar_id,
             provider_create=hooks.create_event,
@@ -130,92 +136,7 @@ def update_appointment(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
 ) -> AppointmentOut:
-    existing = appointments_service.get_appointment(
-        db, current_user.id, appointment_id
-    )
-    if existing is None:
-        raise_http(NotFoundError("Appointment not found"))
-
-    fields = payload.model_dump(exclude_unset=True)
-    try:
-        # Validate one fully merged candidate before either provider or database
-        # mutation.  PATCH omission preserves the stored value; explicit nulls
-        # for required fields were rejected by AppointmentUpdate.
-        summary = fields.get("summary", existing.summary)
-        start_datetime = fields.get("start_datetime", existing.start_datetime)
-        requested_end = fields.get("end_datetime", existing.end_datetime)
-        timezone_name = fields.get("timezone", existing.timezone)
-        policy = validate_slot(
-            db,
-            current_user.id,
-            start=start_datetime,
-            end=requested_end,
-            timezone_name=timezone_name,
-            exclude_appointment_id=existing.id,
-        )
-        end_datetime = resolve_slot_end(
-            policy,
-            summary=summary,
-            start=start_datetime,
-            end=requested_end,
-        )
-        # Named service duration may change the resolved end even for a
-        # summary-only PATCH, so validate that final candidate as well.
-        validate_slot(
-            db,
-            current_user.id,
-            start=start_datetime,
-            end=end_datetime,
-            timezone_name=timezone_name,
-            exclude_appointment_id=existing.id,
-        )
-        if "status" in fields:
-            assert_status_transition(existing.status, fields["status"].value)
-
-        time_change = (
-            start_datetime != existing.start_datetime
-            or end_datetime != existing.end_datetime
-            or timezone_name != existing.timezone
-        )
-        if time_change:
-            hooks = _provider_hooks(db, current_user.id)
-            row = booking_service.reschedule_appointment_slot(
-                db,
-                current_user.id,
-                appointment_id=appointment_id,
-                start_datetime=start_datetime,
-                end_datetime=end_datetime,
-                timezone_name=timezone_name,
-                provider_update=hooks.update_event,
-                check_provider_availability=hooks.check_availability,
-            )
-            other = {
-                k: v
-                for k, v in fields.items()
-                if k not in {"start_datetime", "end_datetime", "timezone"}
-            }
-            if other:
-                updated = appointments_service.update_appointment(
-                    db, current_user.id, appointment_id, **other
-                )
-                if updated is None:
-                    raise_http(NotFoundError("Appointment not found"))
-                row = updated
-            return AppointmentOut.model_validate(row)
-
-        if "timezone" in fields and fields["timezone"] is None:
-            raise ValueError("timezone cannot be cleared")
-        updated = appointments_service.update_appointment(
-            db,
-            current_user.id,
-            appointment_id,
-            **fields,
-        )
-        if updated is None:
-            raise_http(NotFoundError("Appointment not found"))
-        return AppointmentOut.model_validate(updated)
-    except Exception as exc:
-        raise_http(map_exception(exc))
+    return patch_appointment(db, current_user.id, appointment_id, payload)
 
 
 @router.delete(

@@ -43,6 +43,7 @@ def _mask_recipient(value: str, *, channel: str) -> str:
 
 
 def build_secure_link_url(*, raw_token: str, purpose: str) -> str:
+    """Build the customer-facing URL at delivery (or checkout) time."""
     base = (settings.frontend_base_url or settings.public_base_url or "").rstrip("/")
     return f"{base}/secure/{purpose.strip() or 'link'}?t={raw_token}"
 
@@ -61,8 +62,9 @@ def stage_secure_link(
     """Persist a tokenized secure-link intent and queue it for delivery.
 
     Flushes but does not commit — callers own the transaction boundary.
-    The raw token is stored for the delivery worker and must never be returned
-    on the voice tool response surface.
+    The raw token is encrypted at rest for the delivery worker and must never
+    be returned on the voice tool response surface. The public URL is built at
+    delivery time, not stored in metadata.
     """
     phone = (client_phone or "").strip() or None
     email = (client_email or "").strip() or None
@@ -95,16 +97,14 @@ def stage_secure_link(
 
     raw_token = token_urlsafe(32)
     expires_at = _utcnow() + timedelta(hours=_DEFAULT_TTL_HOURS)
-    secure_url = build_secure_link_url(raw_token=raw_token, purpose=purpose_key)
     meta = dict(metadata or {})
+    meta.pop("secure_url", None)
     meta.update(
         {
             "purpose": purpose_key,
             "recipient_masked": _mask_recipient(recipient, channel=channel),
             "actor_user_id": actor_user_id,
             "url_path": f"/secure/{purpose_key}",
-            # Delivery worker only — never surface on the voice tool response.
-            "secure_url": secure_url,
         }
     )
     row = SecureLinkDelivery(

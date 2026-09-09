@@ -1,0 +1,44 @@
+{
+  "generatedAt": "2026-09-09T16:47:15.681354+00:00",
+  "disclaimer": "Local micro-benchmarks and static contracts \u2014 not production load tests. Do not claim SLOs from these numbers alone.",
+  "results": [
+    {
+      "name": "to_thread_db_parallel_vs_sequential",
+      "sequential_s": 0.1637,
+      "parallel_s": 0.0806,
+      "speedup_x": 2.03,
+      "pass": true,
+      "notes": "Simulates concurrent webhook/DB work off the event loop (Phase 2)."
+    },
+    {
+      "name": "voice_read_tool_batching_present",
+      "batching_symbols_present": true,
+      "pass": true,
+      "notes": "Sequential vs concurrent latency is covered by test_voice_read_calls_are_batched_with_mutation_barrier; this check records that the production path retains asyncio.gather batching."
+    },
+    {
+      "name": "analytics_manual_refresh_enqueue",
+      "returns_accepted_pattern": true,
+      "offloads_enqueue": true,
+      "pass": true,
+      "notes": "test_fetch_twilio_returns_202_and_enqueues proves quick return after enqueue."
+    },
+    {
+      "name": "frontend_bundle_report",
+      "pass": true,
+      "totalJsBytes": 1180306,
+      "initialJsBytes": 615258,
+      "routeJsBytes": 479671,
+      "lazyVisualizationJsBytes": 315839,
+      "largestChunk": {
+        "name": "index-C0IS-jyj.js",
+        "bytes": 384796
+      },
+      "notes": "Analytics charts are lazy-split (Phase 5.8); inspect lazyVisualizationJsBytes."
+    }
+  ],
+  "allPassed": true,
+  "pool_metrics": {
+    "notes": "DB/Redis pool gauges are exposed via MetricsRegistry (db_pool_checked_out, db_pool_wait_ms); see test_performance_metrics."
+  }
+}

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from cryptography.fernet import Fernet
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.catalog.service import create_catalog_item
+from app.core.config import settings
 from app.customers.service import get_or_create_customer
 from app.db.base import Base
 from app.db.models import (
@@ -20,11 +22,13 @@ from app.db.models import (
 )
 from app.industries.restaurant import book_restaurant_reservation
 from app.industries.service import assign_industry_profile
-from app.payments.service import capture_payment, find_payment_by_token
+from app.payments.service import capture_payment, find_payment_by_token, payment_public_view
 from app.tenancy.service import create_organization_for_user
 
 
 def _session() -> Session:
+    if not (settings.fernet_key or "").strip():
+        settings.fernet_key = Fernet.generate_key().decode()
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)()
@@ -110,8 +114,13 @@ def test_deposit_book_stages_payment_and_capture_confirms() -> None:
     assert delivery is not None
     assert delivery.status == "scheduled"
     assert delivery.purpose == "deposit"
+    assert "secure_url" not in dict(delivery.metadata_json or {})
     raw_token = delivery.token_ciphertext
+    assert raw_token
     assert find_payment_by_token(db, raw_token) is not None
+    view = payment_public_view(payment, db)
+    assert view["status"] == "pending"
+    assert view["checkout_url"] is None
 
     captured = capture_payment(db, payment.id, token=raw_token)
     assert captured.status == "captured"

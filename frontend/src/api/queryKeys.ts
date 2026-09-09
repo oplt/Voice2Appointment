@@ -41,6 +41,16 @@ export const queryKeys = {
   customers: {
     all: ['customers'] as const,
     list: (query?: string) => ['customers', 'list', query ?? ''] as const,
+    detail: (id: number) => ['customers', 'detail', id] as const,
+    reservations: (id: number) => ['customers', 'reservations', id] as const,
+  },
+  tenancy: {
+    all: ['tenancy'] as const,
+    organizations: ['tenancy', 'organizations'] as const,
+    active: ['tenancy', 'active'] as const,
+    locations: ['tenancy', 'locations'] as const,
+    members: ['tenancy', 'members'] as const,
+    invitations: ['tenancy', 'invitations'] as const,
   },
   reservations: {
     all: ['reservations'] as const,

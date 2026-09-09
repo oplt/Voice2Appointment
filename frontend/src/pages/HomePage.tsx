@@ -66,7 +66,7 @@ export function HomePage() {
               </Typography>
               <Typography variant="body1" color="text.secondary" sx={{ maxWidth: 560 }}>
                 Answer inbound calls, book and reschedule appointments, and review analytics
-                from one Tesla-minimal workspace.
+                from one operational workspace.
               </Typography>
               {isAuthenticated ? (
                 <Button

@@ -9,11 +9,17 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
+from app.core.feature_flags import require_catalog_domain
+from app.core.thread_db import to_thread_db
 from app.payments import service as payments_service
 from app.payments.providers import verify_stripe_webhook
 from app.payments.service import PaymentError
 
-router = APIRouter(prefix="/payments", tags=["payments"])
+router = APIRouter(
+    prefix="/payments",
+    tags=["payments"],
+    dependencies=[Depends(require_catalog_domain)],
+)
 
 
 class CaptureIn(BaseModel):
@@ -32,6 +38,9 @@ class PaymentOut(BaseModel):
     purpose: str
     provider: str
     status: str
+    checkout_url: str | None = None
+    link_expired: bool = False
+    expires_at: str | None = None
 
 
 @router.get("/by-token", response_model=PaymentOut)
@@ -42,7 +51,7 @@ def get_payment_by_token(
     intent = payments_service.find_payment_by_token(db, token)
     if intent is None:
         raise HTTPException(status_code=404, detail="Payment not found")
-    return payments_service.payment_public_view(intent)
+    return payments_service.payment_public_view(intent, db)
 
 
 @router.post("/{payment_id}/capture", response_model=PaymentOut)
@@ -60,17 +69,15 @@ def capture_payment(
         )
     except PaymentError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return payments_service.payment_public_view(intent)
+    return payments_service.payment_public_view(intent, db)
 
 
-@router.post("/stripe/webhook", status_code=status.HTTP_200_OK)
-async def stripe_webhook(request: Request, db: Session = Depends(require_db)) -> dict[str, Any]:
-    payload = await request.body()
-    sig = request.headers.get("stripe-signature")
+def _stripe_webhook_work(
+    db: Session, payload: bytes, sig: str | None
+) -> dict[str, Any]:
     try:
         event = verify_stripe_webhook(payload, sig)
     except RuntimeError as exc:
-        # Stripe not configured — acknowledge without processing.
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -94,3 +101,10 @@ async def stripe_webhook(request: Request, db: Session = Depends(require_db)) ->
             except PaymentError:
                 pass
     return {"received": True}
+
+
+@router.post("/stripe/webhook", status_code=status.HTTP_200_OK)
+async def stripe_webhook(request: Request) -> dict[str, Any]:
+    payload = await request.body()
+    sig = request.headers.get("stripe-signature")
+    return await to_thread_db(_stripe_webhook_work, payload, sig)

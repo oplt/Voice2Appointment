@@ -6,9 +6,8 @@ import Drawer from '@mui/material/Drawer'
 import IconButton from '@mui/material/IconButton'
 import Toolbar from '@mui/material/Toolbar'
 import Tooltip from '@mui/material/Tooltip'
-import Typography from '@mui/material/Typography'
 import { useEffect, useState } from 'react'
-import { Link as RouterLink, Outlet, useLocation } from 'react-router-dom'
+import { Link as RouterLink, Outlet } from 'react-router-dom'
 
 import { designTokens } from '../theme/tokens'
 import { SkipLink } from './SkipLink'
@@ -18,7 +17,6 @@ import {
   NAV_COLLAPSED_WIDTH,
   NAV_COLLAPSE_STORAGE_KEY,
   NAV_EXPANDED_WIDTH,
-  findActiveNavItem,
 } from './navigation/navConfig'
 
 function readCollapsed(): boolean {
@@ -32,8 +30,6 @@ function readCollapsed(): boolean {
 export function AppLayout() {
   const [mobileOpen, setMobileOpen] = useState(false)
   const [collapsed, setCollapsed] = useState(false)
-  const location = useLocation()
-  const active = findActiveNavItem(location.pathname)
   const desktopWidth = collapsed ? NAV_COLLAPSED_WIDTH : NAV_EXPANDED_WIDTH
 
   useEffect(() => {
@@ -58,14 +54,16 @@ export function AppLayout() {
       <AppBar
         position="fixed"
         component="header"
+        elevation={0}
         sx={{
           width: { md: `calc(100% - ${desktopWidth}px)` },
           ml: { md: `${desktopWidth}px` },
           backgroundColor: designTokens.colors.frostedGlass,
+          borderBottom: `1px solid ${designTokens.colors.cloudGray}`,
           transition: `width ${designTokens.motion.duration} ${designTokens.motion.easing}, margin ${designTokens.motion.duration} ${designTokens.motion.easing}`,
         }}
       >
-        <Toolbar sx={{ gap: 0.5 }}>
+        <Toolbar sx={{ gap: 0.5, minHeight: 56 }}>
           <IconButton
             color="inherit"
             edge="start"
@@ -77,9 +75,8 @@ export function AppLayout() {
           >
             <MenuIcon />
           </IconButton>
-          <Typography variant="h5" component="p" sx={{ flexGrow: 1, m: 0 }}>
-            {active?.label ?? 'App'}
-          </Typography>
+          {/* Page titles live in PageHeader — keep the utility bar quiet. */}
+          <Box sx={{ flexGrow: 1 }} />
           <ThemeModeToggle />
           <Tooltip title="Calendar">
             <IconButton
@@ -139,7 +136,7 @@ export function AppLayout() {
           flexGrow: 1,
           width: { md: `calc(100% - ${desktopWidth}px)` },
           p: { xs: 2, md: 3 },
-          mt: 8,
+          mt: 7,
           maxWidth: designTokens.layout.maxWidth,
           transition: `width ${designTokens.motion.duration} ${designTokens.motion.easing}`,
           outline: 'none',

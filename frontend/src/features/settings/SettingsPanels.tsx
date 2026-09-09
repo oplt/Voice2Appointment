@@ -21,6 +21,7 @@ import { useSnackbar } from '../../components/SnackbarProvider'
 import type { UserProfile } from '../../types'
 import { ProductPrefsPanels } from './ProductPrefsPanels'
 import { SetupChecklist } from './SetupChecklist'
+import { OrganizationPanel } from './organization/OrganizationPanel'
 
 type AccountForm = {
   username: string
@@ -148,6 +149,7 @@ export function SettingsPanels() {
 
           {tab === 1 ? (
             <Stack spacing={3}>
+              <OrganizationPanel />
               <Alert severity="info">
                 Catalog, prices, business hours, and resources live under Business in the sidebar
                 — not here.{' '}

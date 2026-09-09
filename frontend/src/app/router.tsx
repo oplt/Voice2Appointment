@@ -47,6 +47,12 @@ const ForgotPasswordPage = lazy(() =>
 const ResetPasswordPage = lazy(() =>
   import('../pages/ResetPasswordPage').then((m) => ({ default: m.ResetPasswordPage })),
 )
+const SecurePaymentPage = lazy(() =>
+  import('../pages/SecurePaymentPage').then((m) => ({ default: m.SecurePaymentPage })),
+)
+const InviteAcceptPage = lazy(() =>
+  import('../pages/InviteAcceptPage').then((m) => ({ default: m.InviteAcceptPage })),
+)
 const NotFoundPage = lazy(() =>
   import('../pages/NotFoundPage').then((m) => ({ default: m.NotFoundPage })),
 )
@@ -63,8 +69,10 @@ export function AppRouter() {
           <Route path="/register" element={<Navigate to="/?mode=signUp" replace />} />
           <Route path="/forgot-password" element={<ForgotPasswordPage />} />
           <Route path="/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/secure/:purpose" element={<SecurePaymentPage />} />
 
           <Route element={<ProtectedRoute />}>
+            <Route path="/invite" element={<InviteAcceptPage />} />
             <Route element={<AppLayout />}>
               <Route path="/dashboard" element={<DashboardPage />} />
               <Route path="/calendar" element={<CalendarPage />} />

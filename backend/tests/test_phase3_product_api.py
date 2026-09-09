@@ -41,7 +41,25 @@ def _session() -> Session:
 
 
 def _paths(router: object) -> set[str]:
-    return {route.path for route in router.routes}  # type: ignore[attr-defined]
+    found: set[str] = set()
+
+    def walk(node: object) -> None:
+        routes = getattr(node, "routes", None)
+        if routes is None:
+            return
+        for route in routes:
+            path = getattr(route, "path", None)
+            if isinstance(path, str):
+                found.add(path)
+            nested = getattr(route, "routes", None)
+            if nested is not None:
+                walk(route)
+            original = getattr(route, "original_router", None)
+            if original is not None:
+                walk(original)
+
+    walk(router)
+    return found
 
 
 def test_product_routers_are_registered_with_required_contracts() -> None:
@@ -93,4 +111,4 @@ def test_product_mutations_and_queries_are_organization_scoped() -> None:
 
     assert item.organization_id == resource.organization_id == customer.organization_id == first.id
     assert knowledge.organization_id == first.id
-    assert list_customers(organization_id=second.id, query=None, db=db) == []
+    assert list_customers(organization_id=second.id, query=None, db=db).items == []

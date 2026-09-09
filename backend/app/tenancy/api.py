@@ -158,6 +158,8 @@ class MemberOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     user_id: int
     role: str
+    email: str | None = None
+    username: str | None = None
 
 
 class InvitationIn(MemberRoleIn):
@@ -293,8 +295,20 @@ def activate_organization(
 def list_organization_members(
     organization_id: Annotated[int, Depends(require_org_permission("organization.manage"))],
     db: Session = Depends(require_db),
-) -> list[OrganizationMember]:
-    return tenancy_service.list_members(db, organization_id=organization_id)
+) -> list[MemberOut]:
+    members = tenancy_service.list_members(db, organization_id=organization_id)
+    out: list[MemberOut] = []
+    for member in members:
+        user = db.get(User, member.user_id)
+        out.append(
+            MemberOut(
+                user_id=member.user_id,
+                role=member.role,
+                email=user.email if user is not None else None,
+                username=user.username if user is not None else None,
+            )
+        )
+    return out
 
 
 @router.patch("/organizations/members/{user_id}", response_model=MemberOut)
@@ -304,7 +318,7 @@ def patch_organization_member(
     organization_id: Annotated[int, Depends(require_org_permission("organization.manage"))],
     current_user: User = Depends(get_current_user),
     db: Session = Depends(require_db),
-) -> OrganizationMember:
+) -> MemberOut:
     try:
         row = tenancy_service.set_member_role(
             db,
@@ -315,7 +329,13 @@ def patch_organization_member(
         )
         db.commit()
         db.refresh(row)
-        return row
+        user = db.get(User, row.user_id)
+        return MemberOut(
+            user_id=row.user_id,
+            role=row.role,
+            email=user.email if user is not None else None,
+            username=user.username if user is not None else None,
+        )
     except tenancy_service.TenancyError as exc:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(exc)) from exc

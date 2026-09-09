@@ -6,7 +6,6 @@ import asyncio
 import base64
 import json
 import logging
-import time
 from collections import deque
 from contextvars import ContextVar
 from typing import Any
@@ -34,6 +33,7 @@ from app.voice.config_loader import (
 )
 from app.voice.config_loader import load_voice_config_for_context
 from app.voice.context import CallContext, bind_call_context, unbind_call_context
+from app.voice.function_calls import handle_function_call_request as _handle_function_call_request
 from app.voice.latency import LatencyTracker
 from app.voice.provider_loop import run_provider_loop
 from app.voice.providers.deepgram import (
@@ -46,7 +46,6 @@ from app.voice.registry.validation import (
     is_invalid_arguments_result,
     validate_tool_arguments,
 )
-from app.voice.tool_runtime import get_voice_tool_runtime
 from app.voice.transcript import BoundedTranscript
 from app.voice.twilio_media import (
     AUDIO_END,
@@ -168,84 +167,17 @@ async def handle_function_call_request(
     tool_results: dict[str, dict] | None = None,
     inflight_tool_ids: set[str] | None = None,
 ):
-    """Run sync Google/tool work off the event loop with explicit call context."""
-    function_calls = decoded.get("functions") or []
-    for function_call in function_calls:
-        raw_id = function_call.get("id") if isinstance(function_call, dict) else None
-        raw_name = function_call.get("name") if isinstance(function_call, dict) else None
-        func_id = raw_id if isinstance(raw_id, str) and raw_id else None
-        func_name = raw_name if isinstance(raw_name, str) and raw_name else None
-        response_id = func_id or "unknown"
-        response_name = func_name or "unknown"
-
-        if func_id is not None and tool_results is not None and func_id in tool_results:
-            await sts_ws.send(json.dumps(tool_results[func_id]))
-            continue
-        if func_id is not None and inflight_tool_ids is not None and func_id in inflight_tool_ids:
-            # A thread-backed tool cannot be safely cancelled; do not duplicate its
-            # side effect when a replacement Agent reconnects.
-            continue
-        if func_id is not None and inflight_tool_ids is not None:
-            inflight_tool_ids.add(func_id)
-
-        started = time.perf_counter()
-        try:
-            if func_name is None:
-                raise ValueError("function name is required")
-            raw_arguments = function_call.get("arguments")
-            if not isinstance(raw_arguments, str):
-                raise ValueError("function arguments must be JSON")
-            arguments = json.loads(raw_arguments)
-            if not isinstance(arguments, dict):
-                raise ValueError("function arguments must be an object")
-            log_event(
-                logger,
-                "function_call",
-                operation=func_name,
-                func_id=response_id,
-                arguments=sanitize_for_log(arguments),
-            )
-
-            # Function-call messages are processed in order. In particular,
-            # mutations are never parallelized even though the bounded runtime
-            # can serve reads from different calls concurrently.
-            result = await get_voice_tool_runtime().run(
-                func_name,
-                lambda: _run_tool_in_thread(func_name, arguments, ctx),
-            )
-            latency_ms = round((time.perf_counter() - started) * 1000.0, 2)
-            if "availability" in func_name or "find_" in func_name:
-                latency.record_ms("calendar_lookup_ms", latency_ms)
-            elif "create_" in func_name:
-                latency.record_ms("calendar_create_ms", latency_ms)
-            function_result = create_function_call_response(response_id, func_name, result)
-            log_event(
-                logger,
-                "function_call_sent",
-                operation=func_name,
-                func_id=response_id,
-                latency_ms=latency_ms,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning(
-                "function_call_failed operation=%s error_type=%s",
-                response_name,
-                type(exc).__name__,
-            )
-            function_result = create_function_call_response(
-                response_id,
-                response_name,
-                {"error": f"Function call failed with: {type(exc).__name__}"},
-            )
-        finally:
-            if func_id is not None and inflight_tool_ids is not None:
-                inflight_tool_ids.discard(func_id)
-
-        # Cache both success and safe error envelopes. On a provider reconnect this
-        # prevents a completed mutation (including a failed one) from being run again.
-        if func_id is not None and tool_results is not None:
-            tool_results[func_id] = function_result
-        await sts_ws.send(json.dumps(function_result))
+    await _handle_function_call_request(
+        decoded,
+        sts_ws,
+        ctx=ctx,
+        latency=latency,
+        run_tool_in_thread=_run_tool_in_thread,
+        create_response=create_function_call_response,
+        logger=logger,
+        tool_results=tool_results,
+        inflight_tool_ids=inflight_tool_ids,
+    )
 
 
 async def handle_text_message(

@@ -4,7 +4,6 @@ import Alert from '@mui/material/Alert'
 import Box from '@mui/material/Box'
 import Button from '@mui/material/Button'
 import Divider from '@mui/material/Divider'
-import Grid from '@mui/material/Grid'
 import List from '@mui/material/List'
 import ListItem from '@mui/material/ListItem'
 import ListItemText from '@mui/material/ListItemText'
@@ -17,6 +16,7 @@ import { Link as RouterLink } from 'react-router-dom'
 import { ApiError } from '../../api/client'
 import { getDashboardSummary } from '../../api/dashboard'
 import { queryKeys } from '../../api/queryKeys'
+import { queryStaleTime } from '../../app/queryClient'
 import { PageHeader } from '../../components/PageHeader'
 import { useApiHealth } from '../../hooks/useApiHealth'
 
@@ -67,13 +67,13 @@ function Metric({
         textDecoration: 'none',
         color: 'inherit',
         display: 'block',
-        p: 1.5,
-        borderRadius: 1,
-        border: '1px solid var(--border-subtle)',
-        bgcolor: 'var(--surface-secondary)',
-        minHeight: 88,
-        transition: 'background-color 0.2s',
-        '&:hover': { bgcolor: 'var(--surface-primary)' },
+        py: 1,
+        minWidth: 0,
+        flex: '1 1 0',
+        minHeight: 72,
+        transition: 'opacity 0.2s',
+        '@media (prefers-reduced-motion: reduce)': { transition: 'none' },
+        '&:hover': { opacity: 0.85 },
         '&:focus-visible': {
           outline: '3px solid var(--action-primary)',
           outlineOffset: 2,
@@ -101,9 +101,11 @@ function HealthRow({ label, ok, detail }: { label: string; ok: boolean | null; d
     <Stack
       direction="row"
       spacing={1.5}
-      sx={{ alignItems: 'baseline', justifyContent: 'space-between', py: 0.75 }}
+      sx={{ alignItems: 'baseline', justifyContent: 'space-between', py: 0.5 }}
     >
-      <Typography variant="body2">{label}</Typography>
+      <Typography variant="body2" color="text.secondary">
+        {label}
+      </Typography>
       <Stack spacing={0} sx={{ alignItems: 'flex-end' }}>
         <Typography variant="body2" sx={{ color: tone, fontWeight: 500 }}>
           {ok === null ? '…' : ok ? 'OK' : 'Needs setup'}
@@ -122,7 +124,8 @@ export function DashboardOverview() {
   const apiHealth = useApiHealth()
   const summaryQuery = useQuery({
     queryKey: queryKeys.dashboard.summary,
-    queryFn: getDashboardSummary,
+    queryFn: ({ signal }) => getDashboardSummary(signal),
+    staleTime: queryStaleTime.dashboard,
   })
   const summary = summaryQuery.data ?? null
   const loading = summaryQuery.isPending
@@ -166,7 +169,7 @@ export function DashboardOverview() {
   const telephonyOk = summary ? Boolean(provider?.twilio) : null
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={4}>
       <PageHeader
         title="Today"
         subtitle={
@@ -227,128 +230,110 @@ export function DashboardOverview() {
         </Alert>
       ) : null}
 
-      <Grid container spacing={1.5}>
-        <Grid size={{ xs: 6, md: 3 }}>
+      {/* 1. Attention */}
+      <Stack spacing={1.25}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ alignItems: 'baseline', justifyContent: 'space-between' }}
+        >
+          <Typography variant="h3">Needs attention</Typography>
+          <Button component={RouterLink} to="/calls" size="small">
+            Open calls
+          </Button>
+        </Stack>
+        {loading ? (
+          <Skeleton variant="rounded" height={40} width="60%" />
+        ) : attentionCount > 0 ? (
+          <Stack
+            direction={{ xs: 'column', sm: 'row' }}
+            spacing={2}
+            sx={{ alignItems: { sm: 'center' }, justifyContent: 'space-between' }}
+          >
+            <Typography variant="body1">
+              <Box component="span" sx={{ fontWeight: 600 }}>
+                {attentionCount}
+              </Box>{' '}
+              call{attentionCount === 1 ? '' : 's'} need follow-up today.
+            </Typography>
+            <Button
+              component={RouterLink}
+              to="/calls"
+              variant="outlined"
+              sx={{ alignSelf: { xs: 'flex-start', sm: 'center' } }}
+            >
+              Review attention queue
+            </Button>
+          </Stack>
+        ) : (
+          <Typography variant="body1" color="text.secondary">
+            Nothing needs attention right now.
+          </Typography>
+        )}
+      </Stack>
+
+      {/* 2. Today's metrics */}
+      <Stack spacing={1}>
+        <Typography variant="overline" color="text.secondary">
+          Today
+        </Typography>
+        <Stack
+          direction="row"
+          spacing={0}
+          divider={<Divider orientation="vertical" flexItem />}
+          sx={{
+            flexWrap: 'wrap',
+            columnGap: 3,
+            rowGap: 1,
+            '& > *': { minWidth: 100 },
+          }}
+        >
           <Metric label="Calls" value={callsToday} to="/calls" loading={loading} />
-        </Grid>
-        <Grid size={{ xs: 6, md: 3 }}>
           <Metric label="Bookings" value={bookingsToday} to="/reservations" loading={loading} />
-        </Grid>
-        <Grid size={{ xs: 6, md: 3 }}>
           <Metric label="Completion" value={completion} to="/calls" loading={loading} />
-        </Grid>
-        <Grid size={{ xs: 6, md: 3 }}>
           <Metric label="Attention" value={attention} to="/calls" loading={loading} />
-        </Grid>
-      </Grid>
+        </Stack>
+      </Stack>
 
-      <Grid container spacing={2}>
-        <Grid size={{ xs: 12, lg: 5 }}>
-          <Box
-            sx={{
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 1,
-              p: { xs: 2, sm: 2.5 },
-              bgcolor: 'var(--surface-primary)',
-              minHeight: 280,
-            }}
-          >
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: 'baseline', justifyContent: 'space-between', mb: 1.5 }}
-            >
-              <Typography variant="h3">Needs attention</Typography>
-              <Button component={RouterLink} to="/calls" size="small">
-                Open calls
-              </Button>
-            </Stack>
-            {loading ? (
-              <Stack spacing={1}>
-                <Skeleton variant="rounded" height={48} />
-                <Skeleton variant="rounded" height={48} />
-              </Stack>
-            ) : attentionCount > 0 ? (
-              <Stack spacing={1.5}>
-                <Typography variant="body1">
-                  {attentionCount} call{attentionCount === 1 ? '' : 's'} need follow-up today.
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  Review failed bookings, transfers, and incomplete sessions.
-                </Typography>
-                <Button
-                  component={RouterLink}
-                  to="/calls"
-                  variant="outlined"
-                  sx={{ alignSelf: 'flex-start' }}
-                >
-                  Review attention queue
-                </Button>
-              </Stack>
-            ) : (
-              <Typography variant="body1" color="text.secondary">
-                Nothing needs attention right now.
-              </Typography>
-            )}
-          </Box>
-        </Grid>
+      {/* 3. Upcoming */}
+      <Stack spacing={1.25}>
+        <Stack
+          direction="row"
+          spacing={1}
+          sx={{ alignItems: 'baseline', justifyContent: 'space-between' }}
+        >
+          <Typography variant="h3">Upcoming</Typography>
+          <Button component={RouterLink} to="/reservations" size="small">
+            All bookings
+          </Button>
+        </Stack>
+        {loading ? (
+          <Stack spacing={1}>
+            <Skeleton variant="text" width="70%" />
+            <Skeleton variant="text" width="55%" />
+            <Skeleton variant="text" width="60%" />
+          </Stack>
+        ) : !summary?.upcoming?.length ? (
+          <Typography variant="body1" color="text.secondary">
+            No upcoming appointments. Create one from Bookings.
+          </Typography>
+        ) : (
+          <List disablePadding>
+            {summary.upcoming.slice(0, 8).map((item) => (
+              <ListItem key={item.id} divider sx={{ px: 0 }}>
+                <ListItemText
+                  primary={item.summary}
+                  secondary={`${formatWhen(item.start_datetime)} · ${item.status}`}
+                />
+              </ListItem>
+            ))}
+          </List>
+        )}
+      </Stack>
 
-        <Grid size={{ xs: 12, lg: 7 }}>
-          <Box
-            sx={{
-              border: '1px solid var(--border-subtle)',
-              borderRadius: 1,
-              p: { xs: 2, sm: 2.5 },
-              bgcolor: 'var(--surface-primary)',
-              minHeight: 280,
-            }}
-          >
-            <Stack
-              direction="row"
-              spacing={1}
-              sx={{ alignItems: 'baseline', justifyContent: 'space-between', mb: 1.5 }}
-            >
-              <Typography variant="h3">Upcoming</Typography>
-              <Button component={RouterLink} to="/reservations" size="small">
-                All bookings
-              </Button>
-            </Stack>
-            {loading ? (
-              <Stack spacing={1}>
-                <Skeleton variant="rounded" height={48} />
-                <Skeleton variant="rounded" height={48} />
-                <Skeleton variant="rounded" height={48} />
-              </Stack>
-            ) : !summary?.upcoming?.length ? (
-              <Typography variant="body1" color="text.secondary">
-                No upcoming appointments. Create one from Bookings.
-              </Typography>
-            ) : (
-              <List disablePadding>
-                {summary.upcoming.slice(0, 8).map((item) => (
-                  <ListItem key={item.id} divider sx={{ px: 0 }}>
-                    <ListItemText
-                      primary={item.summary}
-                      secondary={`${formatWhen(item.start_datetime)} · ${item.status}`}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            )}
-          </Box>
-        </Grid>
-      </Grid>
-
-      <Box
-        sx={{
-          border: '1px solid var(--border-subtle)',
-          borderRadius: 1,
-          p: { xs: 2, sm: 2.5 },
-          bgcolor: 'var(--surface-secondary)',
-          maxWidth: 560,
-        }}
-      >
-        <Typography variant="h3" sx={{ mb: 1 }}>
+      {/* 4. System health (secondary) */}
+      <Stack spacing={0.5} sx={{ maxWidth: 480, pt: 1 }}>
+        <Typography variant="overline" color="text.secondary">
           System health
         </Typography>
         {loading ? (
@@ -368,7 +353,6 @@ export function DashboardOverview() {
                     : 'API unreachable'
               }
             />
-            <Divider />
             <HealthRow
               label="Calendar"
               ok={calendarOk}
@@ -378,7 +362,6 @@ export function DashboardOverview() {
                   : undefined
               }
             />
-            <Divider />
             <HealthRow
               label="Telephony"
               ok={telephonyOk}
@@ -394,18 +377,18 @@ export function DashboardOverview() {
           component={RouterLink}
           to="/integrations"
           size="small"
-          sx={{ mt: 1.5 }}
+          sx={{ mt: 1, alignSelf: 'flex-start' }}
         >
           Manage integrations
         </Button>
-        <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-          KPI definitions and exclusions live in{' '}
+        <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+          KPI definitions live in{' '}
           <Box component={RouterLink} to="/analytics" sx={{ color: 'inherit' }}>
             Analytics
           </Box>
           .
         </Typography>
-      </Box>
+      </Stack>
     </Stack>
   )
 }

@@ -2,17 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.core.config import settings
 from app.db.models import PaymentIntent
 
 
+@dataclass(frozen=True)
+class CheckoutSessionResult:
+    """Provider checkout identifiers retained by the application."""
+
+    provider_ref: str
+    checkout_url: str | None = None
+
+
 class PaymentProvider(Protocol):
     name: str
 
-    def create_checkout(self, intent: PaymentIntent, *, success_url: str, cancel_url: str) -> str:
-        """Return a provider reference / checkout URL identifier."""
+    def create_checkout(
+        self, intent: PaymentIntent, *, success_url: str, cancel_url: str
+    ) -> CheckoutSessionResult:
+        """Create a checkout session and return provider ref + browser URL."""
 
     def capture(self, intent: PaymentIntent, *, token: str | None = None) -> None:
         """Mark the intent captured at the provider layer (or validate manual token)."""
@@ -25,22 +36,24 @@ class ManualProvider:
 
     def create_checkout(
         self, intent: PaymentIntent, *, success_url: str, cancel_url: str
-    ) -> str:
-        return f"manual:{intent.id}"
+    ) -> CheckoutSessionResult:
+        _ = (success_url, cancel_url)
+        return CheckoutSessionResult(provider_ref=f"manual:{intent.id}")
 
     def capture(self, intent: PaymentIntent, *, token: str | None = None) -> None:
+        _ = intent
         if not token:
             raise ValueError("secure link token required for manual capture")
 
 
 class StripeProvider:
-    """Stripe Checkout Session stub — requires STRIPE_SECRET_KEY when used."""
+    """Stripe Checkout Session — requires STRIPE_SECRET_KEY when used."""
 
     name = "stripe"
 
     def create_checkout(
         self, intent: PaymentIntent, *, success_url: str, cancel_url: str
-    ) -> str:
+    ) -> CheckoutSessionResult:
         secret = (settings.stripe_secret_key or "").strip()
         if not secret:
             raise RuntimeError("STRIPE_SECRET_KEY is not configured")
@@ -72,7 +85,11 @@ class StripeProvider:
                 "reservation_id": str(intent.reservation_id or ""),
             },
         )
-        return str(session.id)
+        checkout_url = getattr(session, "url", None)
+        return CheckoutSessionResult(
+            provider_ref=str(session.id),
+            checkout_url=str(checkout_url) if checkout_url else None,
+        )
 
     def capture(self, intent: PaymentIntent, *, token: str | None = None) -> None:
         # Webhook-driven capture path; synchronous capture is a no-op once paid.

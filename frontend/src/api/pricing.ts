@@ -97,6 +97,6 @@ export function deletePrice(priceBookId: number, priceId: number) {
   return api.delete<void>(`/api/v1/price-books/${priceBookId}/prices/${priceId}`)
 }
 
-export function listLocations() {
-  return api.get<Location[]>('/api/v1/locations')
+export function listLocations(signal?: AbortSignal) {
+  return api.get<Location[]>('/api/v1/locations', { signal })
 }

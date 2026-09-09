@@ -16,75 +16,13 @@ from app.db.models import (
     OrganizationMember,
     User,
 )
-
-ROLES = frozenset({"owner", "admin", "manager", "staff", "viewer"})
-PERMISSIONS = frozenset(
-    {
-        "catalog.read",
-        "catalog.write",
-        "pricing.read",
-        "pricing.write",
-        "reservation.read",
-        "reservation.write",
-        "customer.read",
-        "customer.write",
-        "resources.read",
-        "resources.write",
-        "locations.write",
-        "agent.manage",
-        "analytics.read",
-        "integration.manage",
-        "organization.manage",
-        "privacy.manage",
-    }
+from app.tenancy.permissions import (
+    TenancyError,
+    _valid_role,
+    has_permission,
 )
-_ROLE_PERMISSIONS: dict[str, frozenset[str]] = {
-    "owner": PERMISSIONS,
-    "admin": PERMISSIONS,
-    "manager": frozenset(
-        {
-            "catalog.read",
-            "catalog.write",
-            "pricing.read",
-            "pricing.write",
-            "reservation.read",
-            "reservation.write",
-            "customer.read",
-            "customer.write",
-            "resources.read",
-            "resources.write",
-            "locations.write",
-            "agent.manage",
-            "analytics.read",
-        }
-    ),
-    "staff": frozenset(
-        {
-            "catalog.read",
-            "pricing.read",
-            "reservation.read",
-            "reservation.write",
-            "customer.read",
-            "customer.write",
-            "resources.read",
-        }
-    ),
-    "viewer": frozenset(
-        {
-            "catalog.read",
-            "pricing.read",
-            "reservation.read",
-            "customer.read",
-            "resources.read",
-            "analytics.read",
-        }
-    ),
-}
+
 INVITATION_TTL_DAYS = 7
-
-
-class TenancyError(ValueError):
-    """Safe tenancy and authorization policy violation."""
 
 
 def _now() -> datetime:
@@ -97,21 +35,6 @@ def _aware(value: datetime) -> datetime:
         if value.tzinfo is None
         else value.astimezone(timezone.utc)
     )
-
-
-def _valid_role(role: str) -> str:
-    normalized = role.strip().lower()
-    if normalized not in ROLES:
-        raise TenancyError("role must be owner, admin, manager, staff, or viewer")
-    return normalized
-
-
-def permissions_for_role(role: str) -> frozenset[str]:
-    return _ROLE_PERMISSIONS.get(role, frozenset())
-
-
-def has_permission(member: OrganizationMember, permission: str) -> bool:
-    return permission in permissions_for_role(member.role)
 
 
 def membership_for_user(

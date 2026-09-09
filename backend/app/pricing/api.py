@@ -11,11 +11,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
+from app.core.feature_flags import require_catalog_domain
 from app.db.models import CatalogItem, Location, Price, PriceBook
 from app.pricing.service import PriceValidationError, validate_new_price
 from app.tenancy.api import OrganizationId, require_domain_permission
 
-router = APIRouter(tags=["pricing"], dependencies=[Depends(require_domain_permission("pricing"))])
+router = APIRouter(
+    tags=["pricing"],
+    dependencies=[
+        Depends(require_catalog_domain),
+        Depends(require_domain_permission("pricing")),
+    ],
+)
 
 
 class PriceBookIn(BaseModel):

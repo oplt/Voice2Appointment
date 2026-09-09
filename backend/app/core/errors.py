@@ -164,6 +164,8 @@ def register_exception_handlers(app: Any) -> None:
     from fastapi.responses import JSONResponse
     from starlette.exceptions import HTTPException as StarletteHTTPException
 
+    from app.core.feature_flags import FeatureDisabledError
+
     @app.exception_handler(StarletteHTTPException)
     async def http_exception_handler(
         _request: Request, exc: StarletteHTTPException
@@ -187,6 +189,18 @@ def register_exception_handlers(app: Any) -> None:
         return JSONResponse(
             status_code=422,
             content={"detail": errors},
+        )
+
+    @app.exception_handler(FeatureDisabledError)
+    async def feature_disabled_exception_handler(
+        _request: Request, _exc: FeatureDisabledError
+    ) -> JSONResponse:
+        # Treat global kill switches as "not found" to encourage predictable UI
+        # hiding instead of 403-based flows.
+        mapped = NotFoundError()
+        return JSONResponse(
+            status_code=mapped.http_status,
+            content={"detail": _safe_client_detail(mapped)},
         )
 
     @app.exception_handler(Exception)

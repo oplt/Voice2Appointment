@@ -36,15 +36,14 @@ def resolve_auth_token(db: Session, account_sid: str | None) -> str | None:
     return settings.twilio_auth_token or None
 
 
-def validate_twilio_request(
+def validate_twilio_signature(
     db: Session,
-    request: Request,
+    *,
+    url: str,
+    signature: str | None,
     form: Mapping[str, str],
 ) -> None:
-    """Reject absent/invalid X-Twilio-Signature before any side effect."""
-    signature = request.headers.get("X-Twilio-Signature") or request.headers.get(
-        "x-twilio-signature"
-    )
+    """Reject absent/invalid Twilio signatures (thread-safe; no Request object)."""
     if not signature:
         raise HTTPException(status_code=403, detail="Forbidden")
 
@@ -54,12 +53,28 @@ def validate_twilio_request(
         logger.warning("Twilio signature: no auth token for AccountSid=%s", account_sid)
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    url = webhook_public_url(request)
     validator = RequestValidator(auth_token)
     params = {k: v for k, v in form.items()}
     if not validator.validate(url, params, signature):
-        logger.warning("Twilio signature invalid path=%s", request.url.path)
+        logger.warning("Twilio signature invalid path=%s", url)
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+def validate_twilio_request(
+    db: Session,
+    request: Request,
+    form: Mapping[str, str],
+) -> None:
+    """Reject absent/invalid X-Twilio-Signature before any side effect."""
+    signature = request.headers.get("X-Twilio-Signature") or request.headers.get(
+        "x-twilio-signature"
+    )
+    validate_twilio_signature(
+        db,
+        url=webhook_public_url(request),
+        signature=signature,
+        form=form,
+    )
 
 
 def is_allowed_twilio_media_host(hostname: str) -> bool:

@@ -10,7 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.db.models import Customer, PaymentIntent, Reservation, SecureLinkDelivery
-from app.notifications.secure_links import stage_secure_link
+from app.notifications.secure_links import build_secure_link_url, stage_secure_link
 from app.payments.providers import ManualProvider, get_provider
 
 
@@ -39,23 +39,25 @@ def _payment_by_id(db: Session, payment_id: int) -> PaymentIntent:
     return row
 
 
+def _delivery_for_intent(db: Session, intent: PaymentIntent) -> SecureLinkDelivery | None:
+    if intent.secure_link_delivery_id is None:
+        return None
+    return db.get(SecureLinkDelivery, intent.secure_link_delivery_id)
+
+
 def find_payment_by_token(db: Session, raw_token: str) -> PaymentIntent | None:
     token = (raw_token or "").strip()
     if not token:
         return None
     delivery = db.scalar(
-        select(SecureLinkDelivery).where(
-            SecureLinkDelivery.token_hash == _hash_token(token)
-        )
+        select(SecureLinkDelivery).where(SecureLinkDelivery.token_hash == _hash_token(token))
     )
     if delivery is None:
         return None
     payment_id = (delivery.metadata_json or {}).get("payment_id")
     if payment_id is None:
         row = db.scalar(
-            select(PaymentIntent).where(
-                PaymentIntent.secure_link_delivery_id == delivery.id
-            )
+            select(PaymentIntent).where(PaymentIntent.secure_link_delivery_id == delivery.id)
         )
         return row
     return db.get(PaymentIntent, int(payment_id))
@@ -96,6 +98,7 @@ def create_deposit_payment_for_reservation(
     phone = (customer.phone if customer else None) or None
     email = (customer.email if customer else None) or None
     name = (customer.name if customer else None) or None
+    delivery: SecureLinkDelivery | None = None
     if phone or email:
         delivery = stage_secure_link(
             db,
@@ -126,11 +129,19 @@ def create_deposit_payment_for_reservation(
             base = (settings.frontend_base_url or settings.public_base_url or "").rstrip("/")
         except Exception:  # noqa: BLE001
             base = ""
-        success = f"{base}/secure/deposit?payment_id={intent.id}&status=success"
-        cancel = f"{base}/secure/deposit?payment_id={intent.id}&status=cancel"
-        intent.provider_ref = adapter.create_checkout(
-            intent, success_url=success, cancel_url=cancel
-        )
+        raw_token = delivery.token_ciphertext if delivery is not None else None
+        if raw_token:
+            success = build_secure_link_url(raw_token=raw_token, purpose="deposit") + "&status=return"
+            cancel = build_secure_link_url(raw_token=raw_token, purpose="deposit") + "&status=cancel"
+        else:
+            success = f"{base}/secure/deposit?payment_id={intent.id}&status=return"
+            cancel = f"{base}/secure/deposit?payment_id={intent.id}&status=cancel"
+        checkout = adapter.create_checkout(intent, success_url=success, cancel_url=cancel)
+        intent.provider_ref = checkout.provider_ref
+        meta = dict(intent.metadata_json or {})
+        if checkout.checkout_url:
+            meta["checkout_url"] = checkout.checkout_url
+        intent.metadata_json = meta
 
     db.flush()
     return intent
@@ -185,11 +196,7 @@ def capture_payment(
         matched = find_payment_by_token(db, token)
         if matched is None or matched.id != intent.id:
             raise PaymentError("invalid payment token")
-        delivery = (
-            db.get(SecureLinkDelivery, intent.secure_link_delivery_id)
-            if intent.secure_link_delivery_id
-            else None
-        )
+        delivery = _delivery_for_intent(db, intent)
         if delivery is not None and _aware(delivery.expires_at) <= _utcnow():
             intent.status = "expired"
             db.commit()
@@ -228,8 +235,10 @@ def mark_failed(
     return intent
 
 
-def payment_public_view(intent: PaymentIntent) -> dict[str, Any]:
-    return {
+def payment_public_view(intent: PaymentIntent, db: Session | None = None) -> dict[str, Any]:
+    """Safe customer-facing payment payload (no arbitrary provider metadata)."""
+    meta = dict(intent.metadata_json or {})
+    view: dict[str, Any] = {
         "id": intent.id,
         "organization_id": intent.organization_id,
         "reservation_id": intent.reservation_id,
@@ -238,4 +247,18 @@ def payment_public_view(intent: PaymentIntent) -> dict[str, Any]:
         "purpose": intent.purpose,
         "provider": intent.provider,
         "status": intent.status,
+        "checkout_url": None,
+        "link_expired": False,
+        "expires_at": None,
     }
+    if intent.status == "pending" and intent.provider == "stripe":
+        url = meta.get("checkout_url")
+        if isinstance(url, str) and url.startswith("https://"):
+            view["checkout_url"] = url
+    if db is not None:
+        delivery = _delivery_for_intent(db, intent)
+        if delivery is not None:
+            view["expires_at"] = _aware(delivery.expires_at).isoformat()
+            if _aware(delivery.expires_at) <= _utcnow() and intent.status == "pending":
+                view["link_expired"] = True
+    return view

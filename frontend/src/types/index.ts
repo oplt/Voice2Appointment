@@ -240,11 +240,18 @@ export type ReadinessItem = {
   detail: string
 }
 
+export type GlobalFeatureFlags = {
+  catalog_domain: boolean
+  reservation_domain: boolean
+  industry_voice_tools: boolean
+}
+
 export type SetupReadiness = {
   ready: boolean
   items: ReadinessItem[]
   completed_required: number
   total_required: number
+  features: GlobalFeatureFlags
   test_call_hint: string
 }
 

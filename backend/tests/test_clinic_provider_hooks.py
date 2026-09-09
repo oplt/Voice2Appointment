@@ -15,7 +15,7 @@ from app.db.base import Base
 from app.db.models import Location, User
 from app.industries.service import assign_industry_profile
 from app.tenancy.service import create_organization_for_user
-from app.voice.registry import handlers_industry
+from app.voice.registry import handlers_clinic, handlers_industry
 
 
 def _session() -> Session:
@@ -66,8 +66,8 @@ def test_create_appointment_passes_provider_create(monkeypatch) -> None:
             appointment_id=7,
         )
 
-    monkeypatch.setattr(handlers_industry, "booking_provider_hooks", fake_hooks)
-    monkeypatch.setattr(handlers_industry, "book_reservation", fake_book)
+    monkeypatch.setattr(handlers_clinic, "booking_provider_hooks", fake_hooks)
+    monkeypatch.setattr(handlers_clinic, "book_reservation", fake_book)
 
     start = datetime.now(timezone.utc) + timedelta(days=2)
     token_db = voice_db.set(db)
@@ -113,7 +113,7 @@ def test_create_appointment_without_calendar_falls_back(monkeypatch) -> None:
     captured: dict = {}
 
     monkeypatch.setattr(
-        handlers_industry,
+        handlers_clinic,
         "booking_provider_hooks",
         lambda *_a, **_k: BookingProviderHooks(),
     )
@@ -129,7 +129,7 @@ def test_create_appointment_without_calendar_falls_back(monkeypatch) -> None:
             appointment_id=None,
         )
 
-    monkeypatch.setattr(handlers_industry, "book_reservation", fake_book)
+    monkeypatch.setattr(handlers_clinic, "book_reservation", fake_book)
 
     start = datetime.now(timezone.utc) + timedelta(days=1)
     token_db = voice_db.set(db)

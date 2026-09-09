@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import require_db
@@ -66,12 +66,23 @@ class CustomerReservationOut(BaseModel):
     appointment_id: int | None
 
 
-@router.get("", response_model=list[CustomerOut])
+class CustomerPageOut(BaseModel):
+    items: list[CustomerOut]
+    total: int
+    limit: int
+    offset: int
+
+
+@router.get("", response_model=CustomerPageOut)
 def list_customers(
     organization_id: OrganizationId,
     query: str | None = Query(None, max_length=255),
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(require_db),
-) -> list[Customer]:
+) -> CustomerPageOut:
+    limit = max(1, min(100, int(limit)))
+    offset = max(0, int(offset))
     statement = select(Customer).where(Customer.organization_id == organization_id)
     if query:
         pattern = f"%{query.strip()}%"
@@ -82,7 +93,13 @@ def list_customers(
                 Customer.email.ilike(pattern),
             )
         )
-    return list(db.scalars(statement.order_by(Customer.name, Customer.id)).all())
+    total = int(
+        db.scalar(select(func.count()).select_from(statement.subquery())) or 0
+    )
+    ordered = statement.order_by(Customer.name, Customer.id)
+    rows = list(db.scalars(ordered.limit(limit).offset(offset)).all())
+    items = [CustomerOut.model_validate(row) for row in rows]
+    return CustomerPageOut(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.post("", response_model=CustomerOut, status_code=status.HTTP_201_CREATED)

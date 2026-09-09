@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from hashlib import blake2b
 from typing import Any, Callable
 
@@ -14,7 +13,6 @@ from sqlalchemy.orm import Session
 from app.core.feature_flags import require_reservation_domain
 from app.db.models import (
     Appointment,
-    AuditLog,
     CatalogItem,
     Customer,
     PriceBook,
@@ -32,6 +30,15 @@ from app.reservations.allocation import (
     matching_resource_ids,
 )
 from app.reservations.availability import search_availability
+from app.reservations.lifecycle import (
+    ReservationConflictError,
+    ReservationError,
+    _aware,
+    _begin_lifecycle_operation,
+    _finish_lifecycle_operation,
+    _require_mutable,
+    _utcnow,
+)
 from app.reservations.locking import resource_scheduling_locks as scheduling_lock
 from app.reservations.persistence import persist_allocations as _persist_allocations
 from app.reservations.persistence import snapshot_prices as _snapshot_prices
@@ -42,24 +49,6 @@ HOLD_TTL_SECONDS = 300
 ProviderCreate = Callable[..., dict[str, Any]]
 ProviderDelete = Callable[..., Any]
 ProviderUpdate = Callable[..., Any]
-
-
-class ReservationError(ValueError):
-    """Reservation policy or state error."""
-
-
-class ReservationConflictError(ReservationError):
-    """Slot or hold is no longer available."""
-
-
-def _aware(value: datetime) -> datetime:
-    if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
-
-
-def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
 
 
 def build_reservation_idempotency_key(
@@ -428,91 +417,6 @@ def book_reservation(
         provider_create=provider_create,
         calendar_id=calendar_id,
     )
-
-
-def _lifecycle_key(operation: str, payload: dict[str, Any], key: str | None) -> str:
-    if key:
-        return key
-    material = json.dumps(payload, default=str, sort_keys=True, separators=(",", ":"))
-    return blake2b(f"{operation}|{material}".encode(), digest_size=16).hexdigest()
-
-
-def _begin_lifecycle_operation(
-    db: Session,
-    reservation: Reservation,
-    *,
-    operation: str,
-    idempotency_key: str | None,
-    payload: dict[str, Any],
-) -> tuple[ReservationLifecycleOperation, bool]:
-    """Create a durable mutation record, or return the original retry."""
-    key = _lifecycle_key(operation, payload, idempotency_key)
-    existing = db.scalar(
-        select(ReservationLifecycleOperation).where(
-            ReservationLifecycleOperation.reservation_id == reservation.id,
-            ReservationLifecycleOperation.operation == operation,
-            ReservationLifecycleOperation.idempotency_key == key,
-        )
-    )
-    if existing is not None:
-        return existing, False
-    record = ReservationLifecycleOperation(
-        organization_id=reservation.organization_id,
-        reservation_id=reservation.id,
-        operation=operation,
-        idempotency_key=key,
-        payload=payload,
-        status="processing",
-    )
-    db.add(record)
-    try:
-        db.flush()
-    except IntegrityError:
-        db.rollback()
-        existing = db.scalar(
-            select(ReservationLifecycleOperation).where(
-                ReservationLifecycleOperation.reservation_id == reservation.id,
-                ReservationLifecycleOperation.operation == operation,
-                ReservationLifecycleOperation.idempotency_key == key,
-            )
-        )
-        if existing is not None:
-            return existing, False
-        raise
-    return record, True
-
-
-def _finish_lifecycle_operation(
-    db: Session,
-    reservation: Reservation,
-    record: ReservationLifecycleOperation,
-    *,
-    actor_user_id: int | None,
-) -> None:
-    record.status = "applied"
-    record.result = {
-        **dict(record.result or {}),
-        "reservation_status": reservation.status,
-        "provider_sync_status": reservation.provider_sync_status,
-    }
-    db.add(
-        AuditLog(
-            organization_id=reservation.organization_id,
-            actor_user_id=actor_user_id,
-            action=f"reservation.{record.operation}",
-            entity_type="reservation",
-            entity_id=str(reservation.id),
-            data={"idempotency_key": record.idempotency_key, **dict(record.payload)},
-            occurred_at=_utcnow(),
-        )
-    )
-
-
-def _require_mutable(reservation: Reservation) -> None:
-    if reservation.status in {"cancelled", "expired", "failed"}:
-        raise ReservationError(f"reservation is {reservation.status}")
-    if reservation.status in {"pending_provider", "cancel_pending_provider"}:
-        raise ReservationError("reservation provider operation already in progress")
 
 
 def _item_for_reservation(db: Session, reservation: Reservation) -> CatalogItem:
@@ -931,120 +835,6 @@ def change_resource_assignment(
     return reservation
 
 
-def add_line_item(
-    db: Session, reservation_id: int, *, catalog_item_id: int, quantity: int = 1,
-    price_book_id: int | None = None, channel: str | None = None, actor_user_id: int | None = None,
-    idempotency_key: str | None = None,
-) -> ReservationLineItem:
-    require_reservation_domain()
-    if quantity <= 0:
-        raise ReservationError("quantity must be positive")
-    reservation = db.get(Reservation, reservation_id)
-    item = db.get(CatalogItem, catalog_item_id)
-    if reservation is None or item is None or item.organization_id != reservation.organization_id:
-        raise ReservationError("reservation or catalog item not found")
-    payload = {"catalog_item_id": catalog_item_id, "quantity": quantity, "channel": channel}
-    record, started = _begin_lifecycle_operation(db, reservation, operation="add_line_item", idempotency_key=idempotency_key, payload=payload)
-    if not started:
-        line_id = (record.result or {}).get("line_item_id")
-        line = db.get(ReservationLineItem, line_id) if line_id is not None else None
-        if line is None:
-            raise ReservationError("line item not found")
-        return line
-    _require_mutable(reservation)
-    book_id = price_book_id
-    if book_id is None:
-        book = db.scalar(select(PriceBook).where(PriceBook.organization_id == reservation.organization_id, PriceBook.active.is_(True)))
-        book_id = book.id if book is not None else None
-    price = active_price(
-        db,
-        price_book_id=book_id,
-        catalog_item_id=item.id,
-        location_id=reservation.location_id,
-        channel=channel,
-    ) if book_id else None
-    if price is None:
-        raise ReservationError("no active price for catalog item")
-    line = snapshot_line_item(reservation_id=reservation.id, item=item, price=price, quantity=quantity)
-    db.add(line)
-    db.flush()
-    record.result = {"line_item_id": line.id}
-    _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
-    db.commit()
-    db.refresh(line)
-    return line
-
-
-def remove_line_item(
-    db: Session, reservation_id: int, *, line_item_id: int, actor_user_id: int | None = None,
-    idempotency_key: str | None = None,
-) -> Reservation:
-    require_reservation_domain()
-    reservation = db.get(Reservation, reservation_id)
-    line = db.get(ReservationLineItem, line_item_id)
-    if reservation is None or line is None or line.reservation_id != reservation.id:
-        raise ReservationError("line item not found")
-    payload = {"line_item_id": line_item_id}
-    record, started = _begin_lifecycle_operation(db, reservation, operation="remove_line_item", idempotency_key=idempotency_key, payload=payload)
-    if not started:
-        return reservation
-    _require_mutable(reservation)
-    if line.catalog_item_id == reservation.catalog_item_id:
-        raise ReservationError("cannot remove the reservation service line item")
-    db.delete(line)
-    _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
-    db.commit()
-    db.refresh(reservation)
-    return reservation
-
-
-def update_line_item_quantity(
-    db: Session,
-    reservation_id: int,
-    *,
-    line_item_id: int,
-    quantity: int,
-    actor_user_id: int | None = None,
-    idempotency_key: str | None = None,
-) -> Reservation:
-    require_reservation_domain()
-    if quantity <= 0:
-        raise ReservationError("quantity must be positive")
-    reservation = db.get(Reservation, reservation_id)
-    line = db.get(ReservationLineItem, line_item_id)
-    if reservation is None or line is None or line.reservation_id != reservation.id:
-        raise ReservationError("line item not found")
-    if line.catalog_item_id == reservation.catalog_item_id:
-        raise ReservationError("cannot change the reservation service line item")
-    payload = {"line_item_id": line_item_id, "quantity": quantity}
-    record, started = _begin_lifecycle_operation(
-        db,
-        reservation,
-        operation="update_line_item_quantity",
-        idempotency_key=idempotency_key,
-        payload=payload,
-    )
-    if not started:
-        return reservation
-    _require_mutable(reservation)
-    line.quantity = quantity
-    _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
-    db.commit()
-    db.refresh(reservation)
-    return reservation
-
-
-def change_service(
-    db: Session, reservation_id: int, *, catalog_item_id: int, **kwargs: Any
-) -> Reservation:
-    """Compatibility wrapper for a service change at the existing time."""
-    reservation = db.get(Reservation, reservation_id)
-    if reservation is None:
-        raise ReservationError("reservation not found")
-    return reschedule_reservation(
-        db, reservation_id, start_datetime=reservation.start_datetime,
-        catalog_item_id=catalog_item_id, **kwargs,
-    )
 
 
 def synchronize_reservation_from_appointment(db: Session, appointment_id: int) -> Reservation | None:
@@ -1153,3 +943,12 @@ def finalize_pending_reservations(
             }
         )
     return results
+
+
+from app.reservations import line_items as _line_items  # noqa: E402
+
+add_line_item = _line_items.add_line_item
+change_service = _line_items.change_service
+remove_line_item = _line_items.remove_line_item
+update_line_item_quantity = _line_items.update_line_item_quantity
+

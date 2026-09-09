@@ -21,7 +21,7 @@ import ListItemText from '@mui/material/ListItemText'
 import ListSubheader from '@mui/material/ListSubheader'
 import Tooltip from '@mui/material/Tooltip'
 import Typography from '@mui/material/Typography'
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Link as RouterLink, useLocation } from 'react-router-dom'
 
 import { designTokens } from '../../theme/tokens'
@@ -29,10 +29,12 @@ import { OrgAccountMenu } from './OrgAccountMenu'
 import {
   NAV_COLLAPSED_WIDTH,
   NAV_EXPANDED_WIDTH,
-  NAV_SECTIONS,
+  navSectionsForFeatures,
   pathMatchesItem,
   type NavItem,
 } from './navConfig'
+import { getSetupReadiness } from '../../api/users'
+import type { GlobalFeatureFlags } from '../../types'
 
 const ICONS: Record<string, ReactNode> = {
   dashboard: <SpaceDashboardOutlinedIcon fontSize="small" />,
@@ -123,6 +125,24 @@ export function AppSidebar({
 }: AppSidebarProps) {
   const location = useLocation()
   const width = collapsed ? NAV_COLLAPSED_WIDTH : NAV_EXPANDED_WIDTH
+  const [features, setFeatures] = useState<GlobalFeatureFlags | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    getSetupReadiness()
+      .then((data) => {
+        if (cancelled) return
+        setFeatures(data.features)
+      })
+      .catch(() => {
+        // Keep full nav when readiness is unavailable.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const sections = navSectionsForFeatures(features)
 
   return (
     <Box
@@ -193,7 +213,7 @@ export function AppSidebar({
       <Divider />
 
       <Box sx={{ flex: 1, overflowY: 'auto', px: 1, py: 1 }}>
-        {NAV_SECTIONS.map((section) => (
+        {sections.map((section) => (
           <List
             key={section.id}
             dense

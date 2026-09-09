@@ -71,11 +71,14 @@ describe('AnalyticsPage filters', () => {
     renderPage()
     await waitFor(() => expect(getAnalyticsMeta).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(getAnalyticsSummary).toHaveBeenCalledTimes(1))
-    expect(getAnalyticsSummary).toHaveBeenCalledWith({
-      start: '2026-02-09',
-      end: '2026-03-10',
-      compare: false,
-    })
+    expect(getAnalyticsSummary).toHaveBeenCalledWith(
+      {
+        start: '2026-02-09',
+        end: '2026-03-10',
+        compare: false,
+      },
+      expect.any(AbortSignal),
+    )
     expect(await screen.findByText(/America\/Los_Angeles/)).toBeInTheDocument()
     expect(screen.getByText(/max 90d/)).toBeInTheDocument()
   })
@@ -92,11 +95,14 @@ describe('AnalyticsPage filters', () => {
 
     await user.click(screen.getByRole('button', { name: 'Apply' }))
     await waitFor(() => expect(getAnalyticsSummary).toHaveBeenCalledTimes(2))
-    expect(getAnalyticsSummary).toHaveBeenLastCalledWith({
-      start: '2026-03-01',
-      end: '2026-03-10',
-      compare: false,
-    })
+    expect(getAnalyticsSummary).toHaveBeenLastCalledWith(
+      {
+        start: '2026-03-01',
+        end: '2026-03-10',
+        compare: false,
+      },
+      expect.any(AbortSignal),
+    )
   })
 
   it('rejects oversized apply using server max without fetching', async () => {
@@ -137,11 +143,14 @@ describe('AnalyticsPage filters', () => {
   it('honors back/forward URL changes with one request per distinct range', async () => {
     renderPage('/analytics?start=2026-03-01&end=2026-03-07')
     await waitFor(() =>
-      expect(getAnalyticsSummary).toHaveBeenCalledWith({
-        start: '2026-03-01',
-        end: '2026-03-07',
-        compare: false,
-      }),
+      expect(getAnalyticsSummary).toHaveBeenCalledWith(
+        {
+          start: '2026-03-01',
+          end: '2026-03-07',
+          compare: false,
+        },
+        expect.any(AbortSignal),
+      ),
     )
     expect(getAnalyticsSummary).toHaveBeenCalledTimes(1)
   })

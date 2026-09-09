@@ -1,586 +1,806 @@
-I checked the newest `main`: **`9d1617bec15d479c2565effa7180270b3b9c5a80` (`sectors`)**. It is one commit after the version from the previous review. This commit closes several important gaps, but the closure prompt is **still not fully met**. The biggest remaining blocker is CI, followed by a few data-integrity and frontend-completeness issues.
+You are a senior Python/FastAPI backend engineer, React/TypeScript frontend architect, performance engineer, and SaaS UI/UX engineer working on:
 
-| Closure item                          | Current status                         |
-| ------------------------------------- | -------------------------------------- |
-| 1. Green CI                           | ❌ Not met                              |
-| 2. Authorization/RBAC + org switching | ✅ Met                                  |
-| 3. Customer normalization/dedup/merge | 🟡 Mostly implemented, important gaps  |
-| 4. Resource administration            | 🟡 Backend strong, frontend incomplete |
-| 5. Pricing administration             | 🟡 Mostly implemented                  |
-| 6. Reservations UI/API                | 🟡 Mostly implemented                  |
-| 7. Clinic Google provider sync        | ✅ Met                                  |
-| 8. Agent Instructions runtime         | ✅ Met                                  |
-| 9. Real performance/failure testing   | ❌ Not met                              |
-| 10. Production acceptance             | ❌ Not met                              |
+Repository: `oplt/Voice2Appointment`
 
-## Phase 1 — CI is still the immediate P0
+Work from the newest `main`.
 
-The new GitHub Actions run is still **red**. Backend Ruff passes, but the backend fails at the architecture-size check, so Mypy, unit tests, migrations, PostgreSQL integration and dependency audit are all skipped. Frontend lint passes, but Vitest still fails, so build, Playwright/a11y, bundle checks and audit are skipped; Docker is skipped as well.
+Before changing code:
 
-The backend architecture guard currently reports these oversized modules:
+1. Read `AGENTS.md`.
+2. Read `DESIGN.md`.
+3. Read `.github/workflows/ci.yml`.
+4. Read `backend/scripts/check_file_sizes.py` and `backend/scripts/file_size_baseline.json`.
+5. Inspect existing tests covering every area you will modify.
+6. Preserve the modular-monolith architecture.
+7. Do NOT migrate the backend to async SQLAlchemy.
+8. Do NOT split the application into microservices.
+9. Do NOT increase the file-size baseline simply to make CI pass.
+10. Do NOT reimplement functionality already completed in the latest resource/pricing/reservation work.
 
-```text
-catalog/api.py                 405 > 400
-db/models.py                   922 > 904
-notifications/service.py       514 > 488
-reservations/api.py            436 > 400
-reservations/service.py       1039 > 1001
-resources/api.py               536 > 400
-tenancy/service.py             304 > 300
-handlers_industry.py           602 > 597
-```
+Implement the work phase-by-phase. Treat each phase as an independently reviewable subtask/PR.
 
-The guard intentionally limits normal modules to 400 lines and service/provider modules to 300, with explicit legacy baselines.
+For every phase:
 
-**Do not solve this by simply increasing `file_size_baseline.json`.** The new product work is making the modular monolith internally monolithic again.
+* state the problem before editing;
+* list the exact files changed;
+* preserve backward compatibility unless the phase explicitly changes a contract;
+* add or update tests;
+* run the relevant lint/type/test/build commands;
+* report remaining risks;
+* do not proceed by suppressing failing tests, architecture checks or type errors.
 
-Recommended splits:
+# PHASE 0 — Restore green backend CI by architectural decomposition
 
-```text
-catalog/api.py
- ├─ categories.py
- ├─ items.py
- ├─ options.py
- └─ requirements.py
+Goal:
+Make `python backend/scripts/check_file_sizes.py` pass without increasing legacy allowances and without changing behavior.
 
-resources/api.py
- ├─ resources.py
- ├─ capabilities.py
- ├─ availability.py
- └─ adjacency.py
+Current oversized modules include:
 
-reservations/
- ├─ query_api.py
- ├─ booking_api.py
- ├─ lifecycle_api.py
- ├─ booking_service.py
- ├─ lifecycle_service.py
- └─ reconciliation_service.py
+* `backend/app/catalog/api.py`
+* `backend/app/db/models.py`
+* `backend/app/notifications/service.py`
+* `backend/app/reservations/api.py`
+* `backend/app/reservations/service.py`
+* `backend/app/resources/api.py`
+* `backend/app/tenancy/service.py`
+* `backend/app/voice/registry/handlers_industry.py`
 
-voice/registry/
- ├─ handlers_clinic.py
- ├─ handlers_general.py
- ├─ handlers_orders.py
- └─ handlers_payments.py
-```
+Subtask 0.1 — Catalog API
+Files:
 
-### Frontend test is still failing
+* `backend/app/catalog/api.py`
+* new `backend/app/catalog/schemas.py`
 
-The exact same pagination test is still timing out:
+Move Pydantic request/response schemas out of `api.py`.
+Keep the existing router and HTTP contract unchanged.
 
-```text
-AppointmentsPage pagination
-→ traverses beyond the first 100 rows without duplicates
-→ timeout after 5000 ms
-```
+Subtask 0.2 — Database model infrastructure
+Files:
 
-The revised test still renders 100 appointments, then another page, while both responsive representations appear in the DOM.
+* `backend/app/db/models.py`
+* new `backend/app/db/model_base.py` or equivalent
 
-I would **not just raise the timeout**. Better:
+Extract generic model infrastructure such as:
 
-* test `useAppointmentsList()` pagination/dedup separately with small data;
-* test `AppointmentList` rendering separately;
-* force one viewport/layout in the integration test;
-* use perhaps 3 + 2 records rather than 100 + 2 if the logic being tested is cursor traversal/deduplication.
+* timezone-aware datetime alias;
+* UTC timestamp helper;
+* `TimestampMixin`.
 
----
+Avoid a disruptive package-wide model rewrite.
+All existing imports from `app.db.models` must continue to work.
 
-# Phase 2 — Authorization is now essentially complete ✅
+Subtask 0.3 — Notification service
+Files:
 
-This commit fixed the earlier RBAC gaps.
+* `backend/app/notifications/service.py`
+* new `backend/app/notifications/transports.py`
 
-The permission model now includes:
+Move SMTP/SMS transport implementation and transport-specific helpers out of business orchestration.
 
-```text
-resources.read
-resources.write
-locations.write
-agent.manage
-```
+Subtask 0.4 — Reservation API/service
+Files:
 
-and these are assigned appropriately across owner/admin/manager/staff/viewer.
+* `backend/app/reservations/api.py`
+* `backend/app/reservations/service.py`
+* new `backend/app/reservations/schemas.py`
+* new `backend/app/reservations/line_items.py` and/or another cohesive lifecycle module
 
-Resource GET vs write access is now differentiated, and location mutations require `locations.write` or `organization.manage`.
+Move API schemas out of the router.
+Extract line-item operations or another cohesive reservation responsibility from the giant service.
+If other modules import functions from `reservations.service`, re-export them temporarily to preserve compatibility.
 
-Organization switching is also genuinely wired into the frontend. It now lists memberships, activates a selected organization, refreshes auth state and reloads the application.
+Subtask 0.5 — Resources
+Files:
 
-I consider this closure item **met**.
+* `backend/app/resources/api.py`
+* new `backend/app/resources/schemas.py`
+* optionally `backend/app/resources/availability_api.py`
 
----
+Separate schemas and, if required, availability/capability route groups.
+The factory should still expose the same URLs.
 
-# Phase 3 — Customer dedup is much better, but has 4 important gaps
+Subtask 0.6 — Tenancy
+Files:
 
-You now have:
+* `backend/app/tenancy/service.py`
+* new `backend/app/tenancy/permissions.py`
 
-* phone normalization;
+Extract role/permission matrices and pure permission helpers.
 
-* lowercase/trimmed email;
+Subtask 0.7 — Industry handlers
+Files:
 
-* org-scoped unique indexes;
+* `backend/app/voice/registry/handlers_industry.py`
+* new domain-specific handler module(s)
 
-* nested transaction retry;
+Split clinic/restaurant/salon/general handlers by cohesive domain while preserving registry names and schemas.
 
-* customer detail;
+Acceptance:
+
+* architecture checker passes;
+* Ruff passes;
+* mypy passes;
+* SQLite tests pass;
+* migration tests pass;
+* PostgreSQL integration tests pass;
+* no baseline value is increased;
+* API URLs and public function contracts remain compatible.
+
+# PHASE 1 — Repair secure-link and payment flow end-to-end
+
+This is a critical correctness/security phase.
+
+Current backend creates URLs similar to:
+`/secure/{purpose}?t=<raw token>`
+
+but the React router has no matching customer-facing route.
+
+Files likely involved:
+
+* `backend/app/notifications/secure_links.py`
+* `backend/app/notifications/secure_link_worker.py`
+* `backend/app/db/models.py`
+* `backend/app/payments/api.py`
+* `backend/app/payments/service.py`
+* `backend/app/payments/providers.py`
+* `backend/requirements.txt`
+* Alembic migration
+* `frontend/src/app/router.tsx`
+* new `frontend/src/api/payments.ts`
+* new `frontend/src/pages/SecurePaymentPage.tsx`
+* supporting frontend components/tests
+* backend secure-link/payment tests
+
+Subtask 1.1 — Secure-link route
+Add a PUBLIC frontend route:
+`/secure/:purpose`
+
+It must not require the normal application login.
+
+Support at minimum:
+
+* loading;
+* invalid token;
+* expired token;
+* pending payment;
+* already paid;
+* payment failed;
+* Stripe redirect;
+* manual-token capture when applicable.
+
+Never trust `?status=success` as payment proof.
+Stripe webhook/provider state remains authoritative.
+
+Subtask 1.2 — Token storage
+`SecureLinkDelivery.token_ciphertext` must use the repository's existing `EncryptedText` mechanism instead of a plain String.
+
+Do not persist a full raw-token URL in `metadata_json`.
+
+Persist:
+
+* token hash for lookup;
+* encrypted raw token only while needed for delivery.
+
+Build the external URL at delivery time.
+
+Provide a safe migration/backward-compatibility path for existing rows.
+
+If practical, allow encrypted delivery token material to be cleared after confirmed transport submission.
+
+Subtask 1.3 — Fix expired-row starvation
+The current worker must not select expired `scheduled` rows forever.
+
+Expired rows must transition deterministically to an expired/failed terminal state.
+
+Test the pathological case:
+
+* create >50 expired rows;
+* create a valid scheduled row after them;
+* run delivery;
+* prove the valid row is eventually processed.
+
+Subtask 1.4 — Prevent duplicate delivery
+Do not hold a DB transaction open during Twilio/SMTP network I/O.
+
+Implement durable claim/lease semantics, for example:
+
+* atomically select/claim eligible rows;
+* status `processing`;
+* claim token and claim expiry or equivalent;
+* commit;
+* perform provider I/O;
+* transition to `sent` or retryable/failed;
+* reclaim abandoned processing rows after lease expiry.
+
+Use PostgreSQL `FOR UPDATE SKIP LOCKED` or another correct atomic claiming strategy where appropriate.
+
+Add a concurrency test proving two workers cannot both claim/send the same delivery.
+
+Subtask 1.5 — Correct channel handling
+Never fall through from an SMS delivery to sending an email to a phone-number recipient.
+
+Rules:
+
+* `sms` requires a usable SMS transport;
+* `email` requires a usable email transport;
+* absence of the requested transport returns a bounded `transport_unavailable` failure/retry condition.
+
+Resolve Twilio credentials from the appropriate tenant integration rather than relying solely on process-global Twilio settings.
+
+Do not copy authentication secrets into delivery metadata.
+
+Subtask 1.6 — Complete Stripe support
+Add the stable pinned Stripe SDK to `backend/requirements.txt`, consistent with this repository's pinned dependency policy.
+
+The currently intended stable version is `stripe==15.6.1` unless repository compatibility testing requires a different stable 15.x release.
+
+Change provider creation so the application retains:
+
+* provider Checkout Session ID;
+* browser-usable Checkout URL.
+
+Do not expose arbitrary provider metadata publicly.
+
+The token-authenticated secure-payment endpoint may expose only the safe data needed by the payment page.
+
+For Stripe:
+
+* customer opens secure page;
+* frontend receives/requests safe Checkout URL;
+* browser redirects to Stripe;
+* Stripe webhook captures the payment;
+* returned frontend page displays/polls authoritative payment status.
+
+Add tests for missing Stripe configuration and webhook completion.
+
+# PHASE 2 — Remove blocking bottlenecks without async-ORM migration
+
+## 2.1 Twilio and Stripe async endpoints
+
+Files:
+
+* `backend/app/telephony/router.py`
+* `backend/app/payments/api.py`
+* related service tests
+
+Keep asynchronous request parsing where required.
+
+After request body/form parsing, move synchronous DB/provider operations off the main asyncio event loop using `anyio.to_thread.run_sync()` or the Starlette equivalent.
+
+Important:
+A SQLAlchemy Session must be created and closed inside the worker thread that uses it.
+Do not pass a Session between event-loop and worker threads.
+
+Preserve signature validation and webhook semantics.
+
+Add concurrent request tests demonstrating the event loop remains responsive.
+
+## 2.2 Manual Twilio analytics refresh
+
+Files:
+
+* `backend/app/analytics/router.py`
+* `backend/app/workers/tasks.py`
+* `backend/app/analytics/sync.py`
+* `frontend/src/api/analytics.ts`
+* `frontend/src/pages/AnalyticsPage.tsx`
+
+Do not synchronously perform potentially dozens of Twilio pages inside the HTTP request.
+
+Reuse the existing:
+`sync_twilio_for_user`
+
+Celery workflow.
+
+Change manual refresh to:
+
+1. validate authorization/configuration;
+2. coalesce duplicate refresh requests;
+3. enqueue sync;
+4. return HTTP 202 quickly.
+
+Expose or reuse a bounded sync-status mechanism:
+
+* queued/syncing;
+* healthy/error;
+* last synced timestamp.
+
+Frontend behavior:
+
+* button becomes `Syncing…`;
+* prevent repeated submissions;
+* poll/refetch status at a modest interval;
+* invalidate analytics/dashboard after completion.
+
+## 2.3 Parallelize independent voice read tools
+
+Files:
+
+* `backend/app/voice/session.py`
+* `backend/app/voice/tool_runtime.py`
+* registry metadata/tests
+
+The registry already classifies tools as READ or MUTATION.
+
+Currently all function calls inside one provider FunctionCallRequest are awaited sequentially.
+
+Implement batching with mutation barriers.
+
+Example:
+READ A
+READ B
+READ C
+
+=> run concurrently using `asyncio.gather` through the EXISTING bounded tool runtime.
+
+Example:
+READ A
+MUTATION B
+READ C
+
+=> A may run first;
+=> mutation B must remain serialized and complete before dependent later work;
+=> C must not be reordered across B unless dependency safety can be formally established.
+
+Never parallelize independent mutation side effects merely for speed.
+
+Preserve:
+
+* tool-result idempotency;
+* reconnect replay protection;
+* function IDs;
+* error envelopes;
+* context propagation;
+* bounded executor admission.
+
+Measure sequential versus batched read latency in tests/benchmark.
+
+## 2.4 Redis
+
+Files:
+
+* `backend/app/core/cache_backend.py`
+
+Keep the existing BlockingConnectionPool.
+
+Protect global Redis client/pool initialization and recovery from duplicate cold-start creation under concurrent threads if needed.
+
+Do not increase `REDIS_MAX_CONNECTIONS` without evidence.
+
+## 2.5 PostgreSQL
+
+Do NOT increase DB pool defaults as part of this phase.
+
+Use existing metrics:
+
+* `db_pool_wait_ms`
+* checked-out connections
+* pool capacity
+
+Only recommend pool-size changes in the final report if benchmark evidence demonstrates pool contention.
+
+## 2.6 Customer list scalability
+
+Files:
+
+* `backend/app/customers/api.py`
+* migration if needed
+* `frontend/src/api/customers.ts`
+* `frontend/src/features/customers/CustomersView.tsx`
+
+The current customer search returns an unbounded list and uses `%query%` matching.
+
+Implement bounded pagination/cursor pagination.
+
+Preserve search by:
+
+* name;
+* phone;
+* email.
+
+If PostgreSQL-scale tests justify it, add a `pg_trgm`/GIN strategy for searchable text rather than allowing full-table wildcard scans indefinitely.
+
+# PHASE 3 — Make feature flags and frontend/backend capabilities consistent
+
+## 3.1 Feature flag semantics
+
+Files:
+
+* `.env.example`
+* `backend/app/core/feature_flags.py`
+* `backend/app/factory.py`
+* catalog/pricing/payment/reservation/industry dependencies
+* readiness/health/capability response
+* frontend navigation if applicable
+
+The repository describes:
+
+* `ENABLE_CATALOG_DOMAIN`
+* `ENABLE_RESERVATION_DOMAIN`
+* `ENABLE_INDUSTRY_VOICE_TOOLS`
+
+as product-domain kill switches, but HTTP APIs and voice capabilities do not currently share one consistently enforced contract.
+
+Choose and document ONE contract.
+
+Preferred:
+Global domain flag OFF means both the applicable HTTP surface and voice capability are unavailable.
+
+Then:
+
+* enforce flag in appropriate HTTP dependencies;
+* continue enforcing per-organization RBAC/entitlements;
+* expose a safe capability snapshot to the authenticated frontend using an existing readiness/health endpoint if suitable;
+* hide or disable unavailable navigation/actions rather than letting users reach predictable 403/disabled flows.
+
+Do not confuse:
+global kill switch
+with
+organization permission.
+
+Test production-default behavior explicitly.
+
+# PHASE 4 — Complete missing operator frontend surfaces
+
+Do not create frontend screens for backend-internal workers/webhooks merely because a Python module exists.
+
+Implement only operator/customer workflows that have a real product counterpart.
+
+## 4.1 Organization/team administration
+
+Backend reference:
+`backend/app/tenancy/api.py`
+
+Frontend:
+
+* expand `frontend/src/api/tenancy.ts`
+* add settings/domain components such as:
+
+  * `OrganizationPanel.tsx`
+  * `TeamMembersPanel.tsx`
+  * `LocationsPanel.tsx`
+* integrate with Settings or another minimal organization-management surface.
+
+Support:
+
+* list locations;
+* create/edit location;
+* list members;
+* change member role;
+* remove member with confirmation;
+* list invitations;
+* create invitation;
+* invitation acceptance flow.
+
+Respect RBAC. Hide mutation controls from users lacking permission.
+
+## 4.2 Customer detail/history/merge
+
+Backend already supports:
 
 * reservation history;
+* merge customer.
 
-* merge endpoint.
+Files:
 
-However:
+* `frontend/src/api/customers.ts`
+* `frontend/src/features/customers/CustomersView.tsx`
+* preferably new:
 
-### Gap 3.1 — migration can fail on existing duplicate customers
+  * `CustomerDetailDrawer.tsx`
+  * `CustomerHistory.tsx`
+  * `MergeCustomerDialog.tsx`
 
-The new migration immediately executes:
+Use a master-detail UX instead of making the table progressively wider.
 
-```sql
-CREATE UNIQUE INDEX ...
-ON customer (organization_id, phone)
-WHERE phone IS NOT NULL
-```
+Customer detail should show:
 
-and the equivalent email constraint.
+* identity/contact data;
+* reservation history;
+* relevant language/consent metadata;
+* merge action for authorized users.
 
-But the previous application permitted duplicates.
+Merge must:
 
-So a production database containing:
+* clearly identify source and target;
+* show destructive consequences;
+* require explicit confirmation;
+* refresh customer/reservation data afterward.
 
-```text
-customer 41   +32470123456
-customer 88   +32470123456
-```
+## 4.3 Catalog duplicate
 
-will fail during migration before the application can start.
+Files:
 
-You need a staged migration:
+* `frontend/src/api/catalog.ts`
+* `frontend/src/features/catalog/CatalogView.tsx`
 
-```text
-1. normalize historical email/phone
-2. identify duplicate groups
-3. select canonical customer
-4. move all references
-5. archive/delete duplicate
-6. verify no duplicates
-7. create unique indexes
-```
+Add the existing backend duplicate operation to the client and UI.
 
-This is a **production-blocking migration issue**.
+Place Duplicate in a contextual overflow/action menu rather than adding another always-visible primary button.
 
-### Gap 3.2 — merge only migrates reservations
+# PHASE 5 — Frontend architecture and operational-minimal UI redesign
 
-`merge_customers()` currently updates only `Reservation.customer_id`, then deletes the source customer.
+Do NOT replace React, MUI, React Router or TanStack Query.
 
-But several other models reference Customer:
+The current stack is modern.
 
-```text
-Order.customer_id
-SecureLinkDelivery.customer_id
-PaymentIntent.customer_id
-Reservation.customer_id
-WaitlistEntry.customer_id
-```
+The objective is a calmer operational SaaS workspace, not a marketing-site imitation.
 
-A real merge must reassign **all** of them.
+## 5.1 Design direction
 
-Otherwise:
+Retain:
 
-* some records become `NULL` because of `ON DELETE SET NULL`;
-* waitlist deletion may encounter FK issues;
-* customer history becomes fragmented.
+* restrained color usage;
+* whitespace;
+* semantic CSS variables;
+* dark mode;
+* strong focus indicators;
+* reduced-motion support;
+* 44px interaction targets.
 
-This is probably the most important remaining domain-integrity bug.
+Change the design principle from:
+"Tesla marketing minimalism"
 
-### Gap 3.3 — `"US"` is hardcoded as the default phone region
+to:
+"operational minimalism".
 
-Current normalization defaults to:
+Operational minimalism means:
 
-```python
-default_region="US"
-```
+* high information clarity;
+* one dominant action per context;
+* progressive disclosure;
+* fewer decorative containers;
+* strong status/attention hierarchy;
+* predictable master-detail patterns;
+* compact but accessible density.
 
-For an international SaaS supporting Belgian, German, Dutch, etc. organizations, a number such as:
+Remove product copy such as:
+`Tesla-minimal workspace`.
 
-```text
-0470 12 34 56
-```
+## 5.2 App shell
 
-must not be interpreted through US numbering rules.
+Files:
 
-Prefer:
+* `frontend/src/components/AppLayout.tsx`
+* `frontend/src/components/navigation/AppSidebar.tsx`
+* `frontend/src/components/navigation/navConfig.ts`
 
-```text
-Organization
-   ↓
-Location.country_code
-   ↓
-default phone region
-```
+Reduce navigational fragmentation.
 
-or require international `+countrycode` input when country context is unavailable.
+Consider primary groups approximately around:
 
-### Gap 3.4 — “concurrency test” isn't actually concurrent
+* Today
+* Bookings
+* Customers
+* Operations
+* Assistant
+* Insights
 
-The test explicitly says it **simulates** a race by monkeypatching the first lookup to miss. It uses one SQLite session rather than two concurrent PostgreSQL transactions.
+Move rarely used:
 
-Add a genuine PostgreSQL test:
+* Integrations
+* Settings
 
-```text
-Thread A                 Thread B
-   │                        │
- lookup miss             lookup miss
-   │                        │
- INSERT customer         INSERT customer
-   │                        │
-        unique constraint
-             ↓
-    one canonical row
-```
+toward account/utility navigation.
 
----
+Do not mechanically implement these labels if route/user testing indicates a better grouping.
 
-# Phase 4 — Resource backend is strong, UI still incomplete
+Avoid displaying the same page title in both the fixed AppBar and `PageHeader`.
 
-The backend now handles the previous critical issue correctly.
+Keep the top utility bar visually quiet.
 
-If an admin tries to deactivate a resource with future held/confirmed bookings, the API responds with `409` and requires explicit `force=true`.
+## 5.3 Dashboard
 
-It also now supports:
+File:
 
-* capability create/update/delete;
-* availability create/update/delete;
-* exceptions;
-* adjacency;
-* resource requirements.
+* `frontend/src/features/dashboard/DashboardOverview.tsx`
 
-Good progress.
+Reduce the "every section is a bordered card" appearance.
 
-The frontend now supports:
+Hierarchy:
 
-* capability add/remove;
-* actual time-off creation;
-* catalog-service → resource requirement assignment.
+1. attention requiring action;
+2. today's primary operational metrics;
+3. upcoming work;
+4. integration/system health as secondary information.
 
-But important administration paths are still missing in the UI.
+Use whitespace, typography and alignment before borders.
 
-### Remaining resource UI gaps
+## 5.4 Decompose god components
 
-There is still no complete interface for:
+Resources:
 
-* editing resource name/type/location/capacity;
-* deactivating a resource;
-* displaying the 409 future-bookings warning;
-* confirming `force=true`;
-* creating/editing/deleting working-hour rules;
-* editing/deleting time-off exceptions;
-* editing an existing capability instead of delete/recreate.
+* `frontend/src/features/resources/ResourcesView.tsx`
 
-This means the backend is ahead of the frontend.
+Extract:
 
----
+* `ResourceListPane`
+* `ResourceDetail`
+* `ResourceOverviewPanel`
+* `CapabilitiesPanel`
+* `WorkingHoursPanel`
+* `ServiceAssignmentsPanel`
+* `TimeOffPanel`
+* domain query/mutation hooks where useful.
 
-# Phase 5 — Pricing is nearly complete, but one integrity bug remains
+Catalog:
 
-Pricing has improved substantially.
+* `frontend/src/features/catalog/CatalogView.tsx`
 
-Backend now provides:
+Extract:
 
-```text
-POST  /price-books
-PATCH /price-books/{id}
-POST  /price-books/{id}/archive
+* `CatalogList`
+* `CatalogEditor`
+* `CategoryManager`
+* `OptionsPanel`
+* scheduling/pricing navigation panels.
 
-POST  /prices
-PATCH /prices/{id}
-POST  /prices/{id}/archive
-DELETE /prices/{id}
-```
+Agent:
 
-Frontend now provides:
+* `frontend/src/features/agent/AgentView.tsx`
 
-* create price book;
-* archive price book;
-* create price;
-* edit price;
-* archive price;
-* channel;
-* location;
-* effective dates.
+Extract each major configuration tab into a focused component.
 
-### Gap 5.1 — changing price-book currency can violate your own invariant
+Analytics:
 
-`PATCH /price-books/{id}` permits:
+* `frontend/src/pages/AnalyticsPage.tsx`
 
-```python
-currency = "USD"
-```
+Extract:
 
-even when the price book already contains EUR prices.
+* analytics filters/controller;
+* KPI summary;
+* visualizations;
+* tables/accessible alternatives.
 
-You previously established the invariant:
+Do not create abstract components merely to reduce line count. Split by domain responsibility.
 
-```text
-Price.currency == PriceBook.currency
-```
+## 5.5 Responsive design
 
-After:
+Move component-level split panes toward MUI container queries instead of relying only on global viewport breakpoints.
 
-```text
-PriceBook EUR
-Price 25 EUR
+Especially apply this to:
 
-PATCH PriceBook → USD
-```
+* Resources;
+* Catalog;
+* Customer master/detail.
 
-you get:
+Desktop:
+master list + detail pane where useful.
 
-```text
-PriceBook USD
-Price 25 EUR
-```
+Mobile:
+list -> full-screen/detail route or drawer.
 
-which contradicts the validation enforced during price creation.
+Do not squeeze complex desktop tables into a narrow screen.
 
-Simplest safe behavior:
+## 5.6 React 19.2 features
 
-```text
-if book already contains prices:
-    currency cannot be changed
-```
+React `<Activity>` may be considered for expensive tab panels where preserving hidden UI state produces measurable UX benefit.
 
-Otherwise you need an explicit currency migration—not merely relabeling the currency.
+Do NOT introduce React Canary `<ViewTransition>` into production.
 
-### Gap 5.2 — frontend doesn't appear to offer price-book editing
+Prefer ordinary CSS transitions and current stable APIs.
 
-The backend has `PATCH /price-books/{id}`, but the Pricing screen exposes creation and archiving; I did not find a frontend `patchPriceBook` workflow.
+Respect `prefers-reduced-motion`.
 
-So editing price-book name/state/currency is not end-to-end.
+## 5.7 Query/network architecture
 
----
+Files:
 
-# Phase 6 — Reservations are mostly complete, but line-item administration remains
+* `frontend/src/api/client.ts`
+* `frontend/src/app/queryClient.ts`
+* API modules and query hooks
 
-Backend now has all of the requested structural APIs:
+Add AbortSignal support through the API client.
 
-```text
-GET  /reservations
-GET  /reservations/{id}
-POST /reservations
-POST /reservations/hold
-POST /reservations/{id}/commit
+TanStack Query query functions should pass cancellation signals into `fetch`.
 
-POST /cancel
-POST /reschedule
-POST /party-size
-POST /resources
+Add a small debounce to server-backed searches such as customer/catalog search.
 
-POST/DELETE line items
-```
+Do not fire a new uncancellable HTTP request for every keystroke.
 
-and list pagination. Reservation detail returns both resource IDs and immutable price snapshots.
+Tune stale times by data semantics rather than one global value.
 
-This is a major improvement.
+Suggested direction:
 
-The frontend now supports:
+* rapidly changing calls/reservations: short stale time;
+* dashboard: short/moderate;
+* catalog/resources/settings: longer;
+* analytics: moderate with explicit invalidation after sync.
 
-* pagination;
+Prefer mutation-driven invalidation over aggressive refetch-on-focus for static configuration data.
 
-* detail;
+## 5.8 Analytics bundle
 
-* cancellation;
+The current analytics page directly imports MUI BarChart and LineChart and is one of the dominant JS chunks.
 
-* rescheduling;
+Extract visualization code into a lazy-loaded module, for example:
+`frontend/src/features/analytics/AnalyticsCharts.tsx`.
 
-* party size;
+Allow:
 
-* resource reassignment;
+* filters/KPIs/loading state to render first;
+* chart code to load separately.
 
-* price snapshot display.
+Evaluate `content-visibility: auto` for large offscreen analytics sections with an appropriate intrinsic-size fallback.
 
-### Gap 6.1 — line items are read-only in frontend
+Do not use it as a substitute for true virtualization when lists become very large.
 
-The detail dialog renders:
+Update bundle reporting to distinguish:
 
-> Line items (price snapshot)
+* initial application JS;
+* route JS;
+* lazy visualization JS;
+* total JS.
 
-but the UI does not expose:
+Do not only optimize "total bundle" if route splitting already prevents code from loading initially.
 
-```text
-Add add-on
-Remove add-on
-Change quantity
-```
+# PHASE 6 — Tests, performance evidence and acceptance
 
-although the backend already supports add/remove.
+Backend correctness tests:
 
-So the frontend currently has:
+* secure-link expired-row starvation;
+* concurrent delivery claim;
+* no duplicate sends;
+* wrong-channel fallback impossible;
+* encrypted token storage;
+* no raw secure URL persisted;
+* payment invalid/expired/already-captured states;
+* Stripe webhook;
+* feature flags;
+* customer pagination;
+* webhook thread ownership.
 
-```text
-reservation
- ├─ reschedule ✅
- ├─ party size ✅
- ├─ resources ✅
- ├─ cancel ✅
- └─ line items
-      └─ view only 🟡
-```
+Frontend/e2e:
 
-### Gap 6.2 — offset pagination is less robust for mutable reservations
+* secure payment landing;
+* expired token;
+* Stripe redirect state;
+* team invitation flow;
+* location administration;
+* customer detail/history;
+* customer merge;
+* catalog duplicate;
+* keyboard-only flows;
+* responsive master/detail;
+* reduced motion;
+* dark/light mode.
 
-The API now uses:
+Performance/load:
 
-```text
-ORDER BY start_datetime DESC, id DESC
-OFFSET x LIMIT y
-```
+* compare Twilio webhook concurrency before/after thread offload;
+* prove manual analytics refresh returns quickly after enqueue;
+* compare voice sequential read-tool latency vs concurrent read batching;
+* inspect DB pool wait metrics;
+* inspect Redis pool exhaustion;
+* inspect analytics initial-render cost;
+* inspect bundle artifact.
 
-This is much better than the old fixed 200-row cap, but reservations can be rescheduled while an administrator is paging.
+Do not claim a performance improvement without recording before/after evidence.
 
-A reservation moving between page boundaries can create duplicate/missing results.
+Final acceptance commands must include the repository's equivalent of:
 
-For a mature system I would eventually replace this with cursor pagination:
+* Ruff
+* architecture/file-size check
+* mypy
+* backend unit tests
+* PostgreSQL integration tests
+* migration tests
+* frontend lint
+* frontend tests
+* frontend build
+* bundle report
+* Playwright e2e
+* dependency audits
 
-```text
-cursor = (start_datetime, id)
-```
+Final report format:
 
-This isn't a release blocker compared with CI/data integrity, but it is the more robust design.
+1. Phase completed
+2. Root causes fixed
+3. Files changed
+4. Tests added/changed
+5. Before/after performance evidence
+6. CI status
+7. Remaining risks
+8. Follow-up work deliberately not included
 
----
-
-# Phase 7 — Clinic provider synchronization is fixed ✅
-
-The clinic/generalized appointment path now obtains:
-
-```python
-booking_provider_hooks(db, user_id)
-```
-
-and passes:
-
-```python
-provider_create=hooks.create_event
-calendar_id=hooks.calendar_id
-sync_calendar=sync_calendar_for_org(...)
-```
-
-into the reservation engine.
-
-This directly closes the provider-sync bug from the previous review.
-
-A dedicated clinic provider-hooks test was also added, although current CI doesn't reach the backend tests because the architecture check fails.
-
----
-
-# Phase 8 — Agent Instructions are now real ✅
-
-This is now correctly implemented.
-
-Runtime loads the active organization KnowledgeEntry named:
-
-```text
-instructions
-```
-
-and assembles the system prompt in this order:
-
-```text
-immutable safety
-        ↓
-business/tenant instructions
-        ↓
-available tools
-        ↓
-current date context
-```
-
-The code explicitly states that tenant instructions cannot override the safety rules.
-
-This closes the earlier UI-without-runtime-effect bug.
-
----
-
-# Phase 9 — real performance validation remains open ❌
-
-There were no material changes that close the real-load portion of the performance phase.
-
-The updated acceptance document itself acknowledges that these remain outstanding:
-
-* live Google free/busy + create under load;
-* real PostgreSQL pool exhaustion;
-* Redis-down drill;
-* Celery-down drill;
-* full Twilio media WebSocket soak.
-
-You therefore still cannot make meaningful production claims such as:
-
-```text
-voice p95 = X ms
-voice p99 = Y ms
-```
-
-from the local synthetic harness alone.
-
-This remains a **pre-go-live task**, not necessarily a coding blocker during feature development.
-
----
-
-# Phase 10 — production acceptance is still false ❌
-
-The acceptance document says:
-
-```text
-Backend typecheck     ✅ local
-Frontend Vitest       ✅ local
-...
-Full GitHub CI        verify on next push
-```
-
-But that “next push” has now happened—and GitHub Actions failed.
-
-Therefore the document is already out of sync with reality.
-
-It should not say the repository has reached production acceptance until:
-
-```text
-architecture check ✅
-mypy               ✅
-SQLite tests        ✅
-migration test      ✅
-Postgres tests      ✅
-pip audit           ✅
-
-Vitest              ✅
-production build    ✅
-bundle check        ✅
-Playwright/a11y     ✅
-npm audit           ✅
-
-Docker build        ✅
-```
-
----
-
-# Revised remaining work
-
-At this stage the list is much shorter than in the previous review. I would organize the next Codex cycle into **five phases**:
-
-### Phase A — Make CI genuinely green
-
-Refactor the eight oversized backend modules instead of raising architecture thresholds. Fix the `AppointmentsPage` pagination test so it tests pagination/dedup cheaply and deterministically. Then allow the entire pipeline to execute.
-
-### Phase B — Harden customer identity
-
-Implement a pre-unique-index duplicate migration; migrate **Reservation + Order + SecureLinkDelivery + PaymentIntent + WaitlistEntry** during customer merge; replace hardcoded US phone region with tenant/location country context; add a real multi-session PostgreSQL race test.
-
-### Phase C — Finish admin UX
-
-Complete resource edit/deactivation/force-warning, working-hours CRUD and time-off CRUD. Add price-book edit UI. Add reservation add-on/line-item add/remove UI.
-
-### Phase D — Fix remaining pricing invariant
-
-Prevent changing a price book's currency once prices exist, unless an explicit migration/conversion operation is implemented.
-
-### Phase E — Production gate
-
-Run real provider/service failure drills, get the entire GitHub Actions workflow green, then update `production-acceptance.md` from actual CI evidence rather than local claims.
-
-So the project has moved from **“large architectural gaps” to “closure/integrity/verification gaps.”** The three issues I would treat as highest priority are **red CI**, **unsafe customer dedup migration/merge**, and **price-book currency consistency**.
+Do not proceed to a later phase while an earlier phase leaves CI red because of newly introduced failures.

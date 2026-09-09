@@ -52,13 +52,13 @@ export type ListResourcesParams = {
   include_inactive?: boolean
 }
 
-export function listResources(params: ListResourcesParams = {}) {
+export function listResources(params: ListResourcesParams = {}, signal?: AbortSignal) {
   const search = new URLSearchParams()
   if (params.location_id != null) search.set('location_id', String(params.location_id))
   if (params.resource_type) search.set('resource_type', params.resource_type)
   if (params.include_inactive) search.set('include_inactive', 'true')
   const qs = search.toString()
-  return api.get<Resource[]>(`/api/v1/resources${qs ? `?${qs}` : ''}`)
+  return api.get<Resource[]>(`/api/v1/resources${qs ? `?${qs}` : ''}`, { signal })
 }
 
 export function createResource(body: ResourceCreate) {
@@ -76,8 +76,10 @@ export function patchResource(
   return api.patch<Resource>(`/api/v1/resources/${resourceId}${qs}`, payload)
 }
 
-export function listResourceCapabilities(resourceId: number) {
-  return api.get<ResourceCapability[]>(`/api/v1/resources/${resourceId}/capabilities`)
+export function listResourceCapabilities(resourceId: number, signal?: AbortSignal) {
+  return api.get<ResourceCapability[]>(`/api/v1/resources/${resourceId}/capabilities`, {
+    signal,
+  })
 }
 
 export function createResourceCapability(resourceId: number, capability: string) {
@@ -101,8 +103,10 @@ export function deleteResourceCapability(resourceId: number, capabilityId: numbe
   return api.delete<void>(`/api/v1/resources/${resourceId}/capabilities/${capabilityId}`)
 }
 
-export function listResourceAvailability(resourceId: number) {
-  return api.get<AvailabilityRule[]>(`/api/v1/resources/${resourceId}/availability`)
+export function listResourceAvailability(resourceId: number, signal?: AbortSignal) {
+  return api.get<AvailabilityRule[]>(`/api/v1/resources/${resourceId}/availability`, {
+    signal,
+  })
 }
 
 export function createResourceAvailability(
@@ -127,9 +131,13 @@ export function deleteResourceAvailability(resourceId: number, ruleId: number) {
   return api.delete<void>(`/api/v1/resources/${resourceId}/availability/${ruleId}`)
 }
 
-export function listResourceAvailabilityExceptions(resourceId: number) {
+export function listResourceAvailabilityExceptions(
+  resourceId: number,
+  signal?: AbortSignal,
+) {
   return api.get<AvailabilityException[]>(
     `/api/v1/resources/${resourceId}/availability-exceptions`,
+    { signal },
   )
 }
 
