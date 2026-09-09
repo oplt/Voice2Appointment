@@ -30,6 +30,7 @@ import {
   listLocations,
   listPriceBooks,
   listPrices,
+  patchPriceBook,
   patchPrice,
   type Price,
   type PriceBook,
@@ -101,6 +102,7 @@ export function PricingView() {
   const [bookOpen, setBookOpen] = useState(false)
   const [bookName, setBookName] = useState('')
   const [bookCurrency, setBookCurrency] = useState('EUR')
+  const [editBook, setEditBook] = useState<PriceBook | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [editPrice, setEditPrice] = useState<Price | null>(null)
   const [priceForm, setPriceForm] = useState<PriceForm>(emptyPriceForm())
@@ -179,6 +181,25 @@ export function PricingView() {
     },
   })
 
+  const editBookMutation = useMutation({
+    mutationFn: () => {
+      if (!editBook) throw new Error('No price book')
+      return patchPriceBook(editBook.id, {
+        name: bookName.trim(),
+        currency: bookCurrency.trim().toUpperCase() || editBook.currency,
+        active: editBook.active,
+      })
+    },
+    onSuccess: () => {
+      notify('Price book updated', 'success')
+      setEditBook(null)
+      invalidate()
+    },
+    onError: (err: unknown) => {
+      notify(err instanceof ApiError ? err.message : 'Failed to update price book', 'error')
+    },
+  })
+
   const createMutation = useMutation({
     mutationFn: () => {
       if (activeBookId == null) throw new Error('No price book')
@@ -247,6 +268,12 @@ export function PricingView() {
     setAddOpen(true)
   }
 
+  const openEditBook = (book: PriceBook) => {
+    setEditBook(book)
+    setBookName(book.name)
+    setBookCurrency(book.currency)
+  }
+
   const openEdit = (row: Price) => {
     setEditPrice(row)
     setPriceForm({
@@ -307,7 +334,7 @@ export function PricingView() {
         value={priceForm.currency}
         onChange={(e) => setPriceForm({ ...priceForm, currency: e.target.value })}
         fullWidth
-        inputProps={{ maxLength: 3 }}
+        slotProps={{ htmlInput: { maxLength: 3 } }}
       />
       <TextField
         label="Channel"
@@ -336,7 +363,7 @@ export function PricingView() {
         value={priceForm.effectiveFrom}
         onChange={(e) => setPriceForm({ ...priceForm, effectiveFrom: e.target.value })}
         fullWidth
-        InputLabelProps={{ shrink: true }}
+        slotProps={{ inputLabel: { shrink: true } }}
       />
       <TextField
         label="Effective until"
@@ -344,7 +371,7 @@ export function PricingView() {
         value={priceForm.effectiveUntil}
         onChange={(e) => setPriceForm({ ...priceForm, effectiveUntil: e.target.value })}
         fullWidth
-        InputLabelProps={{ shrink: true }}
+        slotProps={{ inputLabel: { shrink: true } }}
       />
     </Stack>
   )
@@ -404,14 +431,23 @@ export function PricingView() {
               ))}
             </TextField>
             {activeBook?.active ? (
-              <Button
-                color="error"
-                variant="outlined"
-                onClick={() => setArchiveBookTarget(activeBook)}
-              >
-                Archive book
+              <>
+                <Button variant="outlined" onClick={() => openEditBook(activeBook)}>
+                  Edit book
+                </Button>
+                <Button
+                  color="error"
+                  variant="outlined"
+                  onClick={() => setArchiveBookTarget(activeBook)}
+                >
+                  Archive book
+                </Button>
+              </>
+            ) : (
+              <Button variant="outlined" onClick={() => activeBook && openEditBook(activeBook)}>
+                Edit book
               </Button>
-            ) : null}
+            )}
           </Stack>
 
           {pricesQuery.isPending ? (
@@ -493,7 +529,7 @@ export function PricingView() {
               onChange={(e) => setBookCurrency(e.target.value)}
               fullWidth
               required
-              inputProps={{ maxLength: 3 }}
+              slotProps={{ htmlInput: { maxLength: 3 } }}
             />
           </Stack>
         </DialogContent>
@@ -507,6 +543,47 @@ export function PricingView() {
             onClick={() => createBookMutation.mutate()}
           >
             Create
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={editBook != null}
+        onClose={() => !editBookMutation.isPending && setEditBook(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Edit price book</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              label="Name"
+              value={bookName}
+              onChange={(e) => setBookName(e.target.value)}
+              fullWidth
+              required
+            />
+            <TextField
+              label="Currency"
+              value={bookCurrency}
+              onChange={(e) => setBookCurrency(e.target.value)}
+              fullWidth
+              required
+              slotProps={{ htmlInput: { maxLength: 3 } }}
+              helperText="Currency cannot change once this book has prices."
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditBook(null)} disabled={editBookMutation.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={!bookName.trim() || editBookMutation.isPending}
+            onClick={() => editBookMutation.mutate()}
+          >
+            Save
           </Button>
         </DialogActions>
       </Dialog>

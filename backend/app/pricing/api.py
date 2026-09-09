@@ -137,6 +137,13 @@ def patch_price_book(
     values = payload.model_dump(exclude_unset=True)
     if "currency" in values and values["currency"] is not None:
         values["currency"] = values["currency"].upper()
+        if values["currency"] != row.currency.upper() and db.scalar(
+            select(Price.id).where(Price.price_book_id == row.id).limit(1)
+        ) is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="currency cannot be changed after prices have been created",
+            )
     for field, value in values.items():
         setattr(row, field, value)
     db.commit()

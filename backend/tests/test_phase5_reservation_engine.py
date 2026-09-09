@@ -35,6 +35,7 @@ from app.reservations.service import (
     hold_reservation,
     remove_line_item,
     reschedule_reservation,
+    update_line_item_quantity,
     update_party_size,
 )
 from app.reservations.types import AvailabilityRequest
@@ -524,6 +525,11 @@ def test_reservation_lifecycle_mutations_are_idempotent() -> None:
         idempotency_key="dessert",
     )
     assert addon.unit_price_minor == 700
+    updated_addon = update_line_item_quantity(
+        db, reservation.id, line_item_id=addon.id, quantity=2, idempotency_key="dessert-2"
+    )
+    assert updated_addon.id == reservation.id
+    assert db.get(ReservationLineItem, addon.id).quantity == 2  # type: ignore[union-attr]
     remove_line_item(db, reservation.id, line_item_id=addon.id, idempotency_key="no-dessert")
     cancelled = cancel_reservation(db, reservation.id, idempotency_key="cancel")
     retried = cancel_reservation(db, reservation.id, idempotency_key="cancel")

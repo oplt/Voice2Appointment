@@ -998,6 +998,42 @@ def remove_line_item(
     return reservation
 
 
+def update_line_item_quantity(
+    db: Session,
+    reservation_id: int,
+    *,
+    line_item_id: int,
+    quantity: int,
+    actor_user_id: int | None = None,
+    idempotency_key: str | None = None,
+) -> Reservation:
+    require_reservation_domain()
+    if quantity <= 0:
+        raise ReservationError("quantity must be positive")
+    reservation = db.get(Reservation, reservation_id)
+    line = db.get(ReservationLineItem, line_item_id)
+    if reservation is None or line is None or line.reservation_id != reservation.id:
+        raise ReservationError("line item not found")
+    if line.catalog_item_id == reservation.catalog_item_id:
+        raise ReservationError("cannot change the reservation service line item")
+    payload = {"line_item_id": line_item_id, "quantity": quantity}
+    record, started = _begin_lifecycle_operation(
+        db,
+        reservation,
+        operation="update_line_item_quantity",
+        idempotency_key=idempotency_key,
+        payload=payload,
+    )
+    if not started:
+        return reservation
+    _require_mutable(reservation)
+    line.quantity = quantity
+    _finish_lifecycle_operation(db, reservation, record, actor_user_id=actor_user_id)
+    db.commit()
+    db.refresh(reservation)
+    return reservation
+
+
 def change_service(
     db: Session, reservation_id: int, *, catalog_item_id: int, **kwargs: Any
 ) -> Reservation:

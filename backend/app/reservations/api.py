@@ -34,6 +34,7 @@ from app.reservations.service import (
     hold_reservation,
     remove_line_item,
     reschedule_reservation,
+    update_line_item_quantity,
     update_party_size,
 )
 from app.reservations.types import AvailabilityRequest
@@ -152,6 +153,12 @@ class LineItemIn(BaseModel):
     quantity: int = Field(default=1, gt=0)
     price_book_id: int | None = None
     channel: str | None = Field(default=None, max_length=32)
+    idempotency_key: str | None = Field(default=None, max_length=128)
+
+
+class LineItemPatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    quantity: int = Field(gt=0)
     idempotency_key: str | None = Field(default=None, max_length=128)
 
 
@@ -496,6 +503,31 @@ def delete_reservation_line(
     try:
         return remove_line_item(
             db, reservation_id, line_item_id=line_item_id, actor_user_id=current_user.id
+        )
+    except Exception as exc:
+        raise_http(map_exception(exc))
+
+
+@router.patch(
+    "/reservations/{reservation_id}/line-items/{line_item_id}", response_model=ReservationOut
+)
+def patch_reservation_line(
+    reservation_id: int,
+    line_item_id: int,
+    payload: LineItemPatch,
+    organization_id: OrganizationId,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(require_db),
+) -> Reservation:
+    _reservation(db, organization_id, reservation_id)
+    try:
+        return update_line_item_quantity(
+            db,
+            reservation_id,
+            line_item_id=line_item_id,
+            quantity=payload.quantity,
+            actor_user_id=current_user.id,
+            idempotency_key=payload.idempotency_key,
         )
     except Exception as exc:
         raise_http(map_exception(exc))

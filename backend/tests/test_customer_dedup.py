@@ -14,7 +14,15 @@ from app.customers.service import (
     normalize_phone,
 )
 from app.db.base import Base
-from app.db.models import Customer, Reservation, User
+from app.db.models import (
+    Customer,
+    Order,
+    PaymentIntent,
+    Reservation,
+    SecureLinkDelivery,
+    User,
+    WaitlistEntry,
+)
 from app.tenancy.service import create_organization_for_user
 
 
@@ -28,6 +36,7 @@ def test_normalize_phone_and_email() -> None:
     assert normalize_phone("+1 (555) 010-0200") == "+15550100200"
     assert normalize_email("  Pat@Example.COM ") == "pat@example.com"
     assert normalize_phone("not-a-phone") is None
+    assert normalize_phone("0470 12 34 56") is None
 
 
 def test_get_or_create_dedupes_normalized_phone() -> None:
@@ -43,7 +52,7 @@ def test_get_or_create_dedupes_normalized_phone() -> None:
     )
     db.commit()
     second = get_or_create_customer(
-        db, organization_id=org.id, name="Patricia", phone="15550100200"
+        db, organization_id=org.id, name="Patricia", phone="+1 555 010-0200"
     )
     db.commit()
     assert first.id == second.id
@@ -81,7 +90,7 @@ def test_concurrent_creates_same_phone_yield_one_customer(monkeypatch: pytest.Mo
     assert calls["n"] >= 2
 
 
-def test_merge_reassigns_reservations() -> None:
+def test_merge_reassigns_customer_references() -> None:
     db = _session()
     user = User(username="merge", email="merge@example.test", password="x")
     db.add(user)
@@ -96,17 +105,40 @@ def test_merge_reassigns_reservations() -> None:
     db.flush()
     from datetime import datetime, timezone
 
-    db.add(
-        Reservation(
-            organization_id=org.id,
-            customer_id=source.id,
-            scheduling_mode="single_resource",
-            status="confirmed",
-            start_datetime=datetime(2030, 1, 1, 12, tzinfo=timezone.utc),
-            end_datetime=datetime(2030, 1, 1, 13, tzinfo=timezone.utc),
-            party_size=1,
-            provider_sync_status="none",
-            allocation_json={},
+    reservation = Reservation(
+        organization_id=org.id,
+        customer_id=source.id,
+        scheduling_mode="single_resource",
+        status="confirmed",
+        start_datetime=datetime(2030, 1, 1, 12, tzinfo=timezone.utc),
+        end_datetime=datetime(2030, 1, 1, 13, tzinfo=timezone.utc),
+        party_size=1,
+        provider_sync_status="none",
+        allocation_json={},
+    )
+    db.add(reservation)
+    db.flush()
+    db.add_all(
+        (
+            Order(organization_id=org.id, external_id="order-1", status="open", customer_id=source.id),
+            SecureLinkDelivery(
+                organization_id=org.id,
+                customer_id=source.id,
+                channel="sms",
+                recipient="+15550100001",
+                token_hash="hash-1",
+                token_ciphertext="ciphertext",
+                expires_at=datetime(2030, 1, 2, tzinfo=timezone.utc),
+                idempotency_key="link-1",
+            ),
+            PaymentIntent(
+                organization_id=org.id,
+                reservation_id=reservation.id,
+                customer_id=source.id,
+                amount_minor=100,
+                currency="EUR",
+            ),
+            WaitlistEntry(organization_id=org.id, customer_id=source.id),
         )
     )
     db.commit()
@@ -119,6 +151,7 @@ def test_merge_reassigns_reservations() -> None:
     db.commit()
     assert merged.id == target.id
     assert db.get(Customer, source.id) is None
-    reservation = db.scalar(select(Reservation))
-    assert reservation is not None
-    assert reservation.customer_id == target.id
+    for model in (Reservation, Order, SecureLinkDelivery, PaymentIntent, WaitlistEntry):
+        row = db.scalar(select(model))
+        assert row is not None
+        assert row.customer_id == target.id

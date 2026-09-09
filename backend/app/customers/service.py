@@ -6,7 +6,14 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models import Customer, Reservation
+from app.db.models import (
+    Customer,
+    Order,
+    PaymentIntent,
+    Reservation,
+    SecureLinkDelivery,
+    WaitlistEntry,
+)
 from app.telephony.phones import canonical_e164
 
 
@@ -14,8 +21,8 @@ class CustomerError(ValueError):
     """Safe customer domain violation."""
 
 
-def normalize_phone(phone: str | None, *, default_region: str | None = "US") -> str | None:
-    """Normalize to E.164 when possible; otherwise digits with a leading +."""
+def normalize_phone(phone: str | None, *, default_region: str | None = None) -> str | None:
+    """Normalize a phone number to E.164 without assuming a country."""
     if phone is None:
         return None
     raw = phone.strip()
@@ -24,14 +31,11 @@ def normalize_phone(phone: str | None, *, default_region: str | None = "US") -> 
     e164 = canonical_e164(raw, default_region=default_region)
     if e164:
         return e164
-    digits = "".join(ch for ch in raw if ch.isdigit())
-    if not digits:
-        return None
     if raw.startswith("+"):
-        return f"+{digits}"
-    # Require an explicit country code when phonenumbers cannot validate.
-    if len(digits) >= 10:
-        return f"+{digits}"
+        digits = "".join(ch for ch in raw if ch.isdigit())
+        return f"+{digits}" if digits else None
+    # A local number has no globally meaningful canonical form without a country
+    # context. Do not silently interpret it as a US number.
     return None
 
 
@@ -49,8 +53,9 @@ def find_customer(
     phone: str | None,
     email: str | None,
     for_update: bool = False,
+    default_region: str | None = None,
 ) -> Customer | None:
-    phone_n = normalize_phone(phone)
+    phone_n = normalize_phone(phone, default_region=default_region)
     email_n = normalize_email(email)
     identifiers = []
     if phone_n:
@@ -75,11 +80,17 @@ def get_or_create_customer(
     phone: str | None = None,
     email: str | None = None,
     language: str | None = None,
+    default_region: str | None = None,
 ) -> Customer:
-    phone_n = normalize_phone(phone)
+    phone_n = normalize_phone(phone, default_region=default_region)
     email_n = normalize_email(email)
     existing = find_customer(
-        db, organization_id=organization_id, phone=phone_n, email=email_n, for_update=True
+        db,
+        organization_id=organization_id,
+        phone=phone_n,
+        email=email_n,
+        for_update=True,
+        default_region=default_region,
     )
     if existing is not None:
         if name and not existing.name:
@@ -100,7 +111,12 @@ def get_or_create_customer(
             db.flush()
     except IntegrityError:
         existing = find_customer(
-            db, organization_id=organization_id, phone=phone_n, email=email_n, for_update=True
+            db,
+            organization_id=organization_id,
+            phone=phone_n,
+            email=email_n,
+            for_update=True,
+            default_region=default_region,
         )
         if existing is not None:
             return existing
@@ -144,14 +160,15 @@ def merge_customers(
     target = get_customer(db, organization_id=organization_id, customer_id=target_customer_id)
     if source is None or target is None:
         raise CustomerError("customer not found")
-    db.execute(
-        update(Reservation)
-        .where(
-            Reservation.organization_id == organization_id,
-            Reservation.customer_id == source.id,
+    for model in (Reservation, Order, SecureLinkDelivery, PaymentIntent, WaitlistEntry):
+        db.execute(
+            update(model)
+            .where(
+                model.organization_id == organization_id,
+                model.customer_id == source.id,
+            )
+            .values(customer_id=target.id)
         )
-        .values(customer_id=target.id)
-    )
     if not target.name and source.name:
         target.name = source.name
     if not target.phone and source.phone:

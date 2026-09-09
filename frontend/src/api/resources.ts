@@ -49,12 +49,14 @@ export type ResourcePatch = Partial<ResourceCreate> & {
 export type ListResourcesParams = {
   location_id?: number
   resource_type?: string
+  include_inactive?: boolean
 }
 
 export function listResources(params: ListResourcesParams = {}) {
   const search = new URLSearchParams()
   if (params.location_id != null) search.set('location_id', String(params.location_id))
   if (params.resource_type) search.set('resource_type', params.resource_type)
+  if (params.include_inactive) search.set('include_inactive', 'true')
   const qs = search.toString()
   return api.get<Resource[]>(`/api/v1/resources${qs ? `?${qs}` : ''}`)
 }

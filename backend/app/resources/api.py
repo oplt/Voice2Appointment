@@ -155,8 +155,18 @@ def list_resources(
     organization_id: OrganizationId,
     location_id: int | None = None,
     resource_type: str | None = None,
+    include_inactive: bool = False,
     db: Session = Depends(require_db),
 ) -> list[Resource]:
+    if include_inactive:
+        statement = select(Resource).where(Resource.organization_id == organization_id)
+        if location_id is not None:
+            statement = statement.where(
+                or_(Resource.location_id == location_id, Resource.location_id.is_(None))
+            )
+        if resource_type is not None:
+            statement = statement.where(Resource.resource_type == resource_type)
+        return list(db.scalars(statement.order_by(Resource.name, Resource.id)).all())
     return active_resources(
         db, organization_id=organization_id, location_id=location_id, resource_type=resource_type
     )

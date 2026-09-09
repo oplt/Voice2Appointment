@@ -1,5 +1,5 @@
 import AddIcon from '@mui/icons-material/Add'
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline'
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutlined'
 import Alert from '@mui/material/Alert'
 import Button from '@mui/material/Button'
 import Box from '@mui/material/Box'
@@ -39,14 +39,24 @@ import {
   createResource,
   createResourceAvailabilityException,
   createResourceCapability,
+  deleteResourceAvailability,
+  deleteResourceAvailabilityException,
   deleteResourceCapability,
   listResourceAvailability,
   listResourceAvailabilityExceptions,
   listResourceCapabilities,
   listResources,
+  patchResource,
+  patchResourceAvailability,
+  patchResourceAvailabilityException,
+  patchResourceCapability,
+  createResourceAvailability,
+  type AvailabilityRule,
   type AvailabilityException,
   type Resource,
 } from '../../api/resources'
+import { listLocations } from '../../api/pricing'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { PageHeader } from '../../components/PageHeader'
 import { useSnackbar } from '../../components/SnackbarProvider'
 import { BookingPolicyPanel } from './BookingPolicyPanel'
@@ -88,19 +98,42 @@ export function ResourcesView() {
   const [resourceType, setResourceType] = useState('practitioner')
   const [capacity, setCapacity] = useState('1')
   const [active, setActive] = useState(true)
+  const [locationId, setLocationId] = useState('')
+  const [editResource, setEditResource] = useState<Resource | null>(null)
+  const [editName, setEditName] = useState('')
+  const [editType, setEditType] = useState('')
+  const [editCapacity, setEditCapacity] = useState('1')
+  const [editLocationId, setEditLocationId] = useState('')
+  const [editActive, setEditActive] = useState(true)
+  const [forceDeactivate, setForceDeactivate] = useState(false)
 
   const [capabilityInput, setCapabilityInput] = useState('')
+  const [editCapability, setEditCapability] = useState<{ id: number; capability: string } | null>(null)
   const [timeOffOpen, setTimeOffOpen] = useState(false)
   const [timeOffStart, setTimeOffStart] = useState('')
   const [timeOffEnd, setTimeOffEnd] = useState('')
   const [timeOffReason, setTimeOffReason] = useState('')
+  const [editTimeOff, setEditTimeOff] = useState<AvailabilityException | null>(null)
+  const [deleteTimeOff, setDeleteTimeOff] = useState<AvailabilityException | null>(null)
+
+  const [ruleOpen, setRuleOpen] = useState(false)
+  const [editRule, setEditRule] = useState<AvailabilityRule | null>(null)
+  const [deleteRule, setDeleteRule] = useState<AvailabilityRule | null>(null)
+  const [ruleWeekday, setRuleWeekday] = useState('0')
+  const [ruleStart, setRuleStart] = useState('09:00')
+  const [ruleEnd, setRuleEnd] = useState('17:00')
 
   const [assignServiceId, setAssignServiceId] = useState<number | ''>('')
   const [reqDrafts, setReqDrafts] = useState<ResourceRequirementInput[]>([])
 
   const resourcesQuery = useQuery({
     queryKey: queryKeys.resources.list,
-    queryFn: () => listResources(),
+    queryFn: () => listResources({ include_inactive: true }),
+  })
+
+  const locationsQuery = useQuery({
+    queryKey: queryKeys.pricing.locations,
+    queryFn: listLocations,
   })
 
   const resources = resourcesQuery.data ?? []
@@ -159,6 +192,7 @@ export function ResourcesView() {
         resource_type: resourceType.trim(),
         capacity: Math.max(1, Number(capacity) || 1),
         active,
+        location_id: locationId ? Number(locationId) : null,
       }),
     onSuccess: (row) => {
       notify('Resource created', 'success')
@@ -167,11 +201,42 @@ export function ResourcesView() {
       setResourceType('practitioner')
       setCapacity('1')
       setActive(true)
+      setLocationId('')
       setSelectedId(row.id)
       void queryClient.invalidateQueries({ queryKey: queryKeys.resources.all })
     },
     onError: (err: unknown) => {
       notify(err instanceof ApiError ? err.message : 'Create failed', 'error')
+    },
+  })
+
+  const updateResourceMutation = useMutation({
+    mutationFn: (force: boolean = false) => {
+      if (!editResource) throw new Error('No resource')
+      return patchResource(
+        editResource.id,
+        {
+          name: editName.trim(),
+          resource_type: editType.trim(),
+          capacity: Math.max(1, Number(editCapacity) || 1),
+          location_id: editLocationId ? Number(editLocationId) : null,
+          active: editActive,
+        },
+        { force },
+      )
+    },
+    onSuccess: () => {
+      notify('Resource updated', 'success')
+      setEditResource(null)
+      setForceDeactivate(false)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.all })
+    },
+    onError: (err: unknown) => {
+      if (err instanceof ApiError && err.status === 409) {
+        setForceDeactivate(true)
+        return
+      }
+      notify(err instanceof ApiError ? err.message : 'Update failed', 'error')
     },
   })
 
@@ -208,6 +273,19 @@ export function ResourcesView() {
     },
   })
 
+  const editCapabilityMutation = useMutation({
+    mutationFn: () => {
+      if (!selected || !editCapability) throw new Error('No capability')
+      return patchResourceCapability(selected.id, editCapability.id, editCapability.capability.trim())
+    },
+    onSuccess: () => {
+      notify('Capability updated', 'success')
+      setEditCapability(null)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.capabilities(selected!.id) })
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Update failed', 'error'),
+  })
+
   const timeOffMutation = useMutation({
     mutationFn: () => {
       if (!selected) throw new Error('No resource')
@@ -231,6 +309,66 @@ export function ResourcesView() {
     onError: (err: unknown) => {
       notify(err instanceof ApiError ? err.message : 'Failed to add time off', 'error')
     },
+  })
+
+  const updateTimeOffMutation = useMutation({
+    mutationFn: () => {
+      if (!selected || !editTimeOff) throw new Error('No time off')
+      return patchResourceAvailabilityException(selected.id, editTimeOff.id, {
+        starts_at: fromDatetimeLocalValue(timeOffStart),
+        ends_at: fromDatetimeLocalValue(timeOffEnd),
+        reason: timeOffReason.trim() || null,
+      })
+    },
+    onSuccess: () => {
+      notify('Time off updated', 'success')
+      setEditTimeOff(null)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.exceptions(selected!.id) })
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Update failed', 'error'),
+  })
+
+  const deleteTimeOffMutation = useMutation({
+    mutationFn: () => {
+      if (!selected || !deleteTimeOff) throw new Error('No time off')
+      return deleteResourceAvailabilityException(selected.id, deleteTimeOff.id)
+    },
+    onSuccess: () => {
+      notify('Time off removed', 'success')
+      setDeleteTimeOff(null)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.exceptions(selected!.id) })
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Delete failed', 'error'),
+  })
+
+  const saveRuleMutation = useMutation({
+    mutationFn: () => {
+      if (!selected) throw new Error('No resource')
+      const body = { weekday: Number(ruleWeekday), start_time: ruleStart, end_time: ruleEnd }
+      return editRule
+        ? patchResourceAvailability(selected.id, editRule.id, body)
+        : createResourceAvailability(selected.id, body)
+    },
+    onSuccess: () => {
+      notify(editRule ? 'Working hours updated' : 'Working hours added', 'success')
+      setRuleOpen(false)
+      setEditRule(null)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.availability(selected!.id) })
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Save failed', 'error'),
+  })
+
+  const deleteRuleMutation = useMutation({
+    mutationFn: () => {
+      if (!selected || !deleteRule) throw new Error('No rule')
+      return deleteResourceAvailability(selected.id, deleteRule.id)
+    },
+    onSuccess: () => {
+      notify('Working hours removed', 'success')
+      setDeleteRule(null)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.resources.availability(selected!.id) })
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Delete failed', 'error'),
   })
 
   const saveRequirementsMutation = useMutation({
@@ -269,6 +407,7 @@ export function ResourcesView() {
   const capabilities = capsQuery.data ?? []
   const rules = availabilityQuery.data ?? []
   const exceptions: AvailabilityException[] = exceptionsQuery.data ?? []
+  const locations = locationsQuery.data ?? []
 
   const loadRequirementsIntoDraft = () => {
     const rows = requirementsQuery.data ?? []
@@ -315,8 +454,22 @@ export function ResourcesView() {
           <Typography variant="body2">Type: {selected.resource_type}</Typography>
           <Typography variant="body2">Capacity: {selected.capacity}</Typography>
           <Typography variant="body2">
-            Location: {selected.location_id != null ? `#${selected.location_id}` : '—'}
+            Location: {selected.location_id != null ? locations.find((location) => location.id === selected.location_id)?.name ?? `#${selected.location_id}` : '—'}
           </Typography>
+          <Button
+            variant="outlined"
+            sx={{ alignSelf: 'flex-start' }}
+            onClick={() => {
+              setEditResource(selected)
+              setEditName(selected.name)
+              setEditType(selected.resource_type)
+              setEditCapacity(String(selected.capacity))
+              setEditLocationId(selected.location_id != null ? String(selected.location_id) : '')
+              setEditActive(selected.active)
+            }}
+          >
+            Edit resource
+          </Button>
         </Stack>
       ) : null}
       {detailTab === 1 ? (
@@ -348,6 +501,7 @@ export function ResourcesView() {
                     key={cap.id}
                     label={cap.capability}
                     size="small"
+                    onClick={() => setEditCapability({ id: cap.id, capability: cap.capability })}
                     onDelete={() => deleteCapabilityMutation.mutate(cap.id)}
                     deleteIcon={<DeleteOutlineIcon />}
                   />
@@ -363,6 +517,19 @@ export function ResourcesView() {
       ) : null}
       {detailTab === 2 ? (
         <Stack spacing={1.5}>
+          <Button
+            variant="outlined"
+            sx={{ alignSelf: 'flex-start' }}
+            onClick={() => {
+              setEditRule(null)
+              setRuleWeekday('0')
+              setRuleStart('09:00')
+              setRuleEnd('17:00')
+              setRuleOpen(true)
+            }}
+          >
+            Add working hours
+          </Button>
           {availabilityQuery.isPending ? (
             <CircularProgress size={20} />
           ) : rules.length === 0 ? (
@@ -371,10 +538,19 @@ export function ResourcesView() {
             </Typography>
           ) : (
             rules.map((rule) => (
-              <Typography key={rule.id} variant="body2">
-                {WEEKDAYS[rule.weekday] ?? `Day ${rule.weekday}`}: {rule.start_time}–
-                {rule.end_time}
-              </Typography>
+              <Stack key={rule.id} direction="row" spacing={1} sx={{ alignItems: 'center' }}>
+                <Typography variant="body2" sx={{ flex: 1 }}>
+                  {WEEKDAYS[rule.weekday] ?? `Day ${rule.weekday}`}: {rule.start_time}–{rule.end_time}
+                </Typography>
+                <Button size="small" onClick={() => {
+                  setEditRule(rule)
+                  setRuleWeekday(String(rule.weekday))
+                  setRuleStart(rule.start_time)
+                  setRuleEnd(rule.end_time)
+                  setRuleOpen(true)
+                }}>Edit</Button>
+                <Button size="small" color="error" onClick={() => setDeleteRule(rule)}>Delete</Button>
+              </Stack>
             ))
           )}
           <Box
@@ -563,6 +739,16 @@ export function ResourcesView() {
                   {exc.available ? 'Available override' : 'Unavailable'}
                   {exc.reason ? ` · ${exc.reason}` : ''}
                 </Typography>
+                <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
+                  <Button size="small" onClick={() => {
+                    setEditTimeOff(exc)
+                    setTimeOffStart(toDatetimeLocalValue(exc.starts_at))
+                    setTimeOffEnd(toDatetimeLocalValue(exc.ends_at))
+                    setTimeOffReason(exc.reason ?? '')
+                    setTimeOffOpen(true)
+                  }}>Edit</Button>
+                  <Button size="small" color="error" onClick={() => setDeleteTimeOff(exc)}>Delete</Button>
+                </Stack>
               </Box>
             ))
           )}
@@ -724,6 +910,18 @@ export function ResourcesView() {
               onChange={(e) => setCapacity(e.target.value)}
               fullWidth
             />
+            <TextField
+              select
+              label="Location"
+              value={locationId}
+              onChange={(e) => setLocationId(e.target.value)}
+              fullWidth
+            >
+              <MenuItem value="">No specific location</MenuItem>
+              {locations.map((location) => (
+                <MenuItem key={location.id} value={location.id}>{location.name}</MenuItem>
+              ))}
+            </TextField>
             <FormControlLabel
               control={
                 <Switch checked={active} onChange={(e) => setActive(e.target.checked)} />
@@ -747,12 +945,65 @@ export function ResourcesView() {
       </Dialog>
 
       <Dialog
-        open={timeOffOpen}
-        onClose={() => !timeOffMutation.isPending && setTimeOffOpen(false)}
+        open={editResource != null}
+        onClose={() => !updateResourceMutation.isPending && setEditResource(null)}
         fullWidth
         maxWidth="sm"
       >
-        <DialogTitle>Add time off</DialogTitle>
+        <DialogTitle>Edit resource</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField label="Name" value={editName} onChange={(e) => setEditName(e.target.value)} fullWidth required />
+            <TextField label="Type" value={editType} onChange={(e) => setEditType(e.target.value)} fullWidth required />
+            <TextField label="Capacity" type="number" value={editCapacity} onChange={(e) => setEditCapacity(e.target.value)} slotProps={{ htmlInput: { min: 1 } }} fullWidth />
+            <TextField select label="Location" value={editLocationId} onChange={(e) => setEditLocationId(e.target.value)} fullWidth>
+              <MenuItem value="">No specific location</MenuItem>
+              {locations.map((location) => <MenuItem key={location.id} value={location.id}>{location.name}</MenuItem>)}
+            </TextField>
+            <FormControlLabel control={<Switch checked={editActive} onChange={(e) => setEditActive(e.target.checked)} />} label="Active" />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditResource(null)} disabled={updateResourceMutation.isPending}>Cancel</Button>
+          <Button variant="contained" disabled={!editName.trim() || !editType.trim() || updateResourceMutation.isPending} onClick={() => updateResourceMutation.mutate(false)}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={editCapability != null} onClose={() => !editCapabilityMutation.isPending && setEditCapability(null)} fullWidth maxWidth="xs">
+        <DialogTitle>Edit capability</DialogTitle>
+        <DialogContent dividers>
+          <TextField label="Capability" value={editCapability?.capability ?? ''} onChange={(e) => setEditCapability((value) => value ? { ...value, capability: e.target.value } : value)} fullWidth sx={{ mt: 1 }} required />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditCapability(null)} disabled={editCapabilityMutation.isPending}>Cancel</Button>
+          <Button variant="contained" disabled={!editCapability?.capability.trim() || editCapabilityMutation.isPending} onClick={() => editCapabilityMutation.mutate()}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={ruleOpen} onClose={() => !saveRuleMutation.isPending && setRuleOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>{editRule ? 'Edit working hours' : 'Add working hours'}</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField select label="Day" value={ruleWeekday} onChange={(e) => setRuleWeekday(e.target.value)} fullWidth>
+              {WEEKDAYS.map((day, index) => <MenuItem key={day} value={index}>{day}</MenuItem>)}
+            </TextField>
+            <TextField label="Starts" type="time" value={ruleStart} onChange={(e) => setRuleStart(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} fullWidth required />
+            <TextField label="Ends" type="time" value={ruleEnd} onChange={(e) => setRuleEnd(e.target.value)} slotProps={{ inputLabel: { shrink: true } }} fullWidth required />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setRuleOpen(false)} disabled={saveRuleMutation.isPending}>Cancel</Button>
+          <Button variant="contained" disabled={!ruleStart || !ruleEnd || saveRuleMutation.isPending} onClick={() => saveRuleMutation.mutate()}>Save</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={timeOffOpen}
+        onClose={() => !(editTimeOff ? updateTimeOffMutation.isPending : timeOffMutation.isPending) && setTimeOffOpen(false)}
+        fullWidth
+        maxWidth="sm"
+      >
+        <DialogTitle>{editTimeOff ? 'Edit time off' : 'Add time off'}</DialogTitle>
         <DialogContent dividers>
           <Stack spacing={2} sx={{ pt: 1 }}>
             <TextField
@@ -761,7 +1012,7 @@ export function ResourcesView() {
               value={timeOffStart}
               onChange={(e) => setTimeOffStart(e.target.value)}
               fullWidth
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
               required
             />
             <TextField
@@ -770,7 +1021,7 @@ export function ResourcesView() {
               value={timeOffEnd}
               onChange={(e) => setTimeOffEnd(e.target.value)}
               fullWidth
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
               required
             />
             <TextField
@@ -782,18 +1033,49 @@ export function ResourcesView() {
           </Stack>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => setTimeOffOpen(false)} disabled={timeOffMutation.isPending}>
+          <Button onClick={() => { setTimeOffOpen(false); setEditTimeOff(null) }} disabled={timeOffMutation.isPending || updateTimeOffMutation.isPending}>
             Cancel
           </Button>
           <Button
             variant="contained"
-            disabled={!timeOffStart || !timeOffEnd || timeOffMutation.isPending}
-            onClick={() => timeOffMutation.mutate()}
+            disabled={!timeOffStart || !timeOffEnd || timeOffMutation.isPending || updateTimeOffMutation.isPending}
+            onClick={() => editTimeOff ? updateTimeOffMutation.mutate() : timeOffMutation.mutate()}
           >
-            Add
+            {editTimeOff ? 'Save' : 'Add'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      <ConfirmDialog
+        open={forceDeactivate}
+        title="Deactivate despite future reservations?"
+        description="Future held or confirmed reservations use this resource. Deactivation may require those bookings to be reassigned."
+        confirmLabel="Deactivate anyway"
+        confirmColor="error"
+        loading={updateResourceMutation.isPending}
+        onClose={() => !updateResourceMutation.isPending && setForceDeactivate(false)}
+        onConfirm={() => updateResourceMutation.mutate(true)}
+      />
+      <ConfirmDialog
+        open={deleteRule != null}
+        title="Delete working hours?"
+        description="This availability rule will be removed."
+        confirmLabel="Delete"
+        confirmColor="error"
+        loading={deleteRuleMutation.isPending}
+        onClose={() => !deleteRuleMutation.isPending && setDeleteRule(null)}
+        onConfirm={() => deleteRuleMutation.mutate()}
+      />
+      <ConfirmDialog
+        open={deleteTimeOff != null}
+        title="Delete time off?"
+        description="This time-off exception will be removed."
+        confirmLabel="Delete"
+        confirmColor="error"
+        loading={deleteTimeOffMutation.isPending}
+        onClose={() => !deleteTimeOffMutation.isPending && setDeleteTimeOff(null)}
+        onConfirm={() => deleteTimeOffMutation.mutate()}
+      />
     </Stack>
   )
 }

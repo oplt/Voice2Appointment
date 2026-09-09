@@ -108,6 +108,28 @@ export function listReservationLineItems(reservationId: number) {
   )
 }
 
+export function addReservationLineItem(
+  reservationId: number,
+  body: { catalog_item_id: number; quantity: number; price_book_id?: number | null; channel?: string | null },
+) {
+  return api.post<ReservationLineItem>(`/api/v1/reservations/${reservationId}/line-items`, body)
+}
+
+export function updateReservationLineItemQuantity(
+  reservationId: number,
+  lineItemId: number,
+  quantity: number,
+) {
+  return api.patch<Reservation>(
+    `/api/v1/reservations/${reservationId}/line-items/${lineItemId}`,
+    { quantity },
+  )
+}
+
+export function deleteReservationLineItem(reservationId: number, lineItemId: number) {
+  return api.delete<Reservation>(`/api/v1/reservations/${reservationId}/line-items/${lineItemId}`)
+}
+
 export function createReservation(body: ReservationCreate) {
   return api.post<Reservation>('/api/v1/reservations', body)
 }

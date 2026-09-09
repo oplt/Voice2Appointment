@@ -8,6 +8,7 @@ import DialogActions from '@mui/material/DialogActions'
 import DialogContent from '@mui/material/DialogContent'
 import DialogTitle from '@mui/material/DialogTitle'
 import FormControlLabel from '@mui/material/FormControlLabel'
+import MenuItem from '@mui/material/MenuItem'
 import Stack from '@mui/material/Stack'
 import Table from '@mui/material/Table'
 import TableBody from '@mui/material/TableBody'
@@ -26,11 +27,14 @@ import { listCustomers } from '../../api/customers'
 import { queryKeys } from '../../api/queryKeys'
 import { listResources } from '../../api/resources'
 import {
+  addReservationLineItem,
   cancelReservation,
   changeReservationResources,
+  deleteReservationLineItem,
   getReservation,
   listReservations,
   rescheduleReservation,
+  updateReservationLineItemQuantity,
   updateReservationPartySize,
   type Reservation,
   type ReservationDetail,
@@ -83,6 +87,16 @@ function fromDatetimeLocalValue(value: string): string {
   return new Date(value).toISOString()
 }
 
+function isReservationDetail(
+  reservation: Reservation | ReservationDetail | null,
+): reservation is ReservationDetail {
+  return (
+    reservation != null &&
+    Array.isArray((reservation as Partial<ReservationDetail>).line_items) &&
+    Array.isArray((reservation as Partial<ReservationDetail>).resource_ids)
+  )
+}
+
 export function ReservationsView() {
   const { notify } = useSnackbar()
   const queryClient = useQueryClient()
@@ -100,6 +114,11 @@ export function ReservationsView() {
 
   const [resourcesTarget, setResourcesTarget] = useState<ReservationDetail | null>(null)
   const [selectedResourceIds, setSelectedResourceIds] = useState<number[]>([])
+  const [addLineOpen, setAddLineOpen] = useState(false)
+  const [lineCatalogItemId, setLineCatalogItemId] = useState('')
+  const [lineQuantity, setLineQuantity] = useState('1')
+  const [editLine, setEditLine] = useState<ReservationLineItem | null>(null)
+  const [deleteLine, setDeleteLine] = useState<ReservationLineItem | null>(null)
 
   const listQuery = useQuery({
     queryKey: queryKeys.reservations.list({ limit: PAGE_SIZE, offset }),
@@ -229,6 +248,54 @@ export function ReservationsView() {
     },
   })
 
+  const addLineMutation = useMutation({
+    mutationFn: () => {
+      if (detailId == null) throw new Error('No reservation')
+      return addReservationLineItem(detailId, {
+        catalog_item_id: Number(lineCatalogItemId),
+        quantity: Math.max(1, Number(lineQuantity) || 1),
+      })
+    },
+    onSuccess: () => {
+      notify('Add-on added', 'success')
+      setAddLineOpen(false)
+      setLineCatalogItemId('')
+      setLineQuantity('1')
+      invalidate()
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Could not add add-on', 'error'),
+  })
+
+  const updateLineMutation = useMutation({
+    mutationFn: () => {
+      if (detailId == null || !editLine) throw new Error('No line item')
+      return updateReservationLineItemQuantity(
+        detailId,
+        editLine.id,
+        Math.max(1, Number(lineQuantity) || 1),
+      )
+    },
+    onSuccess: () => {
+      notify('Add-on quantity updated', 'success')
+      setEditLine(null)
+      invalidate()
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Could not update add-on', 'error'),
+  })
+
+  const deleteLineMutation = useMutation({
+    mutationFn: () => {
+      if (detailId == null || !deleteLine) throw new Error('No line item')
+      return deleteReservationLineItem(detailId, deleteLine.id)
+    },
+    onSuccess: () => {
+      notify('Add-on removed', 'success')
+      setDeleteLine(null)
+      invalidate()
+    },
+    onError: (err: unknown) => notify(err instanceof ApiError ? err.message : 'Could not remove add-on', 'error'),
+  })
+
   const openReschedule = (row: Reservation) => {
     setRescheduleTarget(row)
     setRescheduleStart(toDatetimeLocalValue(row.start_datetime))
@@ -251,7 +318,7 @@ export function ReservationsView() {
 
   const lineItems: ReservationLineItem[] =
     detailQuery.data?.line_items ??
-    (detail && 'line_items' in detail ? detail.line_items : [])
+    (isReservationDetail(detail) ? detail.line_items : [])
 
   const mutable = detail != null && detail.status !== 'cancelled'
 
@@ -391,7 +458,7 @@ export function ReservationsView() {
                     Channel:{' '}
                     {channelFromAllocation(detail.allocation_json) ?? 'not returned by API'}
                   </Typography>
-                  {'resource_ids' in detail && detail.resource_ids.length > 0 ? (
+                  {isReservationDetail(detail) && detail.resource_ids.length > 0 ? (
                     <Typography variant="body2">
                       Resources: {detail.resource_ids.map((id) => `#${id}`).join(', ')}
                     </Typography>
@@ -400,6 +467,15 @@ export function ReservationsView() {
                   <Typography variant="subtitle2" sx={{ pt: 1 }}>
                     Line items (price snapshot)
                   </Typography>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    disabled={!mutable || !detailQuery.data}
+                    onClick={() => setAddLineOpen(true)}
+                    sx={{ alignSelf: 'flex-start' }}
+                  >
+                    Add add-on
+                  </Button>
                   {lineItems.length === 0 ? (
                     <Typography variant="body2" color="text.secondary">
                       No line items on this reservation.
@@ -412,6 +488,7 @@ export function ReservationsView() {
                             <TableCell>Item</TableCell>
                             <TableCell>Qty</TableCell>
                             <TableCell>Unit</TableCell>
+                            <TableCell align="right">Actions</TableCell>
                           </TableRow>
                         </TableHead>
                         <TableBody>
@@ -421,6 +498,27 @@ export function ReservationsView() {
                               <TableCell>{line.quantity}</TableCell>
                               <TableCell>
                                 {formatAmount(line.unit_price_minor, line.currency)}
+                              </TableCell>
+                              <TableCell align="right">
+                                {line.catalog_item_id === detail.catalog_item_id ? (
+                                  <Typography variant="caption" color="text.secondary">Service</Typography>
+                                ) : (
+                                  <Stack direction="row" spacing={0.5} sx={{ justifyContent: 'flex-end' }}>
+                                    <Button
+                                      size="small"
+                                      disabled={!mutable}
+                                      onClick={() => {
+                                        setEditLine(line)
+                                        setLineQuantity(String(line.quantity))
+                                      }}
+                                    >
+                                      Quantity
+                                    </Button>
+                                    <Button size="small" color="error" disabled={!mutable} onClick={() => setDeleteLine(line)}>
+                                      Remove
+                                    </Button>
+                                  </Stack>
+                                )}
                               </TableCell>
                             </TableRow>
                           ))}
@@ -475,7 +573,7 @@ export function ReservationsView() {
               value={rescheduleStart}
               onChange={(e) => setRescheduleStart(e.target.value)}
               fullWidth
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
               required
             />
             <TextField
@@ -484,7 +582,7 @@ export function ReservationsView() {
               value={rescheduleEnd}
               onChange={(e) => setRescheduleEnd(e.target.value)}
               fullWidth
-              InputLabelProps={{ shrink: true }}
+              slotProps={{ inputLabel: { shrink: true } }}
             />
           </Stack>
         </DialogContent>
@@ -520,7 +618,7 @@ export function ReservationsView() {
             onChange={(e) => setPartySize(e.target.value)}
             fullWidth
             sx={{ mt: 1 }}
-            inputProps={{ min: 1 }}
+            slotProps={{ htmlInput: { min: 1 } }}
           />
         </DialogContent>
         <DialogActions>
@@ -591,6 +689,96 @@ export function ReservationsView() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <Dialog
+        open={addLineOpen}
+        onClose={() => !addLineMutation.isPending && setAddLineOpen(false)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Add add-on</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <TextField
+              select
+              label="Catalog item"
+              value={lineCatalogItemId}
+              onChange={(e) => setLineCatalogItemId(e.target.value)}
+              fullWidth
+              required
+            >
+              {(catalogQuery.data?.items ?? [])
+                .filter((item) => item.id !== detail?.catalog_item_id)
+                .map((item) => (
+                  <MenuItem key={item.id} value={item.id}>
+                    {item.name}
+                  </MenuItem>
+                ))}
+            </TextField>
+            <TextField
+              label="Quantity"
+              type="number"
+              value={lineQuantity}
+              onChange={(e) => setLineQuantity(e.target.value)}
+              slotProps={{ htmlInput: { min: 1 } }}
+              fullWidth
+              required
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAddLineOpen(false)} disabled={addLineMutation.isPending}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!lineCatalogItemId || !lineQuantity || addLineMutation.isPending}
+            onClick={() => addLineMutation.mutate()}
+          >
+            Add
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={editLine != null}
+        onClose={() => !updateLineMutation.isPending && setEditLine(null)}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>Update add-on quantity</DialogTitle>
+        <DialogContent dividers>
+          <TextField
+            label="Quantity"
+            type="number"
+            value={lineQuantity}
+            onChange={(e) => setLineQuantity(e.target.value)}
+            slotProps={{ htmlInput: { min: 1 } }}
+            fullWidth
+            sx={{ mt: 1 }}
+            required
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditLine(null)} disabled={updateLineMutation.isPending}>Cancel</Button>
+          <Button
+            variant="contained"
+            disabled={!lineQuantity || updateLineMutation.isPending}
+            onClick={() => updateLineMutation.mutate()}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <ConfirmDialog
+        open={deleteLine != null}
+        title="Remove add-on?"
+        description={deleteLine ? `“${deleteLine.item_name}” will be removed from this reservation.` : undefined}
+        confirmLabel="Remove"
+        confirmColor="error"
+        loading={deleteLineMutation.isPending}
+        onClose={() => !deleteLineMutation.isPending && setDeleteLine(null)}
+        onConfirm={() => deleteLineMutation.mutate()}
+      />
 
       <ConfirmDialog
         open={Boolean(cancelTarget)}

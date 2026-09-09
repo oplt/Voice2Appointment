@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.catalog.service import create_catalog_item
 from app.db.base import Base
 from app.db.models import Location, Organization, Price, PriceBook
-from app.pricing.api import PriceIn, create_price
+from app.pricing.api import PriceBookPatch, PriceIn, create_price, patch_price_book
 from app.pricing.service import active_price
 
 
@@ -139,3 +139,17 @@ def test_active_price_honors_the_requested_effective_timestamp() -> None:
     )
     assert before is not None and before.amount_minor == 4000
     assert after is not None and after.amount_minor == 4500
+
+
+def test_price_book_currency_cannot_change_after_prices_exist() -> None:
+    db = _session()
+    organization, book, item_id, _location = _catalog(db)
+    create_price(
+        book.id,
+        PriceIn(catalog_item_id=item_id, amount_minor=100, currency="EUR"),
+        organization.id,
+        db,
+    )
+
+    with pytest.raises(HTTPException, match="cannot be changed"):
+        patch_price_book(book.id, PriceBookPatch(currency="USD"), organization.id, db)

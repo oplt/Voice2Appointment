@@ -1,0 +1,586 @@
+I checked the newest `main`: **`9d1617bec15d479c2565effa7180270b3b9c5a80` (`sectors`)**. It is one commit after the version from the previous review. This commit closes several important gaps, but the closure prompt is **still not fully met**. The biggest remaining blocker is CI, followed by a few data-integrity and frontend-completeness issues.
+
+| Closure item                          | Current status                         |
+| ------------------------------------- | -------------------------------------- |
+| 1. Green CI                           | ❌ Not met                              |
+| 2. Authorization/RBAC + org switching | ✅ Met                                  |
+| 3. Customer normalization/dedup/merge | 🟡 Mostly implemented, important gaps  |
+| 4. Resource administration            | 🟡 Backend strong, frontend incomplete |
+| 5. Pricing administration             | 🟡 Mostly implemented                  |
+| 6. Reservations UI/API                | 🟡 Mostly implemented                  |
+| 7. Clinic Google provider sync        | ✅ Met                                  |
+| 8. Agent Instructions runtime         | ✅ Met                                  |
+| 9. Real performance/failure testing   | ❌ Not met                              |
+| 10. Production acceptance             | ❌ Not met                              |
+
+## Phase 1 — CI is still the immediate P0
+
+The new GitHub Actions run is still **red**. Backend Ruff passes, but the backend fails at the architecture-size check, so Mypy, unit tests, migrations, PostgreSQL integration and dependency audit are all skipped. Frontend lint passes, but Vitest still fails, so build, Playwright/a11y, bundle checks and audit are skipped; Docker is skipped as well.
+
+The backend architecture guard currently reports these oversized modules:
+
+```text
+catalog/api.py                 405 > 400
+db/models.py                   922 > 904
+notifications/service.py       514 > 488
+reservations/api.py            436 > 400
+reservations/service.py       1039 > 1001
+resources/api.py               536 > 400
+tenancy/service.py             304 > 300
+handlers_industry.py           602 > 597
+```
+
+The guard intentionally limits normal modules to 400 lines and service/provider modules to 300, with explicit legacy baselines.
+
+**Do not solve this by simply increasing `file_size_baseline.json`.** The new product work is making the modular monolith internally monolithic again.
+
+Recommended splits:
+
+```text
+catalog/api.py
+ ├─ categories.py
+ ├─ items.py
+ ├─ options.py
+ └─ requirements.py
+
+resources/api.py
+ ├─ resources.py
+ ├─ capabilities.py
+ ├─ availability.py
+ └─ adjacency.py
+
+reservations/
+ ├─ query_api.py
+ ├─ booking_api.py
+ ├─ lifecycle_api.py
+ ├─ booking_service.py
+ ├─ lifecycle_service.py
+ └─ reconciliation_service.py
+
+voice/registry/
+ ├─ handlers_clinic.py
+ ├─ handlers_general.py
+ ├─ handlers_orders.py
+ └─ handlers_payments.py
+```
+
+### Frontend test is still failing
+
+The exact same pagination test is still timing out:
+
+```text
+AppointmentsPage pagination
+→ traverses beyond the first 100 rows without duplicates
+→ timeout after 5000 ms
+```
+
+The revised test still renders 100 appointments, then another page, while both responsive representations appear in the DOM.
+
+I would **not just raise the timeout**. Better:
+
+* test `useAppointmentsList()` pagination/dedup separately with small data;
+* test `AppointmentList` rendering separately;
+* force one viewport/layout in the integration test;
+* use perhaps 3 + 2 records rather than 100 + 2 if the logic being tested is cursor traversal/deduplication.
+
+---
+
+# Phase 2 — Authorization is now essentially complete ✅
+
+This commit fixed the earlier RBAC gaps.
+
+The permission model now includes:
+
+```text
+resources.read
+resources.write
+locations.write
+agent.manage
+```
+
+and these are assigned appropriately across owner/admin/manager/staff/viewer.
+
+Resource GET vs write access is now differentiated, and location mutations require `locations.write` or `organization.manage`.
+
+Organization switching is also genuinely wired into the frontend. It now lists memberships, activates a selected organization, refreshes auth state and reloads the application.
+
+I consider this closure item **met**.
+
+---
+
+# Phase 3 — Customer dedup is much better, but has 4 important gaps
+
+You now have:
+
+* phone normalization;
+
+* lowercase/trimmed email;
+
+* org-scoped unique indexes;
+
+* nested transaction retry;
+
+* customer detail;
+
+* reservation history;
+
+* merge endpoint.
+
+However:
+
+### Gap 3.1 — migration can fail on existing duplicate customers
+
+The new migration immediately executes:
+
+```sql
+CREATE UNIQUE INDEX ...
+ON customer (organization_id, phone)
+WHERE phone IS NOT NULL
+```
+
+and the equivalent email constraint.
+
+But the previous application permitted duplicates.
+
+So a production database containing:
+
+```text
+customer 41   +32470123456
+customer 88   +32470123456
+```
+
+will fail during migration before the application can start.
+
+You need a staged migration:
+
+```text
+1. normalize historical email/phone
+2. identify duplicate groups
+3. select canonical customer
+4. move all references
+5. archive/delete duplicate
+6. verify no duplicates
+7. create unique indexes
+```
+
+This is a **production-blocking migration issue**.
+
+### Gap 3.2 — merge only migrates reservations
+
+`merge_customers()` currently updates only `Reservation.customer_id`, then deletes the source customer.
+
+But several other models reference Customer:
+
+```text
+Order.customer_id
+SecureLinkDelivery.customer_id
+PaymentIntent.customer_id
+Reservation.customer_id
+WaitlistEntry.customer_id
+```
+
+A real merge must reassign **all** of them.
+
+Otherwise:
+
+* some records become `NULL` because of `ON DELETE SET NULL`;
+* waitlist deletion may encounter FK issues;
+* customer history becomes fragmented.
+
+This is probably the most important remaining domain-integrity bug.
+
+### Gap 3.3 — `"US"` is hardcoded as the default phone region
+
+Current normalization defaults to:
+
+```python
+default_region="US"
+```
+
+For an international SaaS supporting Belgian, German, Dutch, etc. organizations, a number such as:
+
+```text
+0470 12 34 56
+```
+
+must not be interpreted through US numbering rules.
+
+Prefer:
+
+```text
+Organization
+   ↓
+Location.country_code
+   ↓
+default phone region
+```
+
+or require international `+countrycode` input when country context is unavailable.
+
+### Gap 3.4 — “concurrency test” isn't actually concurrent
+
+The test explicitly says it **simulates** a race by monkeypatching the first lookup to miss. It uses one SQLite session rather than two concurrent PostgreSQL transactions.
+
+Add a genuine PostgreSQL test:
+
+```text
+Thread A                 Thread B
+   │                        │
+ lookup miss             lookup miss
+   │                        │
+ INSERT customer         INSERT customer
+   │                        │
+        unique constraint
+             ↓
+    one canonical row
+```
+
+---
+
+# Phase 4 — Resource backend is strong, UI still incomplete
+
+The backend now handles the previous critical issue correctly.
+
+If an admin tries to deactivate a resource with future held/confirmed bookings, the API responds with `409` and requires explicit `force=true`.
+
+It also now supports:
+
+* capability create/update/delete;
+* availability create/update/delete;
+* exceptions;
+* adjacency;
+* resource requirements.
+
+Good progress.
+
+The frontend now supports:
+
+* capability add/remove;
+* actual time-off creation;
+* catalog-service → resource requirement assignment.
+
+But important administration paths are still missing in the UI.
+
+### Remaining resource UI gaps
+
+There is still no complete interface for:
+
+* editing resource name/type/location/capacity;
+* deactivating a resource;
+* displaying the 409 future-bookings warning;
+* confirming `force=true`;
+* creating/editing/deleting working-hour rules;
+* editing/deleting time-off exceptions;
+* editing an existing capability instead of delete/recreate.
+
+This means the backend is ahead of the frontend.
+
+---
+
+# Phase 5 — Pricing is nearly complete, but one integrity bug remains
+
+Pricing has improved substantially.
+
+Backend now provides:
+
+```text
+POST  /price-books
+PATCH /price-books/{id}
+POST  /price-books/{id}/archive
+
+POST  /prices
+PATCH /prices/{id}
+POST  /prices/{id}/archive
+DELETE /prices/{id}
+```
+
+Frontend now provides:
+
+* create price book;
+* archive price book;
+* create price;
+* edit price;
+* archive price;
+* channel;
+* location;
+* effective dates.
+
+### Gap 5.1 — changing price-book currency can violate your own invariant
+
+`PATCH /price-books/{id}` permits:
+
+```python
+currency = "USD"
+```
+
+even when the price book already contains EUR prices.
+
+You previously established the invariant:
+
+```text
+Price.currency == PriceBook.currency
+```
+
+After:
+
+```text
+PriceBook EUR
+Price 25 EUR
+
+PATCH PriceBook → USD
+```
+
+you get:
+
+```text
+PriceBook USD
+Price 25 EUR
+```
+
+which contradicts the validation enforced during price creation.
+
+Simplest safe behavior:
+
+```text
+if book already contains prices:
+    currency cannot be changed
+```
+
+Otherwise you need an explicit currency migration—not merely relabeling the currency.
+
+### Gap 5.2 — frontend doesn't appear to offer price-book editing
+
+The backend has `PATCH /price-books/{id}`, but the Pricing screen exposes creation and archiving; I did not find a frontend `patchPriceBook` workflow.
+
+So editing price-book name/state/currency is not end-to-end.
+
+---
+
+# Phase 6 — Reservations are mostly complete, but line-item administration remains
+
+Backend now has all of the requested structural APIs:
+
+```text
+GET  /reservations
+GET  /reservations/{id}
+POST /reservations
+POST /reservations/hold
+POST /reservations/{id}/commit
+
+POST /cancel
+POST /reschedule
+POST /party-size
+POST /resources
+
+POST/DELETE line items
+```
+
+and list pagination. Reservation detail returns both resource IDs and immutable price snapshots.
+
+This is a major improvement.
+
+The frontend now supports:
+
+* pagination;
+
+* detail;
+
+* cancellation;
+
+* rescheduling;
+
+* party size;
+
+* resource reassignment;
+
+* price snapshot display.
+
+### Gap 6.1 — line items are read-only in frontend
+
+The detail dialog renders:
+
+> Line items (price snapshot)
+
+but the UI does not expose:
+
+```text
+Add add-on
+Remove add-on
+Change quantity
+```
+
+although the backend already supports add/remove.
+
+So the frontend currently has:
+
+```text
+reservation
+ ├─ reschedule ✅
+ ├─ party size ✅
+ ├─ resources ✅
+ ├─ cancel ✅
+ └─ line items
+      └─ view only 🟡
+```
+
+### Gap 6.2 — offset pagination is less robust for mutable reservations
+
+The API now uses:
+
+```text
+ORDER BY start_datetime DESC, id DESC
+OFFSET x LIMIT y
+```
+
+This is much better than the old fixed 200-row cap, but reservations can be rescheduled while an administrator is paging.
+
+A reservation moving between page boundaries can create duplicate/missing results.
+
+For a mature system I would eventually replace this with cursor pagination:
+
+```text
+cursor = (start_datetime, id)
+```
+
+This isn't a release blocker compared with CI/data integrity, but it is the more robust design.
+
+---
+
+# Phase 7 — Clinic provider synchronization is fixed ✅
+
+The clinic/generalized appointment path now obtains:
+
+```python
+booking_provider_hooks(db, user_id)
+```
+
+and passes:
+
+```python
+provider_create=hooks.create_event
+calendar_id=hooks.calendar_id
+sync_calendar=sync_calendar_for_org(...)
+```
+
+into the reservation engine.
+
+This directly closes the provider-sync bug from the previous review.
+
+A dedicated clinic provider-hooks test was also added, although current CI doesn't reach the backend tests because the architecture check fails.
+
+---
+
+# Phase 8 — Agent Instructions are now real ✅
+
+This is now correctly implemented.
+
+Runtime loads the active organization KnowledgeEntry named:
+
+```text
+instructions
+```
+
+and assembles the system prompt in this order:
+
+```text
+immutable safety
+        ↓
+business/tenant instructions
+        ↓
+available tools
+        ↓
+current date context
+```
+
+The code explicitly states that tenant instructions cannot override the safety rules.
+
+This closes the earlier UI-without-runtime-effect bug.
+
+---
+
+# Phase 9 — real performance validation remains open ❌
+
+There were no material changes that close the real-load portion of the performance phase.
+
+The updated acceptance document itself acknowledges that these remain outstanding:
+
+* live Google free/busy + create under load;
+* real PostgreSQL pool exhaustion;
+* Redis-down drill;
+* Celery-down drill;
+* full Twilio media WebSocket soak.
+
+You therefore still cannot make meaningful production claims such as:
+
+```text
+voice p95 = X ms
+voice p99 = Y ms
+```
+
+from the local synthetic harness alone.
+
+This remains a **pre-go-live task**, not necessarily a coding blocker during feature development.
+
+---
+
+# Phase 10 — production acceptance is still false ❌
+
+The acceptance document says:
+
+```text
+Backend typecheck     ✅ local
+Frontend Vitest       ✅ local
+...
+Full GitHub CI        verify on next push
+```
+
+But that “next push” has now happened—and GitHub Actions failed.
+
+Therefore the document is already out of sync with reality.
+
+It should not say the repository has reached production acceptance until:
+
+```text
+architecture check ✅
+mypy               ✅
+SQLite tests        ✅
+migration test      ✅
+Postgres tests      ✅
+pip audit           ✅
+
+Vitest              ✅
+production build    ✅
+bundle check        ✅
+Playwright/a11y     ✅
+npm audit           ✅
+
+Docker build        ✅
+```
+
+---
+
+# Revised remaining work
+
+At this stage the list is much shorter than in the previous review. I would organize the next Codex cycle into **five phases**:
+
+### Phase A — Make CI genuinely green
+
+Refactor the eight oversized backend modules instead of raising architecture thresholds. Fix the `AppointmentsPage` pagination test so it tests pagination/dedup cheaply and deterministically. Then allow the entire pipeline to execute.
+
+### Phase B — Harden customer identity
+
+Implement a pre-unique-index duplicate migration; migrate **Reservation + Order + SecureLinkDelivery + PaymentIntent + WaitlistEntry** during customer merge; replace hardcoded US phone region with tenant/location country context; add a real multi-session PostgreSQL race test.
+
+### Phase C — Finish admin UX
+
+Complete resource edit/deactivation/force-warning, working-hours CRUD and time-off CRUD. Add price-book edit UI. Add reservation add-on/line-item add/remove UI.
+
+### Phase D — Fix remaining pricing invariant
+
+Prevent changing a price book's currency once prices exist, unless an explicit migration/conversion operation is implemented.
+
+### Phase E — Production gate
+
+Run real provider/service failure drills, get the entire GitHub Actions workflow green, then update `production-acceptance.md` from actual CI evidence rather than local claims.
+
+So the project has moved from **“large architectural gaps” to “closure/integrity/verification gaps.”** The three issues I would treat as highest priority are **red CI**, **unsafe customer dedup migration/merge**, and **price-book currency consistency**.
